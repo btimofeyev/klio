@@ -24,10 +24,10 @@ export async function POST(request: Request) {
     });
     if (!parsed.success) return NextResponse.json({ error: "The capture is missing required details." }, { status: 400 });
 
-    const fileValue = form.get("file");
-    const file = fileValue instanceof File && fileValue.size > 0 ? fileValue : null;
-    if (!file && !parsed.data.text?.trim()) return NextResponse.json({ error: "Add a note, photo, voice clip, or file." }, { status: 400 });
-    if (file && (file.size > 50 * 1024 * 1024 || !allowedTypes.has(file.type))) {
+    const files = form.getAll("file").filter((value): value is File => value instanceof File && value.size > 0);
+    if (!files.length && !parsed.data.text?.trim()) return NextResponse.json({ error: "Add a note, photo, voice clip, or file." }, { status: 400 });
+    if (files.length > 10) return NextResponse.json({ error: "You can attach up to 10 files at once." }, { status: 400 });
+    if (files.some((file) => file.size > 50 * 1024 * 1024 || !allowedTypes.has(file.type))) {
       return NextResponse.json({ error: "That file type or size is not supported." }, { status: 400 });
     }
 
@@ -38,37 +38,44 @@ export async function POST(request: Request) {
     ]);
     if (!membership || !student) return NextResponse.json({ error: "You do not have access to that workspace." }, { status: 403 });
 
-    const id = crypto.randomUUID();
-    let storagePath: string | null = null;
-    if (file) {
+    const captures = files.length ? files.map((file) => ({ id: crypto.randomUUID(), file })) : [{ id: crypto.randomUUID(), file: null }];
+    const storagePaths: string[] = [];
+    for (const { id, file } of captures) {
+      if (!file) continue;
       const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "-").slice(-120) || "capture";
-      storagePath = `${parsed.data.familyId}/${id}/${safeName}`;
+      const storagePath = `${parsed.data.familyId}/${id}/${safeName}`;
       const { error: uploadError } = await supabase.storage.from("family-evidence").upload(storagePath, file, { upsert: false, contentType: file.type });
-      if (uploadError) return NextResponse.json({ error: uploadError.message }, { status: 400 });
+      if (uploadError) {
+        if (storagePaths.length) await supabase.storage.from("family-evidence").remove(storagePaths);
+        return NextResponse.json({ error: uploadError.message }, { status: 400 });
+      }
+      storagePaths.push(storagePath);
     }
 
-    const kind = file ? inferKind(file) : parsed.data.kind;
-    const title = parsed.data.text?.trim().slice(0, 120) || file?.name || null;
-    const { error: evidenceError } = await supabase.from("evidence_items").insert({
-      id, family_id: parsed.data.familyId, created_by: parent.id, kind,
-      title, raw_text: parsed.data.text?.trim() || null, storage_path: storagePath,
+    const text = parsed.data.text?.trim() || null;
+    const evidence = captures.map(({ id, file }, index) => ({
+      id, family_id: parsed.data.familyId, created_by: parent.id, kind: file ? inferKind(file) : parsed.data.kind,
+      title: (index === 0 ? text?.slice(0, 120) : null) || file?.name || null,
+      raw_text: index === 0 ? text : null, storage_path: file ? storagePaths[index] : null,
       mime_type: file?.type || null, file_size: file?.size || null,
       provenance: { source: "klio_inbox", original_filename: file?.name ?? null },
-    });
+    }));
+    const { error: evidenceError } = await supabase.from("evidence_items").insert(evidence);
     if (evidenceError) {
-      if (storagePath) await supabase.storage.from("family-evidence").remove([storagePath]);
+      if (storagePaths.length) await supabase.storage.from("family-evidence").remove(storagePaths);
       return NextResponse.json({ error: evidenceError.message }, { status: 400 });
     }
 
-    const { error: linkError } = await supabase.from("evidence_students").insert({ evidence_id: id, student_id: parsed.data.studentId, family_id: parsed.data.familyId });
+    const ids = captures.map(({ id }) => id);
+    const { error: linkError } = await supabase.from("evidence_students").insert(ids.map((id) => ({ evidence_id: id, student_id: parsed.data.studentId, family_id: parsed.data.familyId })));
     if (linkError) return NextResponse.json({ error: linkError.message }, { status: 400 });
 
     await writeAuditEvent(createAdminClient(), {
       familyId: parsed.data.familyId, actorId: parent.id, actorType: "parent",
-      action: "evidence.captured", entityType: "evidence_item", entityId: id,
-      metadata: { kind, has_file: Boolean(file), has_text: Boolean(parsed.data.text?.trim()) },
+      action: "evidence.captured", entityType: "evidence_item", entityId: ids[0],
+      metadata: { item_count: ids.length, has_file: Boolean(files.length), has_text: Boolean(text) },
     });
-    return NextResponse.json({ id, status: "received" }, { status: 201 });
+    return NextResponse.json({ id: ids[0], ids, status: "received" }, { status: 201 });
   } catch (error) {
     if (error instanceof Error && error.message === "UNAUTHORIZED") return NextResponse.json({ error: "Sign in to continue." }, { status: 401 });
     return NextResponse.json({ error: "Klio could not save this capture." }, { status: 500 });

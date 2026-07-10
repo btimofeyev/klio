@@ -53,6 +53,26 @@ describe("family RLS isolation", () => {
     expect(result.error).not.toBeNull();
   });
 
+  it("keeps AI-created evidence folders inside their family", async () => {
+    const category = await clients[0].from("categories").insert({
+      family_id: families[0], name: "History", slug: "history", created_by: users[0], created_by_type: "agent",
+    }).select("id").single();
+    if (category.error) throw category.error;
+    const evidence = await clients[0].from("evidence_items").insert({
+      family_id: families[0], created_by: users[0], kind: "note", raw_text: "A transient RLS check",
+    }).select("id").single();
+    if (evidence.error) throw evidence.error;
+
+    const hidden = await clients[1].from("categories").select("id").eq("id", category.data.id);
+    expect(hidden.error).toBeNull();
+    expect(hidden.data).toEqual([]);
+
+    const forgedLink = await clients[1].from("evidence_categories").insert({
+      family_id: families[0], evidence_id: evidence.data.id, category_id: category.data.id, assigned_by: "agent",
+    });
+    expect(forgedLink.error).not.toBeNull();
+  });
+
   it("does not trust an unexpired token after its Auth user is deleted", async () => {
     const email = `deleted-session-${crypto.randomUUID()}@example.test`;
     const created = await admin.auth.admin.createUser({ email, password, email_confirm: true });

@@ -28,6 +28,13 @@ const practiceQuestion = z.object({
 
 export const agentArtifactSchema = z.object({
   artifact_type: z.enum(["analysis", "next_step", "weekly_plan", "lesson", "summary", "practice", "portfolio"]),
+  organization: z.object({
+    category_name: z.string(),
+    document_type: z.string(),
+    tags: z.array(z.string()).max(8),
+    confidence: z.number().min(0).max(1),
+    rationale: z.string(),
+  }),
   title: z.string(),
   summary: z.string(),
   rationale: z.string(),

@@ -22,6 +22,24 @@ export type EvidenceDTO = {
   status: string;
   createdAt: string;
   studentIds: string[];
+  categories: EvidenceCategoryDTO[];
+};
+
+export type EvidenceCategoryDTO = {
+  id: string;
+  name: string;
+  slug: string;
+  documentType: string | null;
+  tags: string[];
+  confidence: number | null;
+};
+
+export type CategoryDTO = {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  evidenceCount: number;
 };
 
 export type ArtifactDTO = {
@@ -50,18 +68,20 @@ export const getWorkspace = cache(async () => {
   if (!membership) return null;
 
   const familyId = membership.family_id;
-  const [familyResult, studentsResult, evidenceResult, artifactsResult, approvalsResult] = await Promise.all([
+  const [familyResult, studentsResult, evidenceResult, artifactsResult, approvalsResult, categoriesResult] = await Promise.all([
     supabase.from("families").select("id, name, timezone").eq("id", familyId).single(),
     supabase.from("students").select("id, display_name, grade_band, learning_preferences").eq("family_id", familyId).eq("active", true).order("created_at"),
-    supabase.from("evidence_items").select("id, kind, title, raw_text, mime_type, storage_path, source_at, processing_status, created_at, evidence_students(student_id)").eq("family_id", familyId).order("created_at", { ascending: false }).limit(40),
+    supabase.from("evidence_items").select("id, kind, title, raw_text, mime_type, storage_path, source_at, processing_status, created_at, evidence_students(student_id), evidence_categories(document_type, tags, confidence, categories(id, name, slug))").eq("family_id", familyId).order("created_at", { ascending: false }).limit(40),
     supabase.from("artifacts").select("id, type, title, summary, content, rationale, status, created_at, student_id").eq("family_id", familyId).order("created_at", { ascending: false }).limit(20),
     supabase.from("approval_requests").select("id", { count: "exact", head: true }).eq("family_id", familyId).eq("status", "pending"),
+    supabase.from("categories").select("id, name, slug, description, evidence_categories(count)").eq("family_id", familyId).order("name"),
   ]);
 
   if (familyResult.error) throw familyResult.error;
   if (studentsResult.error) throw studentsResult.error;
   if (evidenceResult.error) throw evidenceResult.error;
   if (artifactsResult.error) throw artifactsResult.error;
+  if (categoriesResult.error) throw categoriesResult.error;
 
   return {
     parent,
@@ -84,6 +104,21 @@ export const getWorkspace = cache(async () => {
       status: item.processing_status,
       createdAt: item.created_at,
       studentIds: item.evidence_students.map((link) => link.student_id),
+      categories: item.evidence_categories.map((link) => ({
+        id: link.categories.id,
+        name: link.categories.name,
+        slug: link.categories.slug,
+        documentType: link.document_type,
+        tags: link.tags,
+        confidence: link.confidence,
+      })),
+    })),
+    categories: categoriesResult.data.map((category): CategoryDTO => ({
+      id: category.id,
+      name: category.name,
+      slug: category.slug,
+      description: category.description,
+      evidenceCount: category.evidence_categories[0]?.count ?? 0,
     })),
     artifacts: artifactsResult.data.map((artifact): ArtifactDTO => ({
       id: artifact.id,

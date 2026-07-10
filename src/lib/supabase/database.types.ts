@@ -363,6 +363,105 @@ export type Database = {
           },
         ]
       }
+      categories: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          created_by_type: string
+          description: string | null
+          family_id: string
+          id: string
+          name: string
+          slug: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          created_by_type?: string
+          description?: string | null
+          family_id: string
+          id?: string
+          name: string
+          slug: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          created_by_type?: string
+          description?: string | null
+          family_id?: string
+          id?: string
+          name?: string
+          slug?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "categories_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      evidence_categories: {
+        Row: {
+          assigned_by: string
+          category_id: string
+          confidence: number | null
+          created_at: string
+          document_type: string | null
+          evidence_id: string
+          family_id: string
+          tags: string[]
+        }
+        Insert: {
+          assigned_by?: string
+          category_id: string
+          confidence?: number | null
+          created_at?: string
+          document_type?: string | null
+          evidence_id: string
+          family_id: string
+          tags?: string[]
+        }
+        Update: {
+          assigned_by?: string
+          category_id?: string
+          confidence?: number | null
+          created_at?: string
+          document_type?: string | null
+          evidence_id?: string
+          family_id?: string
+          tags?: string[]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "evidence_categories_category_id_fkey"
+            columns: ["category_id"]
+            isOneToOne: false
+            referencedRelation: "categories"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "evidence_categories_evidence_id_fkey"
+            columns: ["evidence_id"]
+            isOneToOne: false
+            referencedRelation: "evidence_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "evidence_categories_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       evidence_items: {
         Row: {
           created_at: string
