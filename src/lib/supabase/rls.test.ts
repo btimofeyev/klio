@@ -52,4 +52,18 @@ describe("family RLS isolation", () => {
     const result = await clients[0].storage.from("family-evidence").upload(`${families[1]}/${crypto.randomUUID()}/note.txt`, new Blob(["private"]), { contentType: "text/plain" });
     expect(result.error).not.toBeNull();
   });
+
+  it("does not trust an unexpired token after its Auth user is deleted", async () => {
+    const email = `deleted-session-${crypto.randomUUID()}@example.test`;
+    const created = await admin.auth.admin.createUser({ email, password, email_confirm: true });
+    if (created.error) throw created.error;
+    const client = createClient<Database>(url, publishable, { auth: { persistSession: false } });
+    const signedIn = await client.auth.signInWithPassword({ email, password });
+    if (signedIn.error || !signedIn.data.session) throw signedIn.error ?? new Error("No session");
+    await admin.auth.admin.deleteUser(created.data.user.id);
+
+    const verified = await client.auth.getUser(signedIn.data.session.access_token);
+    expect(verified.data.user).toBeNull();
+    expect(verified.error).not.toBeNull();
+  });
 });

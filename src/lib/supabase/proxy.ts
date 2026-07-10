@@ -22,6 +22,11 @@ export async function updateSession(request: NextRequest) {
     },
   );
 
-  await supabase.auth.getClaims();
+  const { error } = await supabase.auth.getUser();
+  if (error) {
+    // Clear stale cookies when the JWT is still structurally valid but its user
+    // has been removed from Auth (common after a local database reset).
+    await supabase.auth.signOut({ scope: "local" });
+  }
   return response;
 }

@@ -6,12 +6,15 @@ import { createClient } from "@/lib/supabase/server";
 
 export const getCurrentParent = cache(async () => {
   const supabase = await createClient();
-  const { data, error } = await supabase.auth.getClaims();
-  if (error || !data?.claims?.sub) return null;
+  // getUser() verifies the session against the Auth server. A locally valid JWT
+  // can outlive a deleted auth.users row, so claims alone are not sufficient for
+  // mutations that reference auth.users through foreign keys.
+  const { data, error } = await supabase.auth.getUser();
+  if (error || !data.user) return null;
 
   return {
-    id: data.claims.sub,
-    email: typeof data.claims.email === "string" ? data.claims.email : null,
+    id: data.user.id,
+    email: data.user.email ?? null,
   };
 });
 
