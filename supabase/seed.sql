@@ -1,0 +1,1 @@
+-- Klio intentionally ships without seeded users or product data.
