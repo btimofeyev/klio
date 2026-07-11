@@ -18,7 +18,8 @@ export async function runKlioAgent(input: {
   if (!serverEnv.openAiApiKey) throw new Error("OPENAI_KEY_REQUIRED");
   const admin = createAdminClient();
 
-  const [{ data: student, error: studentError }, { data: evidence, error: evidenceError }, { data: observations }, { data: recentArtifacts }, { data: categories }, { data: corrections }] = await Promise.all([
+  const [{ data: family }, { data: student, error: studentError }, { data: evidence, error: evidenceError }, { data: observations }, { data: recentArtifacts }, { data: categories }, { data: corrections }] = await Promise.all([
+    admin.from("families").select("timezone").eq("id", input.familyId).single(),
     admin.from("students").select("id, display_name, grade_band, learning_preferences").eq("id", input.studentId).eq("family_id", input.familyId).single(),
     admin.from("evidence_items").select("id, kind, title, raw_text, storage_path, mime_type, source_at").eq("family_id", input.familyId).in("id", input.evidenceIds),
     admin.from("skill_observations").select("subject, skill_label, status, rationale").eq("family_id", input.familyId).eq("student_id", input.studentId).eq("approval_status", "approved").order("created_at", { ascending: false }).limit(25),
@@ -53,7 +54,7 @@ export async function runKlioAgent(input: {
 
   try {
     const openai = new OpenAI({ apiKey: serverEnv.openAiApiKey });
-    const content: ResponseInputContent[] = [{ type: "input_text", text: buildContext({ student, evidence, observations: observations ?? [], recentArtifacts: recentArtifacts ?? [], categories: categories ?? [], corrections: corrections ?? [], intent: input.intent }) }];
+    const content: ResponseInputContent[] = [{ type: "input_text", text: buildContext({ student, evidence, observations: observations ?? [], recentArtifacts: recentArtifacts ?? [], categories: categories ?? [], corrections: corrections ?? [], intent: input.intent, timezone: family?.timezone ?? "America/New_York" }) }];
 
     for (const item of evidence) {
       if (!item.storage_path || !item.mime_type) continue;
@@ -122,9 +123,18 @@ export async function runKlioAgent(input: {
     );
     if (evidenceCategoryError) throw evidenceCategoryError;
 
+    const reminderIds = await persistReminders(admin, {
+      familyId: input.familyId,
+      studentId: input.studentId,
+      runId: run.id,
+      parentId: input.parentId,
+      evidenceId: input.evidenceIds[0],
+      reminders: result.reminders,
+    });
+
     if (input.intent === "organize") {
       await admin.from("evidence_items").update({ processing_status: "ready", error_message: null }).in("id", input.evidenceIds).eq("family_id", input.familyId);
-      await admin.from("agent_runs").update({ status: "completed", completed_at: new Date().toISOString(), output_summary: { category_id: category.id }, tool_trace: [{ tool: "read_evidence" }, { tool: "organize_evidence", category_id: category.id }] }).eq("id", run.id);
+      await admin.from("agent_runs").update({ status: "completed", completed_at: new Date().toISOString(), output_summary: { category_id: category.id, reminder_ids: reminderIds }, tool_trace: [{ tool: "read_evidence" }, { tool: "organize_evidence", category_id: category.id }, { tool: "create_reminders", reminder_ids: reminderIds }] }).eq("id", run.id);
       await writeAuditEvent(admin, { familyId: input.familyId, actorType: "agent", action: "evidence.organized", entityType: "category", entityId: category.id, metadata: { run_id: run.id, evidence_ids: input.evidenceIds } });
       return { artifactId: null, runId: run.id, categoryId: category.id, categoryName };
     }
@@ -157,7 +167,7 @@ export async function runKlioAgent(input: {
     }
     await admin.from("approval_requests").insert({ family_id: input.familyId, requested_by_run: run.id, entity_type: "artifact", entity_id: artifact.id });
     await admin.from("evidence_items").update({ processing_status: "ready" }).in("id", input.evidenceIds).eq("family_id", input.familyId);
-    await admin.from("agent_runs").update({ status: "completed", completed_at: new Date().toISOString(), output_summary: { artifact_id: artifact.id, observation_count: observationCount, category_id: category.id }, tool_trace: [{ tool: "read_student_context" }, { tool: "organize_evidence", category_id: category.id }, { tool: "create_draft_artifact", artifact_id: artifact.id }] }).eq("id", run.id);
+    await admin.from("agent_runs").update({ status: "completed", completed_at: new Date().toISOString(), output_summary: { artifact_id: artifact.id, observation_count: observationCount, category_id: category.id, reminder_ids: reminderIds }, tool_trace: [{ tool: "read_student_context" }, { tool: "organize_evidence", category_id: category.id }, { tool: "create_reminders", reminder_ids: reminderIds }, { tool: "create_draft_artifact", artifact_id: artifact.id }] }).eq("id", run.id);
     await writeAuditEvent(admin, { familyId: input.familyId, actorType: "agent", action: "agent.draft_created", entityType: "artifact", entityId: artifact.id, metadata: { run_id: run.id, intent: input.intent, evidence_ids: input.evidenceIds } });
     return { artifactId: artifact.id, runId: run.id, categoryId: category.id, categoryName };
   } catch (error) {
@@ -173,6 +183,66 @@ export async function runKlioAgent(input: {
     if (authenticationFailed) throw new Error("OPENAI_KEY_INVALID");
     throw error;
   }
+}
+
+async function persistReminders(admin: ReturnType<typeof createAdminClient>, input: {
+  familyId: string;
+  studentId: string;
+  runId: string;
+  parentId: string;
+  evidenceId: string;
+  reminders: AgentArtifact["reminders"];
+}) {
+  const ids: string[] = [];
+  for (const reminder of input.reminders) {
+    const title = reminder.title.trim().slice(0, 200);
+    if (!title) continue;
+    const parsedDueAt = reminder.due_at ? new Date(reminder.due_at) : null;
+    const dueAt = parsedDueAt && !Number.isNaN(parsedDueAt.getTime()) ? parsedDueAt.toISOString() : null;
+    const values = {
+      student_id: input.studentId,
+      agent_run_id: input.runId,
+      notes: reminder.notes.trim().slice(0, 2000) || null,
+      due_at: dueAt,
+      confidence: reminder.confidence,
+      rationale: reminder.rationale.trim().slice(0, 2000),
+    };
+    const { data: existing, error: findError } = await admin.from("reminders")
+      .select("id")
+      .eq("family_id", input.familyId)
+      .eq("source_evidence_id", input.evidenceId)
+      .eq("status", "pending")
+      .ilike("title", title)
+      .maybeSingle();
+    if (findError) throw findError;
+    if (existing) {
+      const { error } = await admin.from("reminders").update(values).eq("id", existing.id);
+      if (error) throw error;
+      ids.push(existing.id);
+      continue;
+    }
+    const { data: created, error } = await admin.from("reminders").insert({
+      family_id: input.familyId,
+      source_evidence_id: input.evidenceId,
+      title,
+      created_by_type: "agent",
+      created_by: input.parentId,
+      ...values,
+    }).select("id").single();
+    if (error?.code === "23505") {
+      const { data: concurrent, error: concurrentError } = await admin.from("reminders")
+        .select("id")
+        .eq("family_id", input.familyId)
+        .eq("source_evidence_id", input.evidenceId)
+        .eq("status", "pending")
+        .ilike("title", title)
+        .single();
+      if (concurrentError) throw concurrentError;
+      ids.push(concurrent.id);
+    } else if (error) throw error;
+    else ids.push(created.id);
+  }
+  return ids;
 }
 
 async function persistObservation(admin: ReturnType<typeof createAdminClient>, input: {
@@ -263,7 +333,7 @@ async function persistObservation(admin: ReturnType<typeof createAdminClient>, i
   return observationId;
 }
 
-function buildContext({ student, evidence, observations, recentArtifacts, categories, corrections, intent }: {
+function buildContext({ student, evidence, observations, recentArtifacts, categories, corrections, intent, timezone }: {
   student: { display_name: string; grade_band: string | null; learning_preferences: string | null };
   evidence: Array<{ id: string; kind: string; title: string | null; raw_text: string | null; source_at: string }>;
   observations: Array<{ subject: string; skill_label: string; status: string; rationale: string }>;
@@ -271,6 +341,7 @@ function buildContext({ student, evidence, observations, recentArtifacts, catego
   categories: Array<{ name: string; slug: string; description: string | null }>;
   corrections: Array<{ from_category_name: string | null; evidence_title: string | null; evidence_excerpt: string | null; cues: string[]; categories: { name: string; slug: string } }>;
   intent: AgentIntent;
+  timezone: string;
 }) {
   return JSON.stringify({
     request: intent,
@@ -286,7 +357,8 @@ function buildContext({ student, evidence, observations, recentArtifacts, catego
       evidence_excerpt: correction.evidence_excerpt,
       cues: correction.cues,
     })),
-    today: new Date().toISOString(),
+    current_datetime: new Date().toISOString(),
+    family_timezone: timezone,
   });
 }
 
@@ -295,6 +367,8 @@ const KLIO_INSTRUCTIONS = `You are Klio, a capable homeschool-specific agent wor
 Ground every claim in the supplied evidence or approved context. Never invent completed work, grades, diagnoses, laws, sources, or facts about the learner. Keep siblings distinct. If evidence is weak or ambiguous, state that in uncertainty_flags and ask for a useful next observation. Candidate skill observations must be conservative and source-backed; they are always drafts for parent approval.
 
 Always organize the selected evidence into one stable, broad curriculum category. Reuse an existing family category when it fits. Parent filing corrections are authoritative examples; follow their pattern when the new evidence has similar cues. Prefer durable folders such as History, Math, Science, Language Arts, Reading, Writing, Art, Music, Physical Education, Life Skills, Field Trips, or General—not narrow one-off topics. A history chapter review belongs in History, with Review as its document type and specific topics as tags. Keep tags short, useful for search, and free of duplicates. The organization rationale should briefly explain the filing choice.
+
+Extract genuine parent obligations as reminders whenever the capture uses actionable future language such as “I need to,” “remember to,” “we should,” or gives a deadline. Do not turn completed work, observations, or generic teaching suggestions into reminders. Use a concise verb-first title. Preserve useful context in notes. Resolve relative dates from current_datetime in family_timezone; “for the week” means by the upcoming Friday at 5:00 PM local time. Return due_at as an ISO 8601 timestamp with an offset, or null when the capture gives no reasonable timing. Reminders are saved immediately and do not need draft approval.
 
 Match artifact_type to the request: organize→analysis, understand→analysis, next_step→next_step, weekly_plan→weekly_plan, lesson→lesson, practice→practice, summary→summary, portfolio→portfolio. For organize requests, classification is the only output that will be kept. For weekly plans, keep the workload manageable and use day offsets 0–13. For lessons, create practical parent-ready material. Only fill practice when explicitly asked; otherwise set it to null. Never output executable code or HTML.`;
 

@@ -1133,6 +1133,224 @@ export type Database = {
           },
         ]
       }
+      question_message_sources: {
+        Row: {
+          family_id: string
+          message_id: string
+          source_id: string
+          source_type: string
+          title: string
+        }
+        Insert: {
+          family_id: string
+          message_id: string
+          source_id: string
+          source_type: string
+          title: string
+        }
+        Update: {
+          family_id?: string
+          message_id?: string
+          source_id?: string
+          source_type?: string
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "question_message_sources_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "question_message_sources_message_id_fkey"
+            columns: ["message_id"]
+            isOneToOne: false
+            referencedRelation: "question_messages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      question_messages: {
+        Row: {
+          confidence: string | null
+          content: string
+          created_at: string
+          created_by: string | null
+          family_id: string
+          id: string
+          role: string
+          thread_id: string
+        }
+        Insert: {
+          confidence?: string | null
+          content: string
+          created_at?: string
+          created_by?: string | null
+          family_id: string
+          id?: string
+          role: string
+          thread_id: string
+        }
+        Update: {
+          confidence?: string | null
+          content?: string
+          created_at?: string
+          created_by?: string | null
+          family_id?: string
+          id?: string
+          role?: string
+          thread_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "question_messages_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "question_messages_thread_id_fkey"
+            columns: ["thread_id"]
+            isOneToOne: false
+            referencedRelation: "question_threads"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      question_threads: {
+        Row: {
+          created_at: string
+          created_by: string
+          family_id: string
+          id: string
+          student_id: string | null
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          family_id: string
+          id?: string
+          student_id?: string | null
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          family_id?: string
+          id?: string
+          student_id?: string | null
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "question_threads_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "question_threads_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "students"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      reminders: {
+        Row: {
+          agent_run_id: string | null
+          completed_at: string | null
+          confidence: number | null
+          created_at: string
+          created_by: string | null
+          created_by_type: string
+          due_at: string | null
+          family_id: string
+          id: string
+          notes: string | null
+          rationale: string | null
+          source_evidence_id: string | null
+          status: string
+          student_id: string | null
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          agent_run_id?: string | null
+          completed_at?: string | null
+          confidence?: number | null
+          created_at?: string
+          created_by?: string | null
+          created_by_type: string
+          due_at?: string | null
+          family_id: string
+          id?: string
+          notes?: string | null
+          rationale?: string | null
+          source_evidence_id?: string | null
+          status?: string
+          student_id?: string | null
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          agent_run_id?: string | null
+          completed_at?: string | null
+          confidence?: number | null
+          created_at?: string
+          created_by?: string | null
+          created_by_type?: string
+          due_at?: string | null
+          family_id?: string
+          id?: string
+          notes?: string | null
+          rationale?: string | null
+          source_evidence_id?: string | null
+          status?: string
+          student_id?: string | null
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reminders_agent_run_id_fkey"
+            columns: ["agent_run_id"]
+            isOneToOne: false
+            referencedRelation: "agent_runs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reminders_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reminders_source_evidence_id_fkey"
+            columns: ["source_evidence_id"]
+            isOneToOne: false
+            referencedRelation: "evidence_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reminders_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "students"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       skill_observations: {
         Row: {
           approval_status: string

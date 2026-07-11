@@ -106,6 +106,31 @@ describe("family RLS isolation", () => {
     expect(duplicate.error?.code).toBe("23505");
   });
 
+  it("keeps reminders and grounded question history inside the family", async () => {
+    const reminder = await clients[0].from("reminders").insert({
+      family_id: families[0], title: "Transient private reminder", status: "pending",
+      created_by_type: "parent", created_by: users[0],
+    }).select("id").single();
+    if (reminder.error) throw reminder.error;
+    const hiddenReminder = await clients[1].from("reminders").select("id").eq("id", reminder.data.id);
+    expect(hiddenReminder.data).toEqual([]);
+    const forgedReminder = await clients[1].from("reminders").update({ status: "completed" }).eq("id", reminder.data.id).select("id");
+    expect(forgedReminder.data).toEqual([]);
+
+    const thread = await clients[0].from("question_threads").insert({
+      family_id: families[0], title: "Transient private question", created_by: users[0],
+    }).select("id").single();
+    if (thread.error) throw thread.error;
+    const message = await clients[0].from("question_messages").insert({
+      family_id: families[0], thread_id: thread.data.id, role: "user", content: "What did we save?", created_by: users[0],
+    }).select("id").single();
+    if (message.error) throw message.error;
+    const hiddenThread = await clients[1].from("question_threads").select("id").eq("id", thread.data.id);
+    const hiddenMessage = await clients[1].from("question_messages").select("id").eq("id", message.data.id);
+    expect(hiddenThread.data).toEqual([]);
+    expect(hiddenMessage.data).toEqual([]);
+  });
+
   it("does not trust an unexpired token after its Auth user is deleted", async () => {
     const email = `deleted-session-${crypto.randomUUID()}@example.test`;
     const created = await admin.auth.admin.createUser({ email, password, email_confirm: true });

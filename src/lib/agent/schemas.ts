@@ -26,6 +26,14 @@ const practiceQuestion = z.object({
   hints: z.array(z.string()),
 });
 
+const reminder = z.object({
+  title: z.string(),
+  notes: z.string(),
+  due_at: z.string().nullable(),
+  confidence: z.number().min(0).max(1),
+  rationale: z.string(),
+});
+
 export const agentArtifactSchema = z.object({
   artifact_type: z.enum(["analysis", "next_step", "weekly_plan", "lesson", "summary", "practice", "portfolio"]),
   organization: z.object({
@@ -39,6 +47,7 @@ export const agentArtifactSchema = z.object({
   summary: z.string(),
   rationale: z.string(),
   uncertainty_flags: z.array(z.string()),
+  reminders: z.array(reminder).max(8),
   observations: z.array(observation),
   content: z.object({
     overview: z.string(),
