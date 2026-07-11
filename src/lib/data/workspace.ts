@@ -106,6 +106,7 @@ export const getWorkspace = cache(async () => {
   if (studentsResult.error) throw studentsResult.error;
   if (evidenceResult.error) throw evidenceResult.error;
   if (artifactsResult.error) throw artifactsResult.error;
+  if (approvalsResult.error) throw approvalsResult.error;
   if (categoriesResult.error) throw categoriesResult.error;
   if (jobsResult.error) throw jobsResult.error;
   if (remindersResult.error) throw remindersResult.error;

@@ -14,7 +14,7 @@ const learningLinks = [
   { href: "/app/evidence", label: "Evidence", icon: BookMarked },
   { href: "/app/portfolio", label: "Portfolio", icon: Library },
   { href: "/app/records", label: "Records", icon: FolderOpen },
-  { href: "/app/activity", label: "Review", icon: ClipboardCheck },
+  { href: "/app/activity", label: "Check Klio", icon: ClipboardCheck },
   { href: "/app/settings", label: "Settings", icon: Settings },
 ];
 
@@ -38,7 +38,7 @@ export function AppNav({ familyName, students, pending }: { familyName: string; 
         {learningLinks.map(({ href, label, icon: Icon }) => (
           <Link href={href} key={`${href}-${label}`}>
             <Icon size={17} strokeWidth={1.8} /><span>{label}</span>
-            {label === "Review" && pending > 0 ? <b>{pending}</b> : null}
+            {label === "Check Klio" && pending > 0 ? <b>{pending}</b> : null}
           </Link>
         ))}
       </nav>
@@ -53,7 +53,7 @@ export function MobileNav({ pending }: { pending: number }) {
   return (
     <nav className="mobile-nav">
       {mobileLinks.map(({ href, label, icon: Icon }) => (
-        <Link href={href} key={href}><Icon size={19} /><span>{label}</span>{label === "Review" && pending ? <b>{pending}</b> : null}</Link>
+        <Link href={href} key={href}><Icon size={19} /><span>{label}</span>{label === "Check Klio" && pending ? <b>{pending}</b> : null}</Link>
       ))}
     </nav>
   );

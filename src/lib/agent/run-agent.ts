@@ -18,7 +18,7 @@ export async function runKlioAgent(input: {
   if (!serverEnv.openAiApiKey) throw new Error("OPENAI_KEY_REQUIRED");
   const admin = createAdminClient();
 
-  const [{ data: family }, { data: student, error: studentError }, { data: evidence, error: evidenceError }, { data: observations }, { data: recentArtifacts }, { data: categories }, { data: corrections }] = await Promise.all([
+  const [{ data: family }, { data: student, error: studentError }, { data: evidence, error: evidenceError }, { data: observations }, { data: recentArtifacts }, { data: categories }, { data: corrections }, { data: rejectedObservations }, { data: rejectedArtifacts }] = await Promise.all([
     admin.from("families").select("timezone").eq("id", input.familyId).single(),
     admin.from("students").select("id, display_name, grade_band, learning_preferences").eq("id", input.studentId).eq("family_id", input.familyId).single(),
     admin.from("evidence_items").select("id, kind, title, raw_text, storage_path, mime_type, source_at").eq("family_id", input.familyId).in("id", input.evidenceIds),
@@ -26,6 +26,8 @@ export async function runKlioAgent(input: {
     admin.from("artifacts").select("type, title, summary, content").eq("family_id", input.familyId).eq("student_id", input.studentId).eq("status", "approved").order("created_at", { ascending: false }).limit(5),
     admin.from("categories").select("name, slug, description").eq("family_id", input.familyId).order("name"),
     admin.from("organization_corrections").select("from_category_name, evidence_title, evidence_excerpt, cues, categories(name, slug)").eq("family_id", input.familyId).order("created_at", { ascending: false }).limit(20),
+    admin.from("skill_observations").select("subject, skill_label, rationale, rejection_reason, reviewed_at").eq("family_id", input.familyId).eq("student_id", input.studentId).eq("approval_status", "rejected").order("reviewed_at", { ascending: false }).limit(20),
+    admin.from("artifacts").select("type, title, summary, rejection_reason, reviewed_at").eq("family_id", input.familyId).eq("student_id", input.studentId).eq("status", "rejected").order("reviewed_at", { ascending: false }).limit(10),
   ]);
   if (studentError || !student) throw new Error("STUDENT_NOT_FOUND");
   if (evidenceError || !evidence || evidence.length !== new Set(input.evidenceIds).size) throw new Error("EVIDENCE_NOT_FOUND");
@@ -54,7 +56,7 @@ export async function runKlioAgent(input: {
 
   try {
     const openai = new OpenAI({ apiKey: serverEnv.openAiApiKey });
-    const content: ResponseInputContent[] = [{ type: "input_text", text: buildContext({ student, evidence, observations: observations ?? [], recentArtifacts: recentArtifacts ?? [], categories: categories ?? [], corrections: corrections ?? [], intent: input.intent, timezone: family?.timezone ?? "America/New_York" }) }];
+    const content: ResponseInputContent[] = [{ type: "input_text", text: buildContext({ student, evidence, observations: observations ?? [], recentArtifacts: recentArtifacts ?? [], categories: categories ?? [], corrections: corrections ?? [], parentReviewCorrections: { observations: rejectedObservations ?? [], artifacts: rejectedArtifacts ?? [] }, intent: input.intent, timezone: family?.timezone ?? "America/New_York" }) }];
 
     for (const item of evidence) {
       if (!item.storage_path || !item.mime_type) continue;
@@ -333,13 +335,17 @@ async function persistObservation(admin: ReturnType<typeof createAdminClient>, i
   return observationId;
 }
 
-function buildContext({ student, evidence, observations, recentArtifacts, categories, corrections, intent, timezone }: {
+export function buildContext({ student, evidence, observations, recentArtifacts, categories, corrections, parentReviewCorrections, intent, timezone }: {
   student: { display_name: string; grade_band: string | null; learning_preferences: string | null };
   evidence: Array<{ id: string; kind: string; title: string | null; raw_text: string | null; source_at: string }>;
   observations: Array<{ subject: string; skill_label: string; status: string; rationale: string }>;
   recentArtifacts: Array<{ type: string; title: string; summary: string | null; content: unknown }>;
   categories: Array<{ name: string; slug: string; description: string | null }>;
   corrections: Array<{ from_category_name: string | null; evidence_title: string | null; evidence_excerpt: string | null; cues: string[]; categories: { name: string; slug: string } }>;
+  parentReviewCorrections: {
+    observations: Array<{ subject: string; skill_label: string; rationale: string; rejection_reason: string | null; reviewed_at: string | null }>;
+    artifacts: Array<{ type: string; title: string; summary: string | null; rejection_reason: string | null; reviewed_at: string | null }>;
+  };
   intent: AgentIntent;
   timezone: string;
 }) {
@@ -357,14 +363,37 @@ function buildContext({ student, evidence, observations, recentArtifacts, catego
       evidence_excerpt: correction.evidence_excerpt,
       cues: correction.cues,
     })),
+    parent_review_corrections: {
+      observations: parentReviewCorrections.observations.map((item) => ({
+        subject: item.subject, rejected_conclusion: item.skill_label, rejected_summary: item.rationale,
+        correction: parseReviewReason(item.rejection_reason), reviewed_at: item.reviewed_at,
+      })),
+      artifacts: parentReviewCorrections.artifacts.map((item) => ({
+        type: item.type, rejected_title: item.title, rejected_summary: item.summary,
+        correction: parseReviewReason(item.rejection_reason), reviewed_at: item.reviewed_at,
+      })),
+    },
     current_datetime: new Date().toISOString(),
     family_timezone: timezone,
   });
 }
 
+export function parseReviewReason(value: string | null): { code: string; detail?: string } | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const record = parsed as Record<string, unknown>;
+    if (typeof record.code !== "string") return null;
+    return { code: record.code, ...(typeof record.detail === "string" ? { detail: record.detail } : {}) };
+  } catch { return null; }
+}
+
 const KLIO_INSTRUCTIONS = `You are Klio, a capable homeschool-specific agent working for a parent. Turn the selected evidence and durable learner context into the requested useful artifact.
 
 Ground every claim in the supplied evidence or approved context. Never invent completed work, grades, diagnoses, laws, sources, or facts about the learner. Keep siblings distinct. If evidence is weak or ambiguous, state that in uncertainty_flags and ask for a useful next observation. Candidate skill observations must be conservative and source-backed; they are always drafts for parent approval.
+
+Parent review corrections are authoritative negative examples for this learner. Do not repeat a rejected conclusion or draft unless materially new evidence supports it. A wrong_learner correction must never become context for this learner; parent_or_sibling_helped means the work cannot establish independent mastery; not_enough_information is a constraint to gather more evidence, never a learner fact. Follow correction detail when supplied, but do not quote it unnecessarily.
 
 Always organize the selected evidence into one stable, broad curriculum category. Reuse an existing family category when it fits. Parent filing corrections are authoritative examples; follow their pattern when the new evidence has similar cues. Prefer durable folders such as History, Math, Science, Language Arts, Reading, Writing, Art, Music, Physical Education, Life Skills, Field Trips, or General—not narrow one-off topics. A history chapter review belongs in History, with Review as its document type and specific topics as tags. Keep tags short, useful for search, and free of duplicates. The organization rationale should briefly explain the filing choice.
 
