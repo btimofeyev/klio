@@ -18,9 +18,11 @@ test("a parent creates a workspace and captures a real note", async ({ page }) =
     await page.getByLabel("Learner’s first name").fill("Learner");
     await page.getByRole("button", { name: "Enter Klio" }).click();
     await expect(page).toHaveURL(/\/app$/);
-    await page.getByPlaceholder(/Drop in a note/).fill("Read two chapters and compared the characters' choices.");
+    await page.getByPlaceholder(/Drop in anything/).fill("Read two chapters and compared the characters' choices.");
     await page.locator(".capture-submit").click();
-    await expect(page.getByText(/Read two chapters/).first()).toBeVisible();
+    await expect(page.getByText("Saving your record…")).toBeHidden({ timeout: 30_000 });
+    await expect(page.getByText(/working in the background/i)).toBeVisible();
+    await expect(page.locator(".evidence-row").filter({ hasText: /Read two chapters/ })).toBeVisible();
   } finally {
     const { data } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
     const userId = data.users.find((user) => user.email === email)?.id;
@@ -93,12 +95,11 @@ test("selected evidence becomes a parent-approved OpenAI artifact", async ({ pag
     await page.getByLabel("Learner’s first name").fill("Learner");
     await page.getByRole("button", { name: "Enter Klio" }).click();
     await expect(page).toHaveURL(/\/app$/);
-    await page.getByPlaceholder(/Drop in a note/).fill("Today the learner read a short nonfiction passage about pollinators, explained the main idea accurately, and asked why bats can be pollinators too.");
+    await page.getByPlaceholder(/Drop in anything/).fill("Today the learner read a short nonfiction passage about pollinators, explained the main idea accurately, and asked why bats can be pollinators too.");
     await page.locator(".capture-submit").click();
-    await expect(page.getByRole("button", { name: "Use Klio" })).toBeVisible();
-    await page.getByRole("button", { name: "Understand this" }).click();
-    await expect(page.locator(".artifact-row").first()).toBeVisible({ timeout: 150_000 });
-    await page.locator(".artifact-row").first().click();
+    await expect(page.getByText(/working in the background/i)).toBeVisible();
+    await expect(page.locator(".rail-artifact").first()).toBeVisible({ timeout: 150_000 });
+    await page.locator(".rail-artifact").first().click();
     await expect(page.getByText("draft", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Approve" }).click();
     await expect(page.getByText("approved", { exact: true })).toBeVisible();

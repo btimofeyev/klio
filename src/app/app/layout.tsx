@@ -1,13 +1,16 @@
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import { AppNav, MobileNav } from "@/components/app-nav";
 import { getWorkspace } from "@/lib/data/workspace";
+import { recoverAgentJobs } from "@/lib/agent/jobs";
 
 export default async function WorkspaceLayout({ children }: { children: React.ReactNode }) {
   const workspace = await getWorkspace();
   if (!workspace) redirect("/onboarding");
+  after(() => recoverAgentJobs(workspace.family.id));
   return (
     <div className="app-shell">
-      <AppNav familyName={workspace.family.name} pending={workspace.pendingApprovals} />
+      <AppNav familyName={workspace.family.name} students={workspace.students} pending={workspace.pendingApprovals} />
       <main className="app-main">{children}</main>
       <MobileNav pending={workspace.pendingApprovals} />
     </div>

@@ -11,6 +11,7 @@ export default async function InboxPage() {
       students={workspace.students}
       initialEvidence={workspace.evidence}
       initialArtifacts={workspace.artifacts}
+      initialJobs={workspace.agentJobs}
     />
   );
 }

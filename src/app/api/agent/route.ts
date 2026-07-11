@@ -1,12 +1,13 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireParentApi } from "@/lib/auth/require-parent";
 import { createClient } from "@/lib/supabase/server";
-import { runKlioAgent } from "@/lib/agent/run-agent";
 import { checkRateLimit } from "@/lib/security/rate-limit";
+import { enqueueAgentJob, safelyProcessAgentJob } from "@/lib/agent/jobs";
+import type { AgentIntent } from "@/lib/agent/run-agent";
 
 export const runtime = "nodejs";
-export const maxDuration = 120;
+export const maxDuration = 300;
 
 const schema = z.object({
   familyId: z.uuid(), studentId: z.uuid(), evidenceIds: z.array(z.uuid()).min(1).max(20),
@@ -23,8 +24,15 @@ export async function POST(request: Request) {
     const supabase = await createClient();
     const { data: membership } = await supabase.from("family_members").select("family_id").eq("family_id", parsed.data.familyId).eq("user_id", parent.id).maybeSingle();
     if (!membership) return NextResponse.json({ error: "You do not have access to that workspace." }, { status: 403 });
-    const result = await runKlioAgent({ ...parsed.data, parentId: parent.id });
-    return NextResponse.json(result);
+    const job = await enqueueAgentJob({
+      familyId: parsed.data.familyId,
+      parentId: parent.id,
+      studentId: parsed.data.studentId,
+      evidenceIds: parsed.data.evidenceIds,
+      intents: [parsed.data.intent as AgentIntent],
+    });
+    after(() => safelyProcessAgentJob(job.id));
+    return NextResponse.json({ job }, { status: 202 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
     if (message === "UNAUTHORIZED") return NextResponse.json({ error: "Sign in to continue." }, { status: 401 });

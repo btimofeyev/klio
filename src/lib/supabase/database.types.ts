@@ -34,6 +34,192 @@ export type Database = {
   }
   public: {
     Tables: {
+      agent_job_actions: {
+        Row: {
+          agent_run_id: string | null
+          artifact_id: string | null
+          attempt_count: number
+          completed_at: string | null
+          created_at: string
+          error_message: string | null
+          family_id: string
+          id: string
+          intent: string
+          job_id: string
+          started_at: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          agent_run_id?: string | null
+          artifact_id?: string | null
+          attempt_count?: number
+          completed_at?: string | null
+          created_at?: string
+          error_message?: string | null
+          family_id: string
+          id?: string
+          intent: string
+          job_id: string
+          started_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          agent_run_id?: string | null
+          artifact_id?: string | null
+          attempt_count?: number
+          completed_at?: string | null
+          created_at?: string
+          error_message?: string | null
+          family_id?: string
+          id?: string
+          intent?: string
+          job_id?: string
+          started_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_job_actions_agent_run_id_fkey"
+            columns: ["agent_run_id"]
+            isOneToOne: false
+            referencedRelation: "agent_runs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_job_actions_artifact_id_fkey"
+            columns: ["artifact_id"]
+            isOneToOne: false
+            referencedRelation: "artifacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_job_actions_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_job_actions_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "agent_jobs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      agent_job_evidence: {
+        Row: {
+          evidence_id: string
+          family_id: string
+          job_id: string
+        }
+        Insert: {
+          evidence_id: string
+          family_id: string
+          job_id: string
+        }
+        Update: {
+          evidence_id?: string
+          family_id?: string
+          job_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_job_evidence_evidence_id_fkey"
+            columns: ["evidence_id"]
+            isOneToOne: false
+            referencedRelation: "evidence_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_job_evidence_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_job_evidence_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "agent_jobs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      agent_jobs: {
+        Row: {
+          attempt_count: number
+          completed_actions: number
+          completed_at: string | null
+          created_at: string
+          error_message: string | null
+          failed_actions: number
+          family_id: string
+          id: string
+          last_heartbeat_at: string | null
+          requested_by: string
+          started_at: string | null
+          status: string
+          student_id: string
+          total_actions: number
+          updated_at: string
+        }
+        Insert: {
+          attempt_count?: number
+          completed_actions?: number
+          completed_at?: string | null
+          created_at?: string
+          error_message?: string | null
+          failed_actions?: number
+          family_id: string
+          id?: string
+          last_heartbeat_at?: string | null
+          requested_by: string
+          started_at?: string | null
+          status?: string
+          student_id: string
+          total_actions: number
+          updated_at?: string
+        }
+        Update: {
+          attempt_count?: number
+          completed_actions?: number
+          completed_at?: string | null
+          created_at?: string
+          error_message?: string | null
+          failed_actions?: number
+          family_id?: string
+          id?: string
+          last_heartbeat_at?: string | null
+          requested_by?: string
+          started_at?: string | null
+          status?: string
+          student_id?: string
+          total_actions?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_jobs_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_jobs_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "students"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       agent_run_evidence: {
         Row: {
           agent_run_id: string
@@ -83,6 +269,7 @@ export type Database = {
           id: string
           input_summary: Json
           intent: string
+          job_action_id: string | null
           model: string | null
           output_summary: Json | null
           requested_by: string
@@ -98,6 +285,7 @@ export type Database = {
           id?: string
           input_summary?: Json
           intent: string
+          job_action_id?: string | null
           model?: string | null
           output_summary?: Json | null
           requested_by: string
@@ -113,6 +301,7 @@ export type Database = {
           id?: string
           input_summary?: Json
           intent?: string
+          job_action_id?: string | null
           model?: string | null
           output_summary?: Json | null
           requested_by?: string
@@ -126,6 +315,13 @@ export type Database = {
             columns: ["family_id"]
             isOneToOne: false
             referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_runs_job_action_id_fkey"
+            columns: ["job_action_id"]
+            isOneToOne: true
+            referencedRelation: "agent_job_actions"
             referencedColumns: ["id"]
           },
         ]
@@ -715,6 +911,67 @@ export type Database = {
             columns: ["observation_id"]
             isOneToOne: false
             referencedRelation: "skill_observations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      organization_corrections: {
+        Row: {
+          created_at: string
+          created_by: string
+          cues: string[]
+          evidence_excerpt: string | null
+          evidence_id: string | null
+          evidence_title: string | null
+          family_id: string
+          from_category_name: string | null
+          id: string
+          to_category_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          cues?: string[]
+          evidence_excerpt?: string | null
+          evidence_id?: string | null
+          evidence_title?: string | null
+          family_id: string
+          from_category_name?: string | null
+          id?: string
+          to_category_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          cues?: string[]
+          evidence_excerpt?: string | null
+          evidence_id?: string | null
+          evidence_title?: string | null
+          family_id?: string
+          from_category_name?: string | null
+          id?: string
+          to_category_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "organization_corrections_evidence_id_fkey"
+            columns: ["evidence_id"]
+            isOneToOne: false
+            referencedRelation: "evidence_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "organization_corrections_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "organization_corrections_to_category_id_fkey"
+            columns: ["to_category_id"]
+            isOneToOne: false
+            referencedRelation: "categories"
             referencedColumns: ["id"]
           },
         ]

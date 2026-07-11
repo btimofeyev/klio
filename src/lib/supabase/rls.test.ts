@@ -73,6 +73,39 @@ describe("family RLS isolation", () => {
     expect(forgedLink.error).not.toBeNull();
   });
 
+  it("keeps background jobs and filing corrections inside their family", async () => {
+    const student = await clients[0].from("students").insert({ family_id: families[0], display_name: "Queue isolation learner" }).select("id").single();
+    if (student.error) throw student.error;
+    const evidence = await clients[0].from("evidence_items").insert({ family_id: families[0], created_by: users[0], kind: "note", raw_text: "Transient queue isolation evidence" }).select("id").single();
+    if (evidence.error) throw evidence.error;
+    const category = await clients[0].from("categories").insert({ family_id: families[0], name: "Queue History", slug: `queue-history-${suffix}`, created_by: users[0], created_by_type: "parent" }).select("id").single();
+    if (category.error) throw category.error;
+    const job = await admin.from("agent_jobs").insert({ family_id: families[0], requested_by: users[0], student_id: student.data.id, total_actions: 1 }).select("id").single();
+    if (job.error) throw job.error;
+    await admin.from("agent_job_actions").insert({ family_id: families[0], job_id: job.data.id, intent: "organize" });
+    await admin.from("agent_job_evidence").insert({ family_id: families[0], job_id: job.data.id, evidence_id: evidence.data.id });
+
+    const ownJob = await clients[0].from("agent_jobs").select("id").eq("id", job.data.id);
+    const hiddenJob = await clients[1].from("agent_jobs").select("id").eq("id", job.data.id);
+    expect(ownJob.data).toEqual([{ id: job.data.id }]);
+    expect(hiddenJob.data).toEqual([]);
+
+    const correction = await clients[0].from("organization_corrections").insert({ family_id: families[0], evidence_id: evidence.data.id, to_category_id: category.data.id, created_by: users[0], cues: ["history"] }).select("id").single();
+    if (correction.error) throw correction.error;
+    const hiddenCorrection = await clients[1].from("organization_corrections").select("id").eq("id", correction.data.id);
+    expect(hiddenCorrection.data).toEqual([]);
+  });
+
+  it("allows only one pending draft for the same learner skill", async () => {
+    const student = await clients[0].from("students").insert({ family_id: families[0], display_name: "Deduplication learner" }).select("id").single();
+    if (student.error) throw student.error;
+    const observation = { family_id: families[0], student_id: student.data.id, authored_by: users[0], author_type: "parent" as const, subject: "Reading", skill_key: "reading.main-idea", skill_label: "Finds the main idea", status: "developing" as const, rationale: "Transient draft" };
+    const first = await clients[0].from("skill_observations").insert(observation);
+    const duplicate = await clients[0].from("skill_observations").insert({ ...observation, rationale: "Duplicate transient draft" });
+    expect(first.error).toBeNull();
+    expect(duplicate.error?.code).toBe("23505");
+  });
+
   it("does not trust an unexpired token after its Auth user is deleted", async () => {
     const email = `deleted-session-${crypto.randomUUID()}@example.test`;
     const created = await admin.auth.admin.createUser({ email, password, email_confirm: true });

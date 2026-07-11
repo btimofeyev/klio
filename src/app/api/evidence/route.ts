@@ -1,14 +1,18 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireParentApi } from "@/lib/auth/require-parent";
 import { writeAuditEvent } from "@/lib/audit/write-audit-event";
 import { checkRateLimit } from "@/lib/security/rate-limit";
+import { enqueueAgentJob, safelyProcessAgentJob } from "@/lib/agent/jobs";
+import type { AgentIntent } from "@/lib/agent/run-agent";
 
 export const runtime = "nodejs";
+export const maxDuration = 300;
 
 const inputSchema = z.object({ familyId: z.uuid(), studentId: z.uuid(), text: z.string().max(20000).optional(), kind: z.enum(["note", "grade", "book", "activity"]).default("note") });
+const intentsSchema = z.array(z.enum(["understand", "update_records", "next_step", "weekly_plan", "lesson", "summary", "practice", "portfolio"])).min(1).max(3);
 const allowedTypes = new Set(["image/jpeg", "image/png", "image/webp", "application/pdf", "audio/webm", "audio/mpeg", "audio/mp4", "audio/wav", "text/csv"]);
 
 export async function POST(request: Request) {
@@ -23,6 +27,10 @@ export async function POST(request: Request) {
       kind: typeof form.get("kind") === "string" ? form.get("kind") : "note",
     });
     if (!parsed.success) return NextResponse.json({ error: "The capture is missing required details." }, { status: 400 });
+    let intentInput: unknown = ["understand"];
+    try { intentInput = JSON.parse(typeof form.get("intents") === "string" ? String(form.get("intents")) : '["understand"]'); } catch { intentInput = null; }
+    const intents = intentsSchema.safeParse(intentInput);
+    if (!intents.success) return NextResponse.json({ error: "Choose one to three Klio actions." }, { status: 400 });
 
     const files = form.getAll("file").filter((value): value is File => value instanceof File && value.size > 0);
     if (!files.length && !parsed.data.text?.trim()) return NextResponse.json({ error: "Add a note, photo, voice clip, or file." }, { status: 400 });
@@ -75,7 +83,15 @@ export async function POST(request: Request) {
       action: "evidence.captured", entityType: "evidence_item", entityId: ids[0],
       metadata: { item_count: ids.length, has_file: Boolean(files.length), has_text: Boolean(text) },
     });
-    return NextResponse.json({ id: ids[0], ids, status: "received" }, { status: 201 });
+    const job = await enqueueAgentJob({
+      familyId: parsed.data.familyId,
+      parentId: parent.id,
+      studentId: parsed.data.studentId,
+      evidenceIds: ids,
+      intents: intents.data as AgentIntent[],
+    });
+    after(() => safelyProcessAgentJob(job.id));
+    return NextResponse.json({ id: ids[0], ids, status: "queued", job }, { status: 201 });
   } catch (error) {
     if (error instanceof Error && error.message === "UNAUTHORIZED") return NextResponse.json({ error: "Sign in to continue." }, { status: 401 });
     return NextResponse.json({ error: "Klio could not save this capture." }, { status: 500 });

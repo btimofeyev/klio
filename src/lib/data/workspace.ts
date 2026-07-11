@@ -54,6 +54,18 @@ export type ArtifactDTO = {
   studentId: string | null;
 };
 
+export type AgentJobDTO = {
+  id: string;
+  status: string;
+  totalActions: number;
+  completedActions: number;
+  failedActions: number;
+  errorMessage: string | null;
+  createdAt: string;
+  completedAt: string | null;
+  actions: Array<{ id: string; intent: string; status: string; errorMessage: string | null }>;
+};
+
 export const getWorkspace = cache(async () => {
   const parent = await requireParent();
   const supabase = await createClient();
@@ -68,13 +80,14 @@ export const getWorkspace = cache(async () => {
   if (!membership) return null;
 
   const familyId = membership.family_id;
-  const [familyResult, studentsResult, evidenceResult, artifactsResult, approvalsResult, categoriesResult] = await Promise.all([
+  const [familyResult, studentsResult, evidenceResult, artifactsResult, approvalsResult, categoriesResult, jobsResult] = await Promise.all([
     supabase.from("families").select("id, name, timezone").eq("id", familyId).single(),
     supabase.from("students").select("id, display_name, grade_band, learning_preferences").eq("family_id", familyId).eq("active", true).order("created_at"),
     supabase.from("evidence_items").select("id, kind, title, raw_text, mime_type, storage_path, source_at, processing_status, created_at, evidence_students(student_id), evidence_categories(document_type, tags, confidence, categories(id, name, slug))").eq("family_id", familyId).order("created_at", { ascending: false }).limit(40),
     supabase.from("artifacts").select("id, type, title, summary, content, rationale, status, created_at, student_id").eq("family_id", familyId).order("created_at", { ascending: false }).limit(20),
     supabase.from("approval_requests").select("id", { count: "exact", head: true }).eq("family_id", familyId).eq("status", "pending"),
     supabase.from("categories").select("id, name, slug, description, evidence_categories(count)").eq("family_id", familyId).order("name"),
+    supabase.from("agent_jobs").select("id, status, total_actions, completed_actions, failed_actions, error_message, created_at, completed_at, agent_job_actions(id, intent, status, error_message)").eq("family_id", familyId).order("created_at", { ascending: false }).limit(12),
   ]);
 
   if (familyResult.error) throw familyResult.error;
@@ -82,6 +95,7 @@ export const getWorkspace = cache(async () => {
   if (evidenceResult.error) throw evidenceResult.error;
   if (artifactsResult.error) throw artifactsResult.error;
   if (categoriesResult.error) throw categoriesResult.error;
+  if (jobsResult.error) throw jobsResult.error;
 
   return {
     parent,
@@ -130,6 +144,22 @@ export const getWorkspace = cache(async () => {
       status: artifact.status,
       createdAt: artifact.created_at,
       studentId: artifact.student_id,
+    })),
+    agentJobs: jobsResult.data.map((job): AgentJobDTO => ({
+      id: job.id,
+      status: job.status,
+      totalActions: job.total_actions,
+      completedActions: job.completed_actions,
+      failedActions: job.failed_actions,
+      errorMessage: job.error_message,
+      createdAt: job.created_at,
+      completedAt: job.completed_at,
+      actions: job.agent_job_actions.map((action) => ({
+        id: action.id,
+        intent: action.intent,
+        status: action.status,
+        errorMessage: action.error_message,
+      })),
     })),
     pendingApprovals: approvalsResult.count ?? 0,
   };
