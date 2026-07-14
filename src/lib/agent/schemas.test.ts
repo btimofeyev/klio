@@ -9,6 +9,7 @@ describe("agentArtifactSchema", () => {
 
   it("accepts an actionable reminder with an explicit due date", () => {
     const result = agentArtifactSchema.safeParse({
+      capture_route: "reminder",
       artifact_type: "analysis",
       organization: { category_name: "Math", document_type: "Parent note", tags: ["homework"], confidence: .95, rationale: "The note is about math homework." },
       title: "Weekly math grading note", summary: "The parent needs to grade this week's math homework.", rationale: "Explicit future action in the note.", uncertainty_flags: [],

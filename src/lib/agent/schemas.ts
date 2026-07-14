@@ -35,6 +35,7 @@ const reminder = z.object({
 });
 
 export const agentArtifactSchema = z.object({
+  capture_route: z.enum(["learning", "reminder", "mixed", "uncertain"]),
   artifact_type: z.enum(["analysis", "next_step", "weekly_plan", "lesson", "summary", "practice", "portfolio"]),
   organization: z.object({
     category_name: z.string(),

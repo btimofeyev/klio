@@ -1,0 +1,39 @@
+{
+  "passed": true,
+  "codexVersion": "0.144.1",
+  "threadResumedAcrossProcessRestart": true,
+  "reminderCountAfterRetry": 1,
+  "filingCount": 1,
+  "clarificationCount": 1,
+  "hostileFixtureCount": 10,
+  "codingBiasFixtureCount": 6,
+  "audit": [
+    {
+      "action": "clarification.requested",
+      "familyId": "00000000-0000-4000-8000-00000000000a",
+      "turnId": "turn-reminder-question"
+    },
+    {
+      "action": "reminder.created",
+      "familyId": "00000000-0000-4000-8000-00000000000a",
+      "turnId": "turn-reminder-answer",
+      "idempotencyKey": "capture-30000000-0000-4000-8000-00000000000a-reminder-v1"
+    },
+    {
+      "action": "evidence.filed",
+      "familyId": "00000000-0000-4000-8000-00000000000a",
+      "turnId": "turn-worksheet",
+      "idempotencyKey": "capture-30000000-0000-4000-8000-00000000000b-filing-v1"
+    }
+  ],
+  "observedEventMethods": [
+    "account/rateLimits/updated",
+    "item/agentMessage/delta",
+    "item/completed",
+    "item/started",
+    "thread/status/changed",
+    "thread/tokenUsage/updated",
+    "turn/completed",
+    "turn/started"
+  ]
+}

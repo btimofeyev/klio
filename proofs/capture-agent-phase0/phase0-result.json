@@ -1,0 +1,27 @@
+{
+  "phase0Passed": true,
+  "date": "2026-07-11",
+  "codexVersion": "0.144.1",
+  "stopCondition": null,
+  "summary": "Klio host preflight injects an authorized, versioned snapshot before every Codex turn. The isolated live workflow, stale-snapshot rejection, restart/resume, idempotent writes, and adversarial fixtures pass without requiring the model to initiate mandatory reads.",
+  "passedChecks": [
+    "exactly_five_mcp_tools_configured",
+    "capability_attached_as_transport_bearer_token",
+    "model_arguments_cannot_supply_family_identity",
+    "expired_forged_and_cross_family_capabilities_rejected",
+    "host_injects_authorized_capture_and_family_snapshot",
+    "writes_require_current_snapshot_version",
+    "reminder_and_filing_writes_are_idempotent",
+    "filing_creates_no_artifact_or_approval",
+    "thread_resume_across_process_restart_succeeded_in_local_live_run",
+    "ten_hostile_content_fixtures_succeeded_in_local_live_run",
+    "six_coding_bias_fixtures_succeeded_in_local_live_run",
+    "built_in_shell_and_unified_exec_disabled",
+    "web_search_disabled",
+    "container_contains_no_klio_checkout",
+    "container_blocks_arbitrary_egress_and_drops_network_admin_capability"
+  ],
+  "failedChecks": [],
+  "productionChangesMade": false,
+  "requiredNextArchitecture": "Proceed with Codex app-server behind a Klio orchestrator that authorizes and injects bounded snapshots, schema-validates terminal outputs, and binds every write to family identity plus snapshot version."
+}

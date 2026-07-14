@@ -91,6 +91,32 @@ export async function runKlioAgent(input: {
     const result = response.output_parsed;
     if (!result) throw new Error("MODEL_OUTPUT_INVALID");
 
+    const reminderIds = await persistReminders(admin, {
+      familyId: input.familyId,
+      studentId: input.studentId,
+      runId: run.id,
+      parentId: input.parentId,
+      evidenceId: input.evidenceIds[0],
+      reminders: result.reminders,
+    });
+    const captureRoute = effectiveCaptureRoute(result.capture_route, reminderIds.length);
+
+    if (captureRoute === "reminder") {
+      await admin.from("evidence_categories").delete().eq("family_id", input.familyId).in("evidence_id", input.evidenceIds);
+      const { error: routeError } = await admin.from("evidence_items").update({ capture_route: "reminder", processing_status: "ready", error_message: null }).in("id", input.evidenceIds).eq("family_id", input.familyId);
+      if (routeError) throw routeError;
+      await admin.from("agent_runs").update({ status: "completed", completed_at: new Date().toISOString(), output_summary: { capture_route: captureRoute, reminder_ids: reminderIds }, tool_trace: [{ tool: "read_evidence" }, { tool: "route_capture", route: captureRoute }, { tool: "create_reminders", reminder_ids: reminderIds }] }).eq("id", run.id);
+      await writeAuditEvent(admin, { familyId: input.familyId, actorType: "agent", action: "reminder.captured", entityType: "evidence_item", entityId: input.evidenceIds[0], metadata: { run_id: run.id, evidence_ids: input.evidenceIds, reminder_ids: reminderIds } });
+      return { artifactId: null, runId: run.id, categoryId: null, categoryName: null };
+    }
+
+    if (captureRoute === "uncertain") {
+      const { error: routeError } = await admin.from("evidence_items").update({ capture_route: "uncertain", processing_status: "needs_review", error_message: null }).in("id", input.evidenceIds).eq("family_id", input.familyId);
+      if (routeError) throw routeError;
+      await admin.from("agent_runs").update({ status: "completed", completed_at: new Date().toISOString(), output_summary: { capture_route: captureRoute, reminder_ids: reminderIds }, tool_trace: [{ tool: "read_evidence" }, { tool: "route_capture", route: captureRoute }] }).eq("id", run.id);
+      return { artifactId: null, runId: run.id, categoryId: null, categoryName: null };
+    }
+
     const categoryName = cleanCategoryName(result.organization.category_name);
     const categorySlug = slugifyCategory(categoryName);
     const tags = [...new Set(result.organization.tags.map(cleanTag).filter(Boolean))].slice(0, 8);
@@ -125,18 +151,9 @@ export async function runKlioAgent(input: {
     );
     if (evidenceCategoryError) throw evidenceCategoryError;
 
-    const reminderIds = await persistReminders(admin, {
-      familyId: input.familyId,
-      studentId: input.studentId,
-      runId: run.id,
-      parentId: input.parentId,
-      evidenceId: input.evidenceIds[0],
-      reminders: result.reminders,
-    });
-
     if (input.intent === "organize") {
-      await admin.from("evidence_items").update({ processing_status: "ready", error_message: null }).in("id", input.evidenceIds).eq("family_id", input.familyId);
-      await admin.from("agent_runs").update({ status: "completed", completed_at: new Date().toISOString(), output_summary: { category_id: category.id, reminder_ids: reminderIds }, tool_trace: [{ tool: "read_evidence" }, { tool: "organize_evidence", category_id: category.id }, { tool: "create_reminders", reminder_ids: reminderIds }] }).eq("id", run.id);
+      await admin.from("evidence_items").update({ capture_route: captureRoute, processing_status: "ready", error_message: null }).in("id", input.evidenceIds).eq("family_id", input.familyId);
+      await admin.from("agent_runs").update({ status: "completed", completed_at: new Date().toISOString(), output_summary: { capture_route: captureRoute, category_id: category.id, reminder_ids: reminderIds }, tool_trace: [{ tool: "read_evidence" }, { tool: "route_capture", route: captureRoute }, { tool: "organize_evidence", category_id: category.id }, { tool: "create_reminders", reminder_ids: reminderIds }] }).eq("id", run.id);
       await writeAuditEvent(admin, { familyId: input.familyId, actorType: "agent", action: "evidence.organized", entityType: "category", entityId: category.id, metadata: { run_id: run.id, evidence_ids: input.evidenceIds } });
       return { artifactId: null, runId: run.id, categoryId: category.id, categoryName };
     }
@@ -168,8 +185,8 @@ export async function runKlioAgent(input: {
       if (observationId) observationCount += 1;
     }
     await admin.from("approval_requests").insert({ family_id: input.familyId, requested_by_run: run.id, entity_type: "artifact", entity_id: artifact.id });
-    await admin.from("evidence_items").update({ processing_status: "ready" }).in("id", input.evidenceIds).eq("family_id", input.familyId);
-    await admin.from("agent_runs").update({ status: "completed", completed_at: new Date().toISOString(), output_summary: { artifact_id: artifact.id, observation_count: observationCount, category_id: category.id, reminder_ids: reminderIds }, tool_trace: [{ tool: "read_student_context" }, { tool: "organize_evidence", category_id: category.id }, { tool: "create_reminders", reminder_ids: reminderIds }, { tool: "create_draft_artifact", artifact_id: artifact.id }] }).eq("id", run.id);
+    await admin.from("evidence_items").update({ capture_route: captureRoute, processing_status: "ready" }).in("id", input.evidenceIds).eq("family_id", input.familyId);
+    await admin.from("agent_runs").update({ status: "completed", completed_at: new Date().toISOString(), output_summary: { capture_route: captureRoute, artifact_id: artifact.id, observation_count: observationCount, category_id: category.id, reminder_ids: reminderIds }, tool_trace: [{ tool: "read_student_context" }, { tool: "route_capture", route: captureRoute }, { tool: "organize_evidence", category_id: category.id }, { tool: "create_reminders", reminder_ids: reminderIds }, { tool: "create_draft_artifact", artifact_id: artifact.id }] }).eq("id", run.id);
     await writeAuditEvent(admin, { familyId: input.familyId, actorType: "agent", action: "agent.draft_created", entityType: "artifact", entityId: artifact.id, metadata: { run_id: run.id, intent: input.intent, evidence_ids: input.evidenceIds } });
     return { artifactId: artifact.id, runId: run.id, categoryId: category.id, categoryName };
   } catch (error) {
@@ -245,6 +262,12 @@ async function persistReminders(admin: ReturnType<typeof createAdminClient>, inp
     else ids.push(created.id);
   }
   return ids;
+}
+
+export function effectiveCaptureRoute(route: AgentArtifact["capture_route"], reminderCount: number): AgentArtifact["capture_route"] {
+  if (route === "reminder" && reminderCount === 0) return "uncertain";
+  if (route === "mixed" && reminderCount === 0) return "learning";
+  return route;
 }
 
 async function persistObservation(admin: ReturnType<typeof createAdminClient>, input: {
@@ -391,13 +414,15 @@ export function parseReviewReason(value: string | null): { code: string; detail?
 
 const KLIO_INSTRUCTIONS = `You are Klio, a capable homeschool-specific agent working for a parent. Turn the selected evidence and durable learner context into the requested useful artifact.
 
+First route the capture. Use capture_route=reminder when the capture is only a parent obligation, future action, deadline, or thing to remember and contains no actual completed learning. Use learning for completed learning evidence. Use mixed only when the same capture genuinely contains both completed learning and a future parent action. Use uncertain when there is not enough context to distinguish them. A reminder-only capture is private source material: do not treat it as General learning, infer a skill observation, or make a meaningful learning artifact from it; organization fields are ignored for that route.
+
 Ground every claim in the supplied evidence or approved context. Never invent completed work, grades, diagnoses, laws, sources, or facts about the learner. Keep siblings distinct. If evidence is weak or ambiguous, state that in uncertainty_flags and ask for a useful next observation. Candidate skill observations must be conservative and source-backed; they are always drafts for parent approval.
 
 Parent review corrections are authoritative negative examples for this learner. Do not repeat a rejected conclusion or draft unless materially new evidence supports it. A wrong_learner correction must never become context for this learner; parent_or_sibling_helped means the work cannot establish independent mastery; not_enough_information is a constraint to gather more evidence, never a learner fact. Follow correction detail when supplied, but do not quote it unnecessarily.
 
 Always organize the selected evidence into one stable, broad curriculum category. Reuse an existing family category when it fits. Parent filing corrections are authoritative examples; follow their pattern when the new evidence has similar cues. Prefer durable folders such as History, Math, Science, Language Arts, Reading, Writing, Art, Music, Physical Education, Life Skills, Field Trips, or General—not narrow one-off topics. A history chapter review belongs in History, with Review as its document type and specific topics as tags. Keep tags short, useful for search, and free of duplicates. The organization rationale should briefly explain the filing choice.
 
-Extract genuine parent obligations as reminders whenever the capture uses actionable future language such as “I need to,” “remember to,” “we should,” or gives a deadline. Do not turn completed work, observations, or generic teaching suggestions into reminders. Use a concise verb-first title. Preserve useful context in notes. Resolve relative dates from current_datetime in family_timezone; “for the week” means by the upcoming Friday at 5:00 PM local time. Return due_at as an ISO 8601 timestamp with an offset, or null when the capture gives no reasonable timing. Reminders are saved immediately and do not need draft approval.
+Extract genuine parent obligations as reminders whenever the capture uses actionable future language such as “I need to,” “remember to,” “we should,” or gives a deadline. Do not turn completed work, observations, or generic teaching suggestions into reminders. Normalize first-person wording into a concise verb-first title: “i need to give out test on wednesday” becomes “Give out test.” Preserve the exact original wording only in the source evidence; reminder notes may retain useful context without repeating filler. Resolve relative dates from current_datetime in family_timezone; “for the week” means by the upcoming Friday at 5:00 PM local time. Return due_at as an ISO 8601 timestamp with an offset, or null when the capture gives no reasonable timing. Reminders are saved immediately and do not need draft approval.
 
 Match artifact_type to the request: organize→analysis, understand→analysis, next_step→next_step, weekly_plan→weekly_plan, lesson→lesson, practice→practice, summary→summary, portfolio→portfolio. For organize requests, classification is the only output that will be kept. For weekly plans, keep the workload manageable and use day offsets 0–13. For lessons, create practical parent-ready material. Only fill practice when explicitly asked; otherwise set it to null. Never output executable code or HTML.`;
 

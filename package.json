@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -H 0.0.0.0 -p 3100",
+    "dev": "bash -c 'NODE_OPTIONS=--conditions=react-server tsx scripts/agent-worker.mts & worker=$!; next dev -H 0.0.0.0 -p 3100 & web=$!; trap \"kill $worker $web 2>/dev/null || true\" EXIT INT TERM; wait -n $worker $web'",
     "build": "next build",
     "start": "next start -H 0.0.0.0 -p 3100",
     "lint": "eslint .",
@@ -15,18 +15,22 @@
     "db:stop": "supabase stop",
     "db:reset": "supabase db reset --local",
     "db:types": "supabase gen types typescript --local > src/lib/supabase/database.types.ts",
+    "agent:worker": "NODE_OPTIONS=--conditions=react-server tsx scripts/agent-worker.mts",
     "stripe:listen": "stripe listen --forward-to localhost:3100/api/stripe/webhook"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",
+    "@openai/codex-sdk": "0.144.1",
     "@supabase/ssr": "^0.12.0",
     "@supabase/supabase-js": "^2.110.2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.4.0",
+    "dictionary-en": "^4.0.0",
     "lucide-react": "^1.24.0",
     "motion": "^12.42.2",
     "next": "16.2.10",
+    "nspell": "^2.1.5",
     "openai": "^6.46.0",
     "papaparse": "^5.5.4",
     "react": "19.2.4",
@@ -44,6 +48,7 @@
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
     "@types/node": "^20",
+    "@types/nspell": "^2.1.6",
     "@types/papaparse": "^5.5.2",
     "@types/react": "^19",
     "@types/react-dom": "^19",
@@ -53,6 +58,7 @@
     "eslint-config-next": "16.2.10",
     "jsdom": "^29.1.1",
     "tailwindcss": "^4",
+    "tsx": "^4.23.0",
     "typescript": "^5",
     "vitest": "^4.1.10"
   }

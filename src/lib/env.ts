@@ -22,6 +22,18 @@ export const serverEnv = {
   get openAiModel() {
     return process.env.OPENAI_MODEL || "gpt-5.6-terra";
   },
+  get klioAgentRuntime() {
+    return process.env.KLIO_AGENT_RUNTIME === "responses" ? "responses" : "codex_app_server";
+  },
+  get klioAgentCapabilitySecret() {
+    return required("KLIO_AGENT_CAPABILITY_SECRET");
+  },
+  get klioCodexHomeRoot() {
+    return process.env.KLIO_CODEX_HOME_ROOT || `${process.env.HOME || "/tmp"}/.local/state/klio/codex`;
+  },
+  get klioAgentInline() {
+    return process.env.KLIO_AGENT_INLINE === "true";
+  },
   get appUrl() {
     return process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
   },

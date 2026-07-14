@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import { buildContext, parseReviewReason } from "./run-agent";
+import { buildContext, effectiveCaptureRoute, parseReviewReason } from "./run-agent";
+import { DEFAULT_CAPTURE_INTENT } from "./intents";
 
 describe("parent review corrections in agent context", () => {
   it("includes bounded learner corrections alongside approved context", () => {
@@ -24,5 +25,20 @@ describe("parent review corrections in agent context", () => {
   it("treats malformed legacy reasons as absent", () => {
     expect(parseReviewReason("Rejected by parent")).toBeNull();
     expect(parseReviewReason(JSON.stringify({ code: "not_enough_information" }))).toEqual({ code: "not_enough_information" });
+  });
+});
+
+describe("capture routing", () => {
+  it("organizes ordinary captures without creating approval drafts by default", () => {
+    expect(DEFAULT_CAPTURE_INTENT).toBe("organize");
+  });
+
+  it("keeps reminder-only notes out of learning when a reminder was created", () => {
+    expect(effectiveCaptureRoute("reminder", 1)).toBe("reminder");
+  });
+
+  it("falls back to a tiny review question when reminder extraction produced nothing", () => {
+    expect(effectiveCaptureRoute("reminder", 0)).toBe("uncertain");
+    expect(effectiveCaptureRoute("mixed", 0)).toBe("learning");
   });
 });

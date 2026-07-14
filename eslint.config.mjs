@@ -12,6 +12,10 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Phase 0 contains generated protocol bindings and an ephemeral Codex home.
+    "proofs/capture-agent-phase0/protocol/**",
+    "proofs/capture-agent-phase0/protocol-json/**",
+    "proofs/capture-agent-phase0/.runtime/**",
   ]),
 ]);
 

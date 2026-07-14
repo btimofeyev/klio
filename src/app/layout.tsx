@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { DM_Sans, Newsreader } from "next/font/google";
 import "./globals.css";
+import "./teacher-canvas.css";
 
 const sans = DM_Sans({
   variable: "--font-sans",

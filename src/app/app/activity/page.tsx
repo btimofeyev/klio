@@ -1,6 +1,7 @@
 import { getWorkspace } from "@/lib/data/workspace";
 import { createClient } from "@/lib/supabase/server";
 import { ReviewWorkspace } from "@/components/review-workspace";
+import { HelpFilingQueue } from "@/components/help-filing-queue";
 import { formatReviewHistory, groupReviewSuggestions, type ReviewHistoryItem, type ReviewSource, type ReviewSuggestion } from "@/lib/review/presentation";
 
 type EvidenceRow = { id: string; kind: string; title: string | null; raw_text: string | null; mime_type: string | null; source_at: string };
@@ -73,10 +74,12 @@ export default async function ActivityPage() {
 
   const groups = groupReviewSuggestions(suggestions);
   const history: ReviewHistoryItem[] = (events ?? []).map((event) => formatReviewHistory(event));
+  const unfiled = workspace.evidence.filter((item) => item.captureRoute !== "reminder" && (item.status === "needs_review" || (item.status === "ready" && item.categories.length === 0)));
   return (
     <div className="section-page activity-page">
-      <header><p className="eyebrow">Needs your input</p><h1>Check Klio</h1><p>Check what Klio understood before it uses it to help plan what comes next.</p></header>
-      <ReviewWorkspace familyId={workspace.family.id} initialGroups={groups} initialHistory={history} staleCount={staleCount} />
+      <header><p className="eyebrow">Temporary queue</p><h1>Klio needs your help</h1><p>File anything Klio could not place, then confirm what it understood. This disappears when you are done.</p></header>
+      <HelpFilingQueue familyId={workspace.family.id} categories={workspace.categories} initialItems={unfiled} students={workspace.students} />
+      {groups.length || !unfiled.length ? <ReviewWorkspace familyId={workspace.family.id} initialGroups={groups} initialHistory={history} staleCount={staleCount} /> : null}
     </div>
   );
 }

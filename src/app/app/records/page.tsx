@@ -1,133 +1,120 @@
 import Link from "next/link";
-import { Download, FileText, Search, Sparkles, X } from "lucide-react";
+import { BookOpen, Camera, ChevronLeft, FileText, Folder, Mic, Paperclip, Sparkles } from "lucide-react";
 import { getWorkspace, type EvidenceDTO } from "@/lib/data/workspace";
 import { createClient } from "@/lib/supabase/server";
-import { OrganizationWorkspace } from "@/components/organization-workspace";
 
 type RecordSearchParams = Promise<Record<string, string | string[] | undefined>>;
 
 export default async function RecordsPage({ searchParams }: { searchParams: RecordSearchParams }) {
   const workspace = await getWorkspace();
   if (!workspace) return null;
+
   const query = await searchParams;
-  const filters = {
-    q: single(query.q).trim().toLowerCase(),
-    folder: single(query.folder),
-    student: single(query.student),
-    type: single(query.type),
-    status: single(query.status),
-    from: single(query.from),
-    to: single(query.to),
-  };
-  const hasFilters = Object.values(filters).some(Boolean);
+  const requestedStudent = single(query.student);
+  const selectedStudent = workspace.students.find((student) => student.id === requestedStudent) ?? null;
+  const familyView = !selectedStudent;
+  if (!workspace.students.length) return null;
+
   const supabase = await createClient();
-  const [{ data: evidenceRows, error: evidenceError }, { data: observationRows, error: observationError }, { data: artifactRows, error: artifactError }] = await Promise.all([
-    supabase.from("evidence_items").select("id, kind, title, raw_text, extracted_text, mime_type, storage_path, source_at, processing_status, created_at, evidence_students(student_id), evidence_categories(document_type, tags, confidence, categories(id, name, slug))").eq("family_id", workspace.family.id).order("created_at", { ascending: false }).limit(300),
-    supabase.from("skill_observations").select("id, student_id, subject, skill_label, status, rationale, approval_status, created_at").eq("family_id", workspace.family.id).order("created_at", { ascending: false }).limit(300),
-    supabase.from("artifacts").select("id, student_id, type, title, summary, rationale, status, created_at").eq("family_id", workspace.family.id).order("created_at", { ascending: false }).limit(200),
+  const [evidenceResult, subjectsResult] = await Promise.all([
+    supabase.from("evidence_items")
+      .select("id, capture_submission_id, capture_route, kind, title, raw_text, mime_type, storage_path, source_at, processing_status, created_at, evidence_students(student_id), evidence_categories(document_type, tags, confidence, categories(id, name, slug))")
+      .eq("family_id", workspace.family.id)
+      .neq("capture_route", "reminder")
+      .order("source_at", { ascending: false })
+      .limit(300),
+    supabase.from("student_subjects").select("student_id,name").eq("family_id", workspace.family.id).eq("status", "active"),
   ]);
-  if (evidenceError) throw evidenceError;
-  if (observationError) throw observationError;
-  if (artifactError) throw artifactError;
+  if (evidenceResult.error) throw evidenceResult.error;
+  if (subjectsResult.error) throw subjectsResult.error;
+  const evidenceRows = evidenceResult.data;
 
-  const studentNames = new Map(workspace.students.map((student) => [student.id, student.displayName]));
-  const evidence = (evidenceRows ?? []).map((item) => ({
-    dto: {
-      id: item.id,
-      kind: item.kind,
-      title: item.title,
-      rawText: item.raw_text,
-      mimeType: item.mime_type,
-      storagePath: item.storage_path,
-      sourceAt: item.source_at,
-      status: item.processing_status,
-      createdAt: item.created_at,
-      studentIds: item.evidence_students.map((link) => link.student_id),
-      categories: item.evidence_categories.map((link) => ({ id: link.categories.id, name: link.categories.name, slug: link.categories.slug, documentType: link.document_type, tags: link.tags, confidence: link.confidence })),
-    } satisfies EvidenceDTO,
-    extractedText: item.extracted_text,
-  })).filter(({ dto, extractedText }) => {
-    const filing = dto.categories[0];
-    const learnerText = dto.studentIds.map((id) => studentNames.get(id) ?? "").join(" ");
-    const haystack = [dto.title, dto.rawText, extractedText, filing?.name, filing?.documentType, ...(filing?.tags ?? []), learnerText].filter(Boolean).join(" ").toLowerCase();
-    return matchesText(haystack, filters.q)
-      && (!filters.folder || filing?.id === filters.folder || (filters.folder === "unfiled" && !filing))
-      && (!filters.student || dto.studentIds.includes(filters.student))
-      && (!filters.type || dto.kind === filters.type || filing?.documentType?.toLowerCase() === filters.type.toLowerCase())
-      && (!filters.status || dto.status === filters.status)
-      && matchesDate(dto.sourceAt, filters.from, filters.to);
-  }).map(({ dto }) => dto);
+  const evidence = (evidenceRows ?? []).map((item): EvidenceDTO => ({
+    id: item.id,
+    captureSubmissionId: item.capture_submission_id,
+    captureRoute: item.capture_route,
+    kind: item.kind,
+    title: item.title,
+    rawText: item.raw_text,
+    mimeType: item.mime_type,
+    storagePath: item.storage_path,
+    sourceAt: item.source_at,
+    status: item.processing_status,
+    createdAt: item.created_at,
+    studentIds: item.evidence_students.map((link) => link.student_id),
+    categories: item.evidence_categories.map((link) => ({ id: link.categories.id, name: link.categories.name, slug: link.categories.slug, documentType: link.document_type, tags: link.tags, confidence: link.confidence })),
+  })).filter((item) => familyView || item.studentIds.includes(selectedStudent.id));
 
-  const observations = (observationRows ?? []).filter((observation) => {
-    const haystack = `${observation.subject} ${observation.skill_label} ${observation.rationale} ${studentNames.get(observation.student_id) ?? ""}`.toLowerCase();
-    return matchesText(haystack, filters.q)
-      && (!filters.student || observation.student_id === filters.student)
-      && (!filters.type || observation.subject.toLowerCase() === filters.type.toLowerCase())
-      && (!filters.status || observation.approval_status === filters.status)
-      && matchesDate(observation.created_at, filters.from, filters.to);
-  });
-  const artifacts = (artifactRows ?? []).filter((artifact) => {
-    const haystack = `${artifact.title} ${artifact.summary ?? ""} ${artifact.rationale ?? ""} ${artifact.type} ${artifact.student_id ? studentNames.get(artifact.student_id) ?? "" : ""}`.toLowerCase();
-    return matchesText(haystack, filters.q)
-      && (!filters.student || artifact.student_id === filters.student)
-      && (!filters.type || artifact.type === filters.type)
-      && (!filters.status || artifact.status === filters.status)
-      && matchesDate(artifact.created_at, filters.from, filters.to);
-  });
-  const grouped = new Map(workspace.students.map((student) => [student.id, observations.filter((item) => item.student_id === student.id)]));
-  const typeOptions = [...new Set([
-    ...(evidenceRows ?? []).map((item) => item.kind),
-    ...(evidenceRows ?? []).flatMap((item) => item.evidence_categories.map((link) => link.document_type).filter((value): value is string => Boolean(value))),
-    ...(observationRows ?? []).map((item) => item.subject),
-    ...(artifactRows ?? []).map((item) => item.type),
-  ])].sort((a, b) => a.localeCompare(b));
-  const year = new Date().getFullYear();
+  const unfiled = evidence.filter((item) => !item.categories.length);
+  const folderCounts = new Map(workspace.categories.map((category) => [category.id, evidence.filter((item) => item.categories.some((filing) => filing.id === category.id)).length]));
+  const learnerSubjects = new Set(subjectsResult.data.filter((subject) => familyView || subject.student_id === selectedStudent.id).map((subject) => subject.name.toLowerCase()));
+  const evidenceCategoryIds = new Set(evidence.flatMap((item) => item.categories.map((category) => category.id)));
+  const categories = workspace.categories.filter((category) => learnerSubjects.has(category.name.toLowerCase()) || evidenceCategoryIds.has(category.id)).sort((a, b) => subjectOrder(a.name) - subjectOrder(b.name) || a.name.localeCompare(b.name));
+  const requestedFolder = single(query.folder);
+  const activeCategory = categories.find((category) => category.id === requestedFolder)
+    ?? categories.find((category) => (folderCounts.get(category.id) ?? 0) > 0)
+    ?? categories[0]
+    ?? null;
+  const showUnfiled = requestedFolder === "unfiled" || (!activeCategory && unfiled.length > 0);
+  const visibleEvidence = showUnfiled ? unfiled : evidence.filter((item) => item.categories.some((filing) => filing.id === activeCategory?.id));
+  const activeName = showUnfiled ? "Needs your help" : activeCategory?.name ?? "Learning";
 
   return (
-    <div className="section-page records-page">
-      <header className="section-page-header"><div><p className="eyebrow">Durable family context</p><h1>Learning records</h1><p>Find evidence, correct Klio’s filing, and keep approved learning context distinct from drafts.</p></div>
-        <div className="header-actions"><Link className="outline-button" href="/app/import"><FileText size={15} /> Import grades</Link><a className="outline-button" href={`/api/export?familyId=${workspace.family.id}&from=${year}-01-01&to=${year}-12-31`}><Download size={15} /> Export portfolio</a></div>
+    <main className="folder-library">
+      <header className="folder-library-header">
+        <Link href="/app" className="folder-back"><ChevronLeft size={15} /> Home</Link>
+        <div>
+          <p>Learning folders</p>
+          <h1>{familyView ? "Family learning" : `${selectedStudent.displayName}’s learning`}</h1>
+          <span>Books, notes, worksheets, and activities—filed by subject.</span>
+        </div>
+        <Link href={familyView ? "/app/portfolio" : `/app/portfolio?student=${selectedStudent.id}`} className="folder-tools-link"><Sparkles size={13} /> Create portfolio</Link>
       </header>
 
-      <form className="records-filter-bar" method="get">
-        <label className="records-search"><span>Search records</span><div><Search size={16} /><input name="q" defaultValue={single(query.q)} placeholder="Notes, extracted text, tags, subjects…" /></div></label>
-        <label><span>Folder</span><select name="folder" defaultValue={filters.folder}><option value="">All folders</option>{workspace.categories.map((category) => <option value={category.id} key={category.id}>{category.name}</option>)}<option value="unfiled">Unfiled</option></select></label>
-        <label><span>Learner</span><select name="student" defaultValue={filters.student}><option value="">All learners</option>{workspace.students.map((student) => <option value={student.id} key={student.id}>{student.displayName}</option>)}</select></label>
-        <label><span>Type or subject</span><select name="type" defaultValue={filters.type}><option value="">All types</option>{typeOptions.map((type) => <option value={type} key={type}>{type.replaceAll("_", " ")}</option>)}</select></label>
-        <label><span>Status</span><select name="status" defaultValue={filters.status}><option value="">All statuses</option><option value="queued">Queued</option><option value="processing">Processing</option><option value="ready">Ready</option><option value="draft">Draft</option><option value="approved">Approved</option><option value="rejected">Rejected</option><option value="failed">Failed</option></select></label>
-        <label><span>From</span><input type="date" name="from" defaultValue={filters.from} /></label>
-        <label><span>To</span><input type="date" name="to" defaultValue={filters.to} /></label>
-        <div className="records-filter-actions"><button type="submit">Apply filters</button>{hasFilters ? <Link href="/app/records"><X size={13} /> Clear</Link> : null}</div>
-      </form>
-      {hasFilters ? <p className="filter-summary">Showing {evidence.length} evidence records, {observations.length} observations, and {artifacts.length} Klio drafts or artifacts.</p> : null}
+      <nav className="learner-tabs" aria-label="Choose a learner">
+        <Link className={familyView ? "active" : ""} href="/app/records"><i>F</i>Family</Link>
+        {workspace.students.map((student) => <Link className={student.id === selectedStudent?.id ? "active" : ""} href={`/app/records?student=${student.id}`} key={student.id}><i>{student.displayName.charAt(0)}</i>{student.displayName}</Link>)}
+      </nav>
 
-      {workspace.students.filter((student) => !filters.student || student.id === filters.student).map((student) => (
-        <section className="student-record" key={student.id}>
-          <header><div className="student-initial">{student.displayName.slice(0, 1)}</div><div><h2>{student.displayName}</h2><span>{student.gradeBand?.toUpperCase() || "Learning path"}</span></div></header>
-          {student.learningPreferences ? <p className="student-context">{student.learningPreferences}</p> : null}
-          <div className="skill-list">{grouped.get(student.id)?.length ? grouped.get(student.id)?.map((observation) => <div className="skill-row" key={observation.id}><span className={`skill-state ${observation.status}`} /><div><strong>{observation.skill_label}</strong><small>{observation.subject} · {observation.status}</small></div><span className={`record-state ${observation.approval_status}`}>{observation.approval_status}</span></div>) : <p className="section-empty">No observations match these filters.</p>}</div>
+      <div className="folder-library-layout">
+        <aside className="subject-folders">
+          <h2>Subjects</h2>
+          <nav aria-label={familyView ? "Family subject folders" : `${selectedStudent.displayName}’s subject folders`}>
+            {categories.map((category) => {
+              const count = folderCounts.get(category.id) ?? 0;
+              return <Link className={!showUnfiled && activeCategory?.id === category.id ? "active" : ""} href={recordHref(selectedStudent?.id, category.id)} key={category.id}><Folder size={16} /><span>{category.name}</span><b>{count}</b></Link>;
+            })}
+            {unfiled.length ? <Link className={showUnfiled ? "active needs-help" : "needs-help"} href={recordHref(selectedStudent?.id, "unfiled")}><Folder size={16} /><span>Needs your help</span><b>{unfiled.length}</b></Link> : null}
+          </nav>
+        </aside>
+
+        <section className="subject-records" aria-labelledby="active-folder-title">
+          <header>
+            <div><p>Subject folder</p><h2 id="active-folder-title">{activeName}</h2></div>
+            <span>{visibleEvidence.length} {visibleEvidence.length === 1 ? "item" : "items"}</span>
+          </header>
+
+          {visibleEvidence.length ? groupByMonth(visibleEvidence).map(([month, items]) => <section className="record-month" key={month}>
+            <h3>{month}</h3>
+            <div>{items.map((item) => <article className="learning-entry" key={item.id}>
+              <time dateTime={item.sourceAt}><strong>{new Date(item.sourceAt).getDate()}</strong><span>{new Intl.DateTimeFormat("en", { weekday: "short" }).format(new Date(item.sourceAt))}</span></time>
+              <div className="learning-entry-icon">{kindIcon(item.kind)}</div>
+              <div className="learning-entry-copy"><h4>{entryTitle(item)}</h4><p>{familyView ? `${formatStudentNames(item.studentIds, workspace.students)} · ` : ""}{entryDetail(item)}</p></div>
+              {item.storagePath ? <a href={`/api/evidence/${item.id}/download`}>Open original</a> : null}
+            </article>)}</div>
+          </section>) : <div className="folder-empty"><BookOpen size={22} /><h3>This folder is ready.</h3><p>Learning filed under {activeName} will appear here in date order.</p><Link href="/app">Add learning</Link></div>}
         </section>
-      ))}
-
-      {(artifacts.length > 0 || !hasFilters) ? <section className="record-artifacts"><header><div><p className="eyebrow">Created from evidence</p><h2>Klio records</h2></div><span>{artifacts.length}</span></header>{artifacts.length ? artifacts.slice(0, 30).map((artifact) => <Link href={`/app/artifacts/${artifact.id}`} className="record-artifact-row" key={artifact.id}><Sparkles size={15} /><div><strong>{artifact.title}</strong><small>{artifact.type.replaceAll("_", " ")} · {artifact.student_id ? studentNames.get(artifact.student_id) : "Family"}</small></div><span className={`record-state ${artifact.status}`}>{artifact.status}</span></Link>) : <p className="section-empty">No Klio records match these filters.</p>}</section> : null}
-
-      <section className="evidence-archive"><header><div><p className="eyebrow">Organized by Klio</p><h2>Evidence folders</h2></div><span>{evidence.length} matching records</span></header><OrganizationWorkspace key={`${workspace.categories.map((category) => `${category.id}:${category.name}:${category.evidenceCount}`).join("|")}:${evidence.map((item) => `${item.id}:${item.status}:${item.categories[0]?.id ?? "unfiled"}`).join("|")}`} familyId={workspace.family.id} initialCategories={workspace.categories} initialEvidence={evidence} /></section>
-    </div>
+      </div>
+    </main>
   );
 }
 
-function single(value: string | string[] | undefined) {
-  return Array.isArray(value) ? value[0] ?? "" : value ?? "";
-}
-
-function matchesText(haystack: string, query: string) {
-  if (!query) return true;
-  return query.split(/\s+/).filter(Boolean).every((term) => haystack.includes(term));
-}
-
-function matchesDate(value: string, from: string, to: string) {
-  const time = new Date(value).getTime();
-  if (from && time < new Date(`${from}T00:00:00`).getTime()) return false;
-  if (to && time > new Date(`${to}T23:59:59.999`).getTime()) return false;
-  return true;
-}
+function single(value: string | string[] | undefined) { return Array.isArray(value) ? value[0] ?? "" : value ?? ""; }
+function recordHref(studentId: string | undefined, folder: string) { const params = new URLSearchParams({ folder }); if (studentId) params.set("student", studentId); return `/app/records?${params.toString()}`; }
+function formatStudentNames(studentIds: string[], students: Array<{ id: string; displayName: string }>) { const names = students.filter((student) => studentIds.includes(student.id)).map((student) => student.displayName); return names.length ? new Intl.ListFormat("en", { style: "short", type: "conjunction" }).format(names) : "Family"; }
+function subjectOrder(name: string) { const order = ["english", "reading", "writing", "math", "science", "history", "arts", "life skills", "other"]; const index = order.indexOf(name.toLowerCase()); return index === -1 ? 50 : index; }
+function groupByMonth(items: EvidenceDTO[]) { const groups = new Map<string, EvidenceDTO[]>(); items.forEach((item) => { const label = new Intl.DateTimeFormat("en", { month: "long", year: "numeric" }).format(new Date(item.sourceAt)); groups.set(label, [...(groups.get(label) ?? []), item]); }); return [...groups.entries()]; }
+function entryTitle(item: EvidenceDTO) { return (item.title || item.rawText || kindLabel(item.kind)).replace(/^Link:\s*/i, "").slice(0, 120); }
+function entryDetail(item: EvidenceDTO) { const type = item.categories[0]?.documentType || kindLabel(item.kind); const text = item.rawText && item.rawText !== item.title ? item.rawText.slice(0, 150) : null; return text ? `${type} · ${text}` : type; }
+function kindLabel(kind: string) { return ({ photo: "Photo", voice: "Voice note", document: "File", note: "Note", grade: "Grade", book: "Book", activity: "Activity", csv_import: "Imported record" } as Record<string,string>)[kind] ?? kind.replaceAll("_", " "); }
+function kindIcon(kind: string) { if (kind === "photo") return <Camera size={16} />; if (kind === "voice") return <Mic size={16} />; if (kind === "document" || kind === "csv_import") return <Paperclip size={16} />; return <FileText size={16} />; }

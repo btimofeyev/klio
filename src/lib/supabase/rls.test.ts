@@ -131,6 +131,36 @@ describe("family RLS isolation", () => {
     expect(hiddenMessage.data).toEqual([]);
   });
 
+  it("keeps parent-owned curriculum schedules inside the family", async () => {
+    const student = await clients[0].from("students").insert({ family_id: families[0], display_name: "Schedule isolation learner" }).select("id").single();
+    if (student.error) throw student.error;
+    const item = await clients[0].from("weekly_plan_items").insert({
+      family_id: families[0], student_id: student.data.id, artifact_id: null,
+      title: "Private curriculum lesson", subject: "Math", scheduled_date: "2026-07-13", source_kind: "parent",
+    }).select("id").single();
+    if (item.error) throw item.error;
+
+    const hidden = await clients[1].from("weekly_plan_items").select("id").eq("id", item.data.id);
+    const forgedUpdate = await clients[1].from("weekly_plan_items").update({ scheduled_date: "2026-07-14" }).eq("id", item.data.id).select("id");
+    expect(hidden.data).toEqual([]);
+    expect(forgedUpdate.data).toEqual([]);
+  });
+
+  it("isolates curriculum, assignments, reviews, and adjustment proposals by family", async () => {
+    const student = await clients[0].from("students").insert({ family_id: families[0], display_name: "Operating-loop learner" }).select("id").single();
+    if (student.error) throw student.error;
+    const unit = await clients[0].from("curriculum_units").insert({ family_id: families[0], student_id: student.data.id, created_by: users[0], subject: "Math", title: "Private Algebra" }).select("id").single();
+    if (unit.error) throw unit.error;
+    const assignment = await clients[0].from("assignments").insert({ family_id: families[0], student_id: student.data.id, curriculum_unit_id: unit.data.id, created_by: users[0], title: "Private Algebra · Lesson 1", subject: "Math", scheduled_date: "2026-07-13" }).select("id").single();
+    if (assignment.error) throw assignment.error;
+
+    expect((await clients[1].from("curriculum_units").select("id").eq("id", unit.data.id)).data).toEqual([]);
+    expect((await clients[1].from("assignments").select("id").eq("id", assignment.data.id)).data).toEqual([]);
+    expect((await clients[1].from("assignments").update({ status: "completed" }).eq("id", assignment.data.id).select("id")).data).toEqual([]);
+    const forged = await clients[1].from("assignments").insert({ family_id: families[0], student_id: student.data.id, title: "Forged work", subject: "Math" });
+    expect(forged.error).not.toBeNull();
+  });
+
   it("does not trust an unexpired token after its Auth user is deleted", async () => {
     const email = `deleted-session-${crypto.randomUUID()}@example.test`;
     const created = await admin.auth.admin.createUser({ email, password, email_confirm: true });

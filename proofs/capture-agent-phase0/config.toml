@@ -1,0 +1,30 @@
+approval_policy = "never"
+sandbox_mode = "read-only"
+web_search = "disabled"
+allow_login_shell = false
+check_for_update_on_startup = false
+hide_agent_reasoning = true
+
+[analytics]
+enabled = false
+
+[features]
+apps = false
+memories = false
+multi_agent = false
+remote_plugin = false
+shell_snapshot = false
+shell_tool = false
+unified_exec = false
+
+[mcp_servers.klio_capture]
+url = "http://127.0.0.1:43119/mcp"
+bearer_token_env_var = "KLIO_CAPABILITY"
+enabled_tools = [
+  "read_capture",
+  "read_family_context",
+  "create_reminder",
+  "file_capture",
+  "ask_parent",
+]
+default_tools_approval_mode = "approve"

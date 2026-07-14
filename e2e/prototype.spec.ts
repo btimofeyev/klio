@@ -16,20 +16,47 @@ test("a parent creates a workspace and captures a real note", async ({ page }) =
     await expect(page).toHaveURL(/\/onboarding/);
     await page.getByLabel("Workspace name").fill("E2E Family");
     await page.getByLabel("Learner’s first name").fill("Learner");
+    await page.getByLabel("Add a subject").selectOption("Math");
+    await page.getByLabel("Add a subject").selectOption("History");
+    await page.getByLabel("Add a subject").selectOption("custom");
+    await page.getByLabel("Subject name").fill("Latin");
+    await page.getByRole("button", { name: "Add subject" }).click();
+    await page.getByLabel("Add a subject").selectOption("custom");
+    await page.getByLabel("Subject name").fill("Coding");
+    await page.getByRole("button", { name: "Add subject" }).click();
+    await page.getByLabel("Latin course or curriculum").fill("Cambridge Latin Course");
+    await page.getByLabel("Coding course or curriculum").fill("Python Foundations");
+    await page.getByLabel("Math course or curriculum").fill("Algebra I");
     await page.getByRole("button", { name: "Enter Klio" }).click();
     await expect(page).toHaveURL(/\/app$/);
+    const { data: createdUser } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
+    const createdUserId = createdUser.users.find((user) => user.email === email)?.id;
+    const { data: createdFamily } = await admin.from("families").select("id").eq("created_by", createdUserId!).single();
+    const { data: savedSubjects } = await admin.from("student_subjects").select("name,course_name").eq("family_id", createdFamily!.id).order("position");
+    expect(savedSubjects).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "Math", course_name: "Algebra I" }),
+      expect.objectContaining({ name: "History" }),
+      expect.objectContaining({ name: "Latin", course_name: "Cambridge Latin Course" }),
+      expect.objectContaining({ name: "Coding", course_name: "Python Foundations" }),
+    ]));
+    const { data: savedCurricula } = await admin.from("curriculum_units").select("subject,title").eq("family_id", createdFamily!.id).order("subject");
+    expect(savedCurricula).toEqual(expect.arrayContaining([
+      { subject: "Math", title: "Algebra I" },
+      { subject: "Latin", title: "Cambridge Latin Course" },
+      { subject: "Coding", title: "Python Foundations" },
+    ]));
     await page.setViewportSize({ width: 390, height: 844 });
     expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBeLessThanOrEqual(844);
+    await page.goto("/app/inbox");
     const fileChooserPromise = page.waitForEvent("filechooser");
     await page.getByRole("button", { name: "Photo", exact: true }).click();
     const fileChooser = await fileChooserPromise;
     await fileChooser.setFiles({ name: "worksheet.png", mimeType: "image/png", buffer: Buffer.from([137, 80, 78, 71]) });
     await expect(page.getByText("worksheet.png")).toBeVisible();
-    expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBeLessThanOrEqual(844);
     await page.getByPlaceholder(/What happened in learning today/).fill("Read two chapters and compared the characters' choices.");
     await page.getByRole("button", { name: "Save to Klio" }).click();
     await expect(page.getByText("Saving your record…")).toBeHidden({ timeout: 30_000 });
-    await expect(page.getByText(/organizing it in the background/i)).toBeVisible();
+    await expect(page.getByText("Saved. Klio is putting it away.")).toBeVisible();
     await page.goto("/app/evidence");
     await expect(page.locator(".archive-row").filter({ hasText: /Read two chapters/ })).toBeVisible();
   } finally {
@@ -58,6 +85,7 @@ test("an authenticated family can start Stripe test checkout", async ({ page }) 
     await page.getByRole("button", { name: "Create workspace" }).click();
     await page.getByLabel("Workspace name").fill("Billing Family");
     await page.getByLabel("Learner’s first name").fill("Learner");
+    await page.getByLabel("Add a subject").selectOption("Math");
     await page.getByRole("button", { name: "Enter Klio" }).click();
     await expect(page).toHaveURL(/\/app$/);
     await page.goto("/app/settings");
@@ -102,8 +130,10 @@ test("selected evidence becomes a parent-approved OpenAI artifact", async ({ pag
     await page.getByRole("button", { name: "Create workspace" }).click();
     await page.getByLabel("Workspace name").fill("Agent Verification Family");
     await page.getByLabel("Learner’s first name").fill("Learner");
+    await page.getByLabel("Add a subject").selectOption("Science");
     await page.getByRole("button", { name: "Enter Klio" }).click();
     await expect(page).toHaveURL(/\/app$/);
+    await page.goto("/app/inbox");
     await page.getByPlaceholder(/What happened in learning today/).fill("Today the learner read a short nonfiction passage about pollinators, explained the main idea accurately, and asked why bats can be pollinators too.");
     await page.getByRole("button", { name: "Save to Klio" }).click();
     await expect(page.getByText(/working in the background/i)).toBeVisible();

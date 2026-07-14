@@ -34,6 +34,185 @@ export type Database = {
   }
   public: {
     Tables: {
+      adjustment_actions: {
+        Row: {
+          action_type: string
+          after_state: Json
+          assignment_id: string | null
+          before_state: Json
+          created_at: string
+          family_id: string
+          id: string
+          position: number
+          proposal_id: string
+          status: string
+        }
+        Insert: {
+          action_type: string
+          after_state?: Json
+          assignment_id?: string | null
+          before_state?: Json
+          created_at?: string
+          family_id: string
+          id?: string
+          position?: number
+          proposal_id: string
+          status?: string
+        }
+        Update: {
+          action_type?: string
+          after_state?: Json
+          assignment_id?: string | null
+          before_state?: Json
+          created_at?: string
+          family_id?: string
+          id?: string
+          position?: number
+          proposal_id?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "adjustment_actions_assignment_id_family_id_fkey"
+            columns: ["assignment_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "assignments"
+            referencedColumns: ["id", "family_id"]
+          },
+          {
+            foreignKeyName: "adjustment_actions_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "adjustment_actions_proposal_id_family_id_fkey"
+            columns: ["proposal_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "adjustment_proposals"
+            referencedColumns: ["id", "family_id"]
+          },
+        ]
+      }
+      adjustment_proposals: {
+        Row: {
+          agent_turn_id: string | null
+          applied_at: string | null
+          approved_at: string | null
+          approved_by: string | null
+          created_at: string
+          family_id: string
+          id: string
+          reason: string
+          snapshot_version: number
+          status: string
+          student_id: string
+          summary: string
+          updated_at: string
+          week_start: string
+        }
+        Insert: {
+          agent_turn_id?: string | null
+          applied_at?: string | null
+          approved_at?: string | null
+          approved_by?: string | null
+          created_at?: string
+          family_id: string
+          id?: string
+          reason: string
+          snapshot_version: number
+          status?: string
+          student_id: string
+          summary: string
+          updated_at?: string
+          week_start: string
+        }
+        Update: {
+          agent_turn_id?: string | null
+          applied_at?: string | null
+          approved_at?: string | null
+          approved_by?: string | null
+          created_at?: string
+          family_id?: string
+          id?: string
+          reason?: string
+          snapshot_version?: number
+          status?: string
+          student_id?: string
+          summary?: string
+          updated_at?: string
+          week_start?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "adjustment_proposals_agent_turn_id_family_id_fkey"
+            columns: ["agent_turn_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "agent_turns"
+            referencedColumns: ["id", "family_id"]
+          },
+          {
+            foreignKeyName: "adjustment_proposals_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "adjustment_proposals_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "students"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      agent_events: {
+        Row: {
+          created_at: string
+          family_id: string
+          id: number
+          kind: string
+          payload: Json
+          sequence: number
+          turn_id: string
+        }
+        Insert: {
+          created_at?: string
+          family_id: string
+          id?: never
+          kind: string
+          payload?: Json
+          sequence: number
+          turn_id: string
+        }
+        Update: {
+          created_at?: string
+          family_id?: string
+          id?: never
+          kind?: string
+          payload?: Json
+          sequence?: number
+          turn_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_events_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_events_turn_id_family_id_fkey"
+            columns: ["turn_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "agent_turns"
+            referencedColumns: ["id", "family_id"]
+          },
+        ]
+      }
       agent_job_actions: {
         Row: {
           agent_run_id: string | null
@@ -262,6 +441,8 @@ export type Database = {
       }
       agent_runs: {
         Row: {
+          agent_thread_id: string | null
+          agent_turn_id: string | null
           completed_at: string | null
           created_at: string
           error_code: string | null
@@ -278,6 +459,8 @@ export type Database = {
           tool_trace: Json
         }
         Insert: {
+          agent_thread_id?: string | null
+          agent_turn_id?: string | null
           completed_at?: string | null
           created_at?: string
           error_code?: string | null
@@ -294,6 +477,8 @@ export type Database = {
           tool_trace?: Json
         }
         Update: {
+          agent_thread_id?: string | null
+          agent_turn_id?: string | null
           completed_at?: string | null
           created_at?: string
           error_code?: string | null
@@ -311,6 +496,20 @@ export type Database = {
         }
         Relationships: [
           {
+            foreignKeyName: "agent_runs_agent_thread_family_fkey"
+            columns: ["agent_thread_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "agent_threads"
+            referencedColumns: ["id", "family_id"]
+          },
+          {
+            foreignKeyName: "agent_runs_agent_turn_family_fkey"
+            columns: ["agent_turn_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "agent_turns"
+            referencedColumns: ["id", "family_id"]
+          },
+          {
             foreignKeyName: "agent_runs_family_id_fkey"
             columns: ["family_id"]
             isOneToOne: false
@@ -323,6 +522,235 @@ export type Database = {
             isOneToOne: true
             referencedRelation: "agent_job_actions"
             referencedColumns: ["id"]
+          },
+        ]
+      }
+      agent_threads: {
+        Row: {
+          agent_kind: string
+          created_at: string
+          family_id: string
+          generation: number
+          id: string
+          last_turn_at: string | null
+          provider: string
+          provider_thread_id: string | null
+          runtime_version: string | null
+          status: string
+          turn_count: number
+          updated_at: string
+        }
+        Insert: {
+          agent_kind?: string
+          created_at?: string
+          family_id: string
+          generation?: number
+          id?: string
+          last_turn_at?: string | null
+          provider: string
+          provider_thread_id?: string | null
+          runtime_version?: string | null
+          status?: string
+          turn_count?: number
+          updated_at?: string
+        }
+        Update: {
+          agent_kind?: string
+          created_at?: string
+          family_id?: string
+          generation?: number
+          id?: string
+          last_turn_at?: string | null
+          provider?: string
+          provider_thread_id?: string | null
+          runtime_version?: string | null
+          status?: string
+          turn_count?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_threads_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      agent_tool_calls: {
+        Row: {
+          approval_request_id: string | null
+          arguments_redacted: Json
+          completed_at: string | null
+          created_at: string
+          family_id: string
+          id: string
+          idempotency_key: string
+          provider_item_id: string | null
+          result_summary: Json | null
+          risk: string
+          snapshot_version: number
+          started_at: string | null
+          status: string
+          tool_name: string
+          turn_id: string
+        }
+        Insert: {
+          approval_request_id?: string | null
+          arguments_redacted?: Json
+          completed_at?: string | null
+          created_at?: string
+          family_id: string
+          id?: string
+          idempotency_key: string
+          provider_item_id?: string | null
+          result_summary?: Json | null
+          risk: string
+          snapshot_version: number
+          started_at?: string | null
+          status?: string
+          tool_name: string
+          turn_id: string
+        }
+        Update: {
+          approval_request_id?: string | null
+          arguments_redacted?: Json
+          completed_at?: string | null
+          created_at?: string
+          family_id?: string
+          id?: string
+          idempotency_key?: string
+          provider_item_id?: string | null
+          result_summary?: Json | null
+          risk?: string
+          snapshot_version?: number
+          started_at?: string | null
+          status?: string
+          tool_name?: string
+          turn_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_tool_calls_approval_request_id_fkey"
+            columns: ["approval_request_id"]
+            isOneToOne: false
+            referencedRelation: "approval_requests"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_tool_calls_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_tool_calls_turn_id_family_id_fkey"
+            columns: ["turn_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "agent_turns"
+            referencedColumns: ["id", "family_id"]
+          },
+        ]
+      }
+      agent_turns: {
+        Row: {
+          attempt_count: number
+          completed_at: string | null
+          created_at: string
+          current_snapshot_version: number
+          error_code: string | null
+          family_id: string
+          goal: string
+          id: string
+          idempotency_key: string
+          initial_snapshot_version: number
+          last_heartbeat_at: string | null
+          outcome: string | null
+          provider_turn_id: string | null
+          public_result: Json | null
+          requested_by: string | null
+          snapshot_hash: string
+          snapshot_summary: Json
+          source_evidence_id: string | null
+          started_at: string | null
+          status: string
+          thread_id: string
+          trigger: string
+          updated_at: string
+        }
+        Insert: {
+          attempt_count?: number
+          completed_at?: string | null
+          created_at?: string
+          current_snapshot_version: number
+          error_code?: string | null
+          family_id: string
+          goal: string
+          id?: string
+          idempotency_key: string
+          initial_snapshot_version: number
+          last_heartbeat_at?: string | null
+          outcome?: string | null
+          provider_turn_id?: string | null
+          public_result?: Json | null
+          requested_by?: string | null
+          snapshot_hash: string
+          snapshot_summary?: Json
+          source_evidence_id?: string | null
+          started_at?: string | null
+          status?: string
+          thread_id: string
+          trigger: string
+          updated_at?: string
+        }
+        Update: {
+          attempt_count?: number
+          completed_at?: string | null
+          created_at?: string
+          current_snapshot_version?: number
+          error_code?: string | null
+          family_id?: string
+          goal?: string
+          id?: string
+          idempotency_key?: string
+          initial_snapshot_version?: number
+          last_heartbeat_at?: string | null
+          outcome?: string | null
+          provider_turn_id?: string | null
+          public_result?: Json | null
+          requested_by?: string | null
+          snapshot_hash?: string
+          snapshot_summary?: Json
+          source_evidence_id?: string | null
+          started_at?: string | null
+          status?: string
+          thread_id?: string
+          trigger?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_turns_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_turns_source_evidence_id_fkey"
+            columns: ["source_evidence_id"]
+            isOneToOne: false
+            referencedRelation: "evidence_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_turns_thread_id_family_id_fkey"
+            columns: ["thread_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "agent_threads"
+            referencedColumns: ["id", "family_id"]
           },
         ]
       }
@@ -515,6 +943,309 @@ export type Database = {
           },
         ]
       }
+      assignment_reviews: {
+        Row: {
+          agent_turn_id: string | null
+          assignment_id: string
+          created_at: string
+          draft_feedback: string | null
+          draft_score: number | null
+          family_id: string
+          feedback: string | null
+          id: string
+          mastery_signals: Json
+          reviewed_at: string | null
+          reviewed_by: string | null
+          rubric: Json
+          score: number | null
+          score_label: string | null
+          status: string
+          student_id: string
+          submission_id: string
+          uncertainty_flags: Json
+          updated_at: string
+        }
+        Insert: {
+          agent_turn_id?: string | null
+          assignment_id: string
+          created_at?: string
+          draft_feedback?: string | null
+          draft_score?: number | null
+          family_id: string
+          feedback?: string | null
+          id?: string
+          mastery_signals?: Json
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          rubric?: Json
+          score?: number | null
+          score_label?: string | null
+          status?: string
+          student_id: string
+          submission_id: string
+          uncertainty_flags?: Json
+          updated_at?: string
+        }
+        Update: {
+          agent_turn_id?: string | null
+          assignment_id?: string
+          created_at?: string
+          draft_feedback?: string | null
+          draft_score?: number | null
+          family_id?: string
+          feedback?: string | null
+          id?: string
+          mastery_signals?: Json
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          rubric?: Json
+          score?: number | null
+          score_label?: string | null
+          status?: string
+          student_id?: string
+          submission_id?: string
+          uncertainty_flags?: Json
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "assignment_reviews_agent_turn_id_family_id_fkey"
+            columns: ["agent_turn_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "agent_turns"
+            referencedColumns: ["id", "family_id"]
+          },
+          {
+            foreignKeyName: "assignment_reviews_assignment_id_family_id_fkey"
+            columns: ["assignment_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "assignments"
+            referencedColumns: ["id", "family_id"]
+          },
+          {
+            foreignKeyName: "assignment_reviews_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "assignment_reviews_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "students"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "assignment_reviews_submission_id_family_id_fkey"
+            columns: ["submission_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "assignment_submissions"
+            referencedColumns: ["id", "family_id"]
+          },
+        ]
+      }
+      assignment_submission_evidence: {
+        Row: {
+          created_at: string
+          evidence_id: string
+          family_id: string
+          submission_id: string
+        }
+        Insert: {
+          created_at?: string
+          evidence_id: string
+          family_id: string
+          submission_id: string
+        }
+        Update: {
+          created_at?: string
+          evidence_id?: string
+          family_id?: string
+          submission_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "assignment_submission_evidence_evidence_id_fkey"
+            columns: ["evidence_id"]
+            isOneToOne: false
+            referencedRelation: "evidence_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "assignment_submission_evidence_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "assignment_submission_evidence_submission_id_family_id_fkey"
+            columns: ["submission_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "assignment_submissions"
+            referencedColumns: ["id", "family_id"]
+          },
+        ]
+      }
+      assignment_submissions: {
+        Row: {
+          assignment_id: string
+          created_at: string
+          family_id: string
+          id: string
+          note: string | null
+          status: string
+          student_id: string
+          submitted_at: string
+          submitted_by: string | null
+          updated_at: string
+        }
+        Insert: {
+          assignment_id: string
+          created_at?: string
+          family_id: string
+          id?: string
+          note?: string | null
+          status?: string
+          student_id: string
+          submitted_at?: string
+          submitted_by?: string | null
+          updated_at?: string
+        }
+        Update: {
+          assignment_id?: string
+          created_at?: string
+          family_id?: string
+          id?: string
+          note?: string | null
+          status?: string
+          student_id?: string
+          submitted_at?: string
+          submitted_by?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "assignment_submissions_assignment_id_family_id_fkey"
+            columns: ["assignment_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "assignments"
+            referencedColumns: ["id", "family_id"]
+          },
+          {
+            foreignKeyName: "assignment_submissions_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "assignment_submissions_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "students"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      assignments: {
+        Row: {
+          completed_at: string | null
+          created_at: string
+          created_by: string | null
+          created_by_type: string
+          curriculum_unit_id: string | null
+          due_at: string | null
+          estimated_minutes: number | null
+          family_id: string
+          id: string
+          instructions: string | null
+          scheduled_date: string | null
+          scheduled_time: string | null
+          sequence_number: number | null
+          skipped_at: string | null
+          source_kind: string
+          status: string
+          student_id: string
+          subject: string
+          submitted_at: string | null
+          title: string
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          created_by_type?: string
+          curriculum_unit_id?: string | null
+          due_at?: string | null
+          estimated_minutes?: number | null
+          family_id: string
+          id?: string
+          instructions?: string | null
+          scheduled_date?: string | null
+          scheduled_time?: string | null
+          sequence_number?: number | null
+          skipped_at?: string | null
+          source_kind?: string
+          status?: string
+          student_id: string
+          subject: string
+          submitted_at?: string | null
+          title: string
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          created_by_type?: string
+          curriculum_unit_id?: string | null
+          due_at?: string | null
+          estimated_minutes?: number | null
+          family_id?: string
+          id?: string
+          instructions?: string | null
+          scheduled_date?: string | null
+          scheduled_time?: string | null
+          sequence_number?: number | null
+          skipped_at?: string | null
+          source_kind?: string
+          status?: string
+          student_id?: string
+          subject?: string
+          submitted_at?: string | null
+          title?: string
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "assignments_curriculum_unit_id_family_id_fkey"
+            columns: ["curriculum_unit_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "curriculum_units"
+            referencedColumns: ["id", "family_id"]
+          },
+          {
+            foreignKeyName: "assignments_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "assignments_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "students"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       audit_events: {
         Row: {
           action: string
@@ -603,8 +1334,75 @@ export type Database = {
           },
         ]
       }
+      curriculum_units: {
+        Row: {
+          created_at: string
+          created_by: string
+          curriculum_url: string | null
+          default_minutes: number
+          family_id: string
+          id: string
+          next_sequence_number: number
+          schedule_rule: Json
+          sequence_label: string
+          status: string
+          student_id: string
+          subject: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          curriculum_url?: string | null
+          default_minutes?: number
+          family_id: string
+          id?: string
+          next_sequence_number?: number
+          schedule_rule?: Json
+          sequence_label?: string
+          status?: string
+          student_id: string
+          subject: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          curriculum_url?: string | null
+          default_minutes?: number
+          family_id?: string
+          id?: string
+          next_sequence_number?: number
+          schedule_rule?: Json
+          sequence_label?: string
+          status?: string
+          student_id?: string
+          subject?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "curriculum_units_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "curriculum_units_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "students"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       evidence_categories: {
         Row: {
+          agent_tool_call_id: string | null
           assigned_by: string
           category_id: string
           confidence: number | null
@@ -615,6 +1413,7 @@ export type Database = {
           tags: string[]
         }
         Insert: {
+          agent_tool_call_id?: string | null
           assigned_by?: string
           category_id: string
           confidence?: number | null
@@ -625,6 +1424,7 @@ export type Database = {
           tags?: string[]
         }
         Update: {
+          agent_tool_call_id?: string | null
           assigned_by?: string
           category_id?: string
           confidence?: number | null
@@ -635,6 +1435,13 @@ export type Database = {
           tags?: string[]
         }
         Relationships: [
+          {
+            foreignKeyName: "evidence_categories_agent_tool_call_family_fkey"
+            columns: ["agent_tool_call_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "agent_tool_calls"
+            referencedColumns: ["id", "family_id"]
+          },
           {
             foreignKeyName: "evidence_categories_category_id_fkey"
             columns: ["category_id"]
@@ -660,6 +1467,8 @@ export type Database = {
       }
       evidence_items: {
         Row: {
+          capture_route: string
+          capture_submission_id: string | null
           created_at: string
           created_by: string
           error_message: string | null
@@ -679,6 +1488,8 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          capture_route?: string
+          capture_submission_id?: string | null
           created_at?: string
           created_by: string
           error_message?: string | null
@@ -698,6 +1509,8 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          capture_route?: string
+          capture_submission_id?: string | null
           created_at?: string
           created_by?: string
           error_message?: string | null
@@ -771,6 +1584,7 @@ export type Database = {
       }
       families: {
         Row: {
+          agent_context_version: number
           available_days: Json
           created_at: string
           created_by: string
@@ -781,6 +1595,7 @@ export type Database = {
           weekly_minutes: number | null
         }
         Insert: {
+          agent_context_version?: number
           available_days?: Json
           created_at?: string
           created_by: string
@@ -791,6 +1606,7 @@ export type Database = {
           weekly_minutes?: number | null
         }
         Update: {
+          agent_context_version?: number
           available_days?: Json
           created_at?: string
           created_by?: string
@@ -1174,6 +1990,7 @@ export type Database = {
       }
       question_messages: {
         Row: {
+          agent_turn_id: string | null
           confidence: string | null
           content: string
           created_at: string
@@ -1184,6 +2001,7 @@ export type Database = {
           thread_id: string
         }
         Insert: {
+          agent_turn_id?: string | null
           confidence?: string | null
           content: string
           created_at?: string
@@ -1194,6 +2012,7 @@ export type Database = {
           thread_id: string
         }
         Update: {
+          agent_turn_id?: string | null
           confidence?: string | null
           content?: string
           created_at?: string
@@ -1204,6 +2023,13 @@ export type Database = {
           thread_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "question_messages_agent_turn_family_fkey"
+            columns: ["agent_turn_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "agent_turns"
+            referencedColumns: ["id", "family_id"]
+          },
           {
             foreignKeyName: "question_messages_family_id_fkey"
             columns: ["family_id"]
@@ -1222,6 +2048,7 @@ export type Database = {
       }
       question_threads: {
         Row: {
+          agent_thread_id: string | null
           created_at: string
           created_by: string
           family_id: string
@@ -1231,6 +2058,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          agent_thread_id?: string | null
           created_at?: string
           created_by: string
           family_id: string
@@ -1240,6 +2068,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          agent_thread_id?: string | null
           created_at?: string
           created_by?: string
           family_id?: string
@@ -1249,6 +2078,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "question_threads_agent_thread_family_fkey"
+            columns: ["agent_thread_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "agent_threads"
+            referencedColumns: ["id", "family_id"]
+          },
           {
             foreignKeyName: "question_threads_family_id_fkey"
             columns: ["family_id"]
@@ -1268,6 +2104,7 @@ export type Database = {
       reminders: {
         Row: {
           agent_run_id: string | null
+          agent_tool_call_id: string | null
           completed_at: string | null
           confidence: number | null
           created_at: string
@@ -1286,6 +2123,7 @@ export type Database = {
         }
         Insert: {
           agent_run_id?: string | null
+          agent_tool_call_id?: string | null
           completed_at?: string | null
           confidence?: number | null
           created_at?: string
@@ -1304,6 +2142,7 @@ export type Database = {
         }
         Update: {
           agent_run_id?: string | null
+          agent_tool_call_id?: string | null
           completed_at?: string | null
           confidence?: number | null
           created_at?: string
@@ -1327,6 +2166,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "agent_runs"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reminders_agent_tool_call_family_fkey"
+            columns: ["agent_tool_call_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "agent_tool_calls"
+            referencedColumns: ["id", "family_id"]
           },
           {
             foreignKeyName: "reminders_family_id_fkey"
@@ -1429,38 +2275,101 @@ export type Database = {
           },
         ]
       }
+      student_subjects: {
+        Row: {
+          course_name: string | null
+          created_at: string
+          created_by: string
+          family_id: string
+          id: string
+          name: string
+          position: number
+          status: string
+          student_id: string
+          updated_at: string
+          weekly_frequency: number
+        }
+        Insert: {
+          course_name?: string | null
+          created_at?: string
+          created_by: string
+          family_id: string
+          id?: string
+          name: string
+          position?: number
+          status?: string
+          student_id: string
+          updated_at?: string
+          weekly_frequency?: number
+        }
+        Update: {
+          course_name?: string | null
+          created_at?: string
+          created_by?: string
+          family_id?: string
+          id?: string
+          name?: string
+          position?: number
+          status?: string
+          student_id?: string
+          updated_at?: string
+          weekly_frequency?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "student_subjects_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "student_subjects_student_id_family_id_fkey"
+            columns: ["student_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "students"
+            referencedColumns: ["id", "family_id"]
+          },
+        ]
+      }
       students: {
         Row: {
           active: boolean
           birth_year: number | null
           created_at: string
+          daily_capacity_minutes: number
           display_name: string
           family_id: string
           grade_band: string | null
           id: string
           learning_preferences: string | null
+          schedule_preferences: Json
           updated_at: string
         }
         Insert: {
           active?: boolean
           birth_year?: number | null
           created_at?: string
+          daily_capacity_minutes?: number
           display_name: string
           family_id: string
           grade_band?: string | null
           id?: string
           learning_preferences?: string | null
+          schedule_preferences?: Json
           updated_at?: string
         }
         Update: {
           active?: boolean
           birth_year?: number | null
           created_at?: string
+          daily_capacity_minutes?: number
           display_name?: string
           family_id?: string
           grade_band?: string | null
           id?: string
           learning_preferences?: string | null
+          schedule_preferences?: Json
           updated_at?: string
         }
         Relationships: [
@@ -1516,48 +2425,63 @@ export type Database = {
       }
       weekly_plan_items: {
         Row: {
-          artifact_id: string
+          artifact_id: string | null
+          assignment_id: string | null
           completed_at: string | null
           created_at: string
+          curriculum_url: string | null
           description: string | null
           estimated_minutes: number | null
           family_id: string
           id: string
           position: number
+          rescheduled_count: number
           scheduled_date: string | null
+          scheduled_time: string | null
           skill_key: string | null
+          source_kind: string
           student_id: string | null
           subject: string | null
           title: string
           updated_at: string
         }
         Insert: {
-          artifact_id: string
+          artifact_id?: string | null
+          assignment_id?: string | null
           completed_at?: string | null
           created_at?: string
+          curriculum_url?: string | null
           description?: string | null
           estimated_minutes?: number | null
           family_id: string
           id?: string
           position?: number
+          rescheduled_count?: number
           scheduled_date?: string | null
+          scheduled_time?: string | null
           skill_key?: string | null
+          source_kind?: string
           student_id?: string | null
           subject?: string | null
           title: string
           updated_at?: string
         }
         Update: {
-          artifact_id?: string
+          artifact_id?: string | null
+          assignment_id?: string | null
           completed_at?: string | null
           created_at?: string
+          curriculum_url?: string | null
           description?: string | null
           estimated_minutes?: number | null
           family_id?: string
           id?: string
           position?: number
+          rescheduled_count?: number
           scheduled_date?: string | null
+          scheduled_time?: string | null
           skill_key?: string | null
+          source_kind?: string
           student_id?: string | null
           subject?: string | null
           title?: string
@@ -1570,6 +2494,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "artifacts"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "weekly_plan_items_assignment_family_fkey"
+            columns: ["assignment_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "assignments"
+            referencedColumns: ["id", "family_id"]
           },
           {
             foreignKeyName: "weekly_plan_items_family_id_fkey"
@@ -1592,7 +2523,26 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      apply_agent_workspace_tool: {
+        Args: {
+          p_arguments: Json
+          p_arguments_redacted?: Json
+          p_idempotency_key: string
+          p_tool_name: string
+          p_turn_id: string
+        }
+        Returns: Json
+      }
+      apply_agent_workspace_tool_v1: {
+        Args: {
+          p_arguments: Json
+          p_arguments_redacted?: Json
+          p_idempotency_key: string
+          p_tool_name: string
+          p_turn_id: string
+        }
+        Returns: Json
+      }
     }
     Enums: {
       [_ in never]: never
