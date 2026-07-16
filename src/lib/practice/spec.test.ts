@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dynamicPracticeSpecSchema, normalizePracticeSpec, parsePracticeSpec } from "./spec";
+import { dynamicPracticeSpecSchema, generatedPracticeSpecSchema, normalizePracticeSpec, parsePracticeSpec } from "./spec";
 
 const dynamic = {
   version: 2 as const,
@@ -22,5 +22,18 @@ describe("dynamicPracticeSpecSchema", () => {
   it("normalizes legacy multiple-choice practice", () => {
     const normalized = normalizePracticeSpec({ skill_key: "math", level_band: "9", instructions: "Choose.", mastery_percent: 75, questions: [{ prompt: "2+2", choices: ["3", "4"], correct_answer: "4", hints: [] }] });
     expect(normalized?.activities[0]).toMatchObject({ type: "multiple_choice", correct_answer: "4" });
+  });
+});
+
+describe("generatedPracticeSpecSchema", () => {
+  const fiveActivities = [
+    ...dynamic.activities,
+    { ...dynamic.activities[0], id: "identify-2" },
+    { ...dynamic.activities[1], id: "convert-2" },
+  ];
+
+  it("requires at least five activities for newly generated practice", () => {
+    expect(generatedPracticeSpecSchema.safeParse({ ...dynamic, activities: fiveActivities.slice(0, 4) }).success).toBe(false);
+    expect(generatedPracticeSpecSchema.safeParse({ ...dynamic, activities: fiveActivities }).success).toBe(true);
   });
 });

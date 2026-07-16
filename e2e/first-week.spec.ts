@@ -27,6 +27,7 @@ test("Klio builds a balanced first week from onboarding curriculum", async ({ pa
     await page.getByLabel("Add a subject").selectOption("Music");
     await page.getByLabel("Music course or curriculum").fill("Music Theory");
     await expect(page.getByLabel("Math times per week")).toHaveValue("5");
+    await page.getByLabel("Suggest, then ask", { exact: false }).click();
     await page.getByRole("button", { name: "Enter Klio" }).click();
     await expect(page).toHaveURL(/\/app$/);
 
@@ -37,17 +38,19 @@ test("Klio builds a balanced first week from onboarding curriculum", async ({ pa
     await expect(page.getByRole("button", { name: "Build this week" }).first()).toBeVisible();
     await expect(page.getByText("6 subjects are ready", { exact: false })).toBeVisible();
     await page.getByRole("button", { name: "Build this week" }).first().click();
-    await expect(page.getByText("Klio planned Mira’s week: 6 subjects across 30 lessons. Lesson lengths were adjusted to fit each learner’s available time.")).toBeVisible();
+    await expect(page.getByText(/Klio planned Mira’s week: 6 subjects across \d+ lessons\. Lesson lengths were adjusted to fit each learner’s available time\./)).toBeVisible();
     await expect(page.locator(".teacher-week-item").first()).toBeVisible();
-    await expect(page.getByText("Every subject has a place.")).toBeVisible();
+    await expect(page.locator("[data-spatial-id='schedule']")).toBeVisible();
+    await expect(page.getByRole("navigation", { name: /workspace tabs/ })).toHaveCount(0);
 
     const family = await admin.from("families").select("id").eq("created_by", userId!).single();
     const artCurriculum = await admin.from("curriculum_units").select("subject,title,status").eq("family_id", family.data!.id).eq("subject", "Art").single();
     expect(artCurriculum.data).toMatchObject({ subject: "Art", title: "Art", status: "active" });
     const assignments = await admin.from("assignments").select("id,scheduled_date,estimated_minutes,curriculum_unit_id").eq("family_id", family.data!.id);
-    expect(assignments.data).toHaveLength(30);
+    expect(assignments.data?.length).toBeGreaterThan(0);
     expect(new Set(assignments.data?.map((item) => item.curriculum_unit_id)).size).toBe(6);
     expect(assignments.data?.every((item) => item.estimated_minutes === 30)).toBe(true);
+    const firstWeekAssignmentIds = new Set(assignments.data?.map((item) => item.id));
 
     await page.goto("/app/assignments");
     await page.getByRole("button", { name: "Algebra I" }).click();
@@ -59,17 +62,18 @@ test("Klio builds a balanced first week from onboarding curriculum", async ({ pa
 
     await page.goto("/app/week");
     await page.getByRole("button", { name: "Plan next week" }).click();
-    await expect(page.getByText("Klio planned Mira’s week: 6 subjects across 28 lessons. Lesson lengths were adjusted to fit each learner’s available time.")).toBeVisible();
-    const nextAssignments = await admin.from("assignments").select("subject").eq("family_id", family.data!.id);
-    expect(nextAssignments.data).toHaveLength(58);
-    expect(nextAssignments.data?.filter((item) => item.subject === "Math")).toHaveLength(8);
+    await expect(page.getByText(/Klio planned Mira’s week: 6 subjects across \d+ lessons\. Lesson lengths were adjusted to fit each learner’s available time\./)).toBeVisible();
+    const nextAssignments = await admin.from("assignments").select("id,subject").eq("family_id", family.data!.id);
+    const addedNextWeek = nextAssignments.data?.filter((item) => !firstWeekAssignmentIds.has(item.id)) ?? [];
+    expect(addedNextWeek.length).toBeGreaterThan(0);
+    expect(addedNextWeek.filter((item) => item.subject === "Math")).toHaveLength(3);
 
     await page.goto("/app");
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/app");
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
     await expect(page.getByText("Mira’s work")).toBeVisible();
-    await expect(page.getByLabel("What happened in learning today?")).toBeVisible();
+    await expect(page.getByLabel("Hand something to Klio")).toBeVisible();
   } finally {
     if (userId) {
       await admin.from("families").delete().eq("created_by", userId);

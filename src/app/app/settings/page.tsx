@@ -2,13 +2,20 @@ import Link from "next/link";
 import { ChevronRight, CreditCard, Download, FileText, Plus, Upload, Users } from "lucide-react";
 import { getWorkspace } from "@/lib/data/workspace";
 import { createClient } from "@/lib/supabase/server";
+import { AutonomySettings } from "@/components/autonomy-settings";
+import { AcademicPlanningSettings } from "@/components/academic-planning-settings";
+import { learnerWeekdays } from "@/lib/assignments/dates";
 
 export default async function SettingsPage() {
   const workspace = await getWorkspace();
   if (!workspace) return null;
   const supabase = await createClient();
-  const subscriptionResult = await supabase.from("subscriptions").select("status, current_period_end").eq("family_id", workspace.family.id).maybeSingle();
-  if (subscriptionResult.error) throw subscriptionResult.error;
+  const [subscriptionResult, termsResult, curriculaResult] = await Promise.all([
+    supabase.from("subscriptions").select("status, current_period_end").eq("family_id", workspace.family.id).maybeSingle(),
+    supabase.from("academic_terms").select("id,name,starts_on,ends_on,status").eq("family_id", workspace.family.id).in("status", ["planned", "active"]).order("starts_on", { ascending: false }),
+    supabase.from("curriculum_units").select("id,student_id,subject,title,next_sequence_number,default_minutes").eq("family_id", workspace.family.id).eq("status", "active").order("subject"),
+  ]);
+  if (subscriptionResult.error ?? termsResult.error ?? curriculaResult.error) throw subscriptionResult.error ?? termsResult.error ?? curriculaResult.error;
   const subscription = subscriptionResult.data;
   const year = new Date().getFullYear();
 
@@ -36,11 +43,15 @@ export default async function SettingsPage() {
         </div>
       </section>
 
+      <AcademicPlanningSettings familyId={workspace.family.id} enabledWeekdays={learnerWeekdays(null, workspace.family.available_days)} terms={termsResult.data.map((term) => ({ id: term.id, name: term.name, startsOn: term.starts_on, endsOn: term.ends_on, status: term.status }))} learners={workspace.students.map((student) => ({ id: student.id, name: student.displayName }))} curricula={curriculaResult.data.map((item) => ({ id: item.id, studentId: item.student_id, subject: item.subject, title: item.title, nextSequence: item.next_sequence_number, defaultMinutes: item.default_minutes }))} />
+
+      <AutonomySettings familyId={workspace.family.id} initialPreset={workspace.autonomy.preset} initialPolicies={workspace.autonomy.policies} />
+
       <section><h2><CreditCard size={17} /> Billing</h2><div className="billing-line"><div><strong>{subscription?.status === "active" ? "Klio membership" : "Prototype access"}</strong><p>{subscription ? `Subscription is ${subscription.status}.` : "Stripe is ready to connect when keys and a price are configured."}</p></div>
         <form action="/api/stripe/checkout" method="post"><input type="hidden" name="familyId" value={workspace.family.id} /><button className="outline-button">{subscription?.status === "active" ? "Manage billing" : "Start membership"}</button></form>
       </div></section>
       <section><h2><FileText size={17} /> Files and exports</h2><p className="settings-copy">Import older records, inspect original captures, or export this year’s family portfolio.</p><div className="account-tools"><Link href="/app/import"><Upload size={15} /><span><strong>Import grades</strong><small>Add a CSV from another system</small></span></Link><Link href="/app/evidence"><FileText size={15} /><span><strong>All captures</strong><small>View raw notes, photos, and files</small></span></Link><a href={`/api/export?familyId=${workspace.family.id}&from=${year}-01-01&to=${year}-12-31`}><Download size={15} /><span><strong>Export this year</strong><small>Download the family portfolio</small></span></a></div></section>
-      <section><h2>Privacy</h2><p className="settings-copy">Klio stores student records in your private family workspace. Klio’s suggestions never become approved learning context without your review.</p><a className="text-link" href="/privacy">Read the privacy summary</a></section>
+      <section><h2>Privacy</h2><p className="settings-copy">Klio stores student records in your private family workspace. Source records are preserved, and Klio-inferred grades never become official without your confirmation.</p><a className="text-link" href="/privacy">Read the privacy summary</a></section>
     </div>
   );
 }

@@ -17,6 +17,7 @@ export default async function CapturePage() {
     initialArtifacts={workspace.artifacts}
     pendingApprovals={workspace.pendingApprovals}
     initialAgentTurn={workspace.latestAgentTurn}
+    initialAgentConversation={workspace.latestAgentConversation}
     initialStudentId={studentId}
   />;
 }

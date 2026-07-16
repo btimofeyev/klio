@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
 
-test("unfinished work replaces the all-clear and offers a reviewable reschedule", async ({ page }) => {
+test("marking unfinished work lets Klio move it automatically with undo", async ({ page }) => {
   const suffix = crypto.randomUUID();
   const email = `unfinished-${suffix}@example.test`;
   const password = "KlioUnfinished123";
@@ -18,6 +18,7 @@ test("unfinished work replaces the all-clear and offers a reviewable reschedule"
     await page.getByLabel("Learner’s first name").fill("Malachi");
     await page.getByLabel("Add a subject").selectOption("Math");
     await page.getByLabel("Math course or curriculum").fill("Math Foundations");
+    await page.getByLabel("Suggest, then ask", { exact: false }).click();
     await page.getByRole("button", { name: "Enter Klio" }).click();
     await expect(page).toHaveURL(/\/app$/);
 
@@ -40,10 +41,10 @@ test("unfinished work replaces the all-clear and offers a reviewable reschedule"
 
     await page.goto("/app");
     await expect(page.getByLabel("View day plan for")).toHaveValue("all");
-    await expect(page.getByText("Family work")).toBeVisible();
+    await expect(page.getByText("Family work", { exact: true })).toBeVisible();
+    await page.getByText("Jacob · Reading").scrollIntoViewIfNeeded();
     await expect(page.getByText("Jacob · Reading")).toBeVisible();
-    await expect(page.getByText("Malachi has 3 lessons behind")).toBeVisible();
-    await expect(page.getByText("Nothing needs attention.")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /Attention/ })).toHaveCount(0);
     await page.getByLabel("View day plan for").selectOption(student.data!.id);
     await expect(page.getByText("Malachi’s work")).toBeVisible();
 
@@ -58,26 +59,57 @@ test("unfinished work replaces the all-clear and offers a reviewable reschedule"
     await page.goto("/app/adjustments");
     await expect(page.getByLabel("View")).toHaveValue("all");
     await page.goto("/app/records");
-    await expect(page.getByRole("heading", { name: "Family learning" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Family progress" })).toBeVisible();
     await expect(page.getByRole("link", { name: "F Family" })).toHaveClass(/active/);
 
     await page.goto("/app");
-    await page.getByRole("button", { name: "Prepare a new schedule for Malachi’s 3 unfinished lessons" }).click();
+    await page.getByRole("button", { name: "Previous day" }).click();
+    await page.locator(".day-assignment").filter({ hasText: "Math · Lesson 1" }).click();
+    await page.getByRole("button", { name: "Not finished" }).click();
     await expect(page).toHaveURL(/\/app$/);
-    await expect(page.getByText(/Move 3 unfinished lessons/)).toBeVisible();
-    await expect(page.getByRole("button", { name: "Accept changes" })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Review", exact: true })).toHaveAttribute("href", "/app/adjustments");
-
-    const assignmentIds = inserted.data!.map((item) => item.id);
-    const beforeApproval = await admin.from("assignments").select("id,scheduled_date").in("id", assignmentIds);
-    expect(beforeApproval.data?.every((item) => item.scheduled_date === missedDate)).toBe(true);
-    await page.getByRole("button", { name: "Accept changes" }).click();
-    await expect(page).toHaveURL(/\/app$/);
-    await expect(page.getByRole("status")).toContainText("The week has been updated.");
+    const assignmentIds = [inserted.data!.find((item) => item.title === "Math · Lesson 1")!.id];
+    await page.getByRole("button", { name: /Klio adjusted/ }).click();
+    await expect(page.getByRole("button", { name: "Undo" })).toBeVisible();
     await expect.poll(async () => {
       const moved = await admin.from("assignments").select("id,scheduled_date").in("id", assignmentIds);
       return moved.data?.filter((item) => item.scheduled_date !== missedDate).length;
-    }).toBe(3);
+    }).toBe(1);
+    await page.getByRole("button", { name: "Undo" }).click();
+    await expect.poll(async () => {
+      const restored = await admin.from("assignments").select("id,scheduled_date").in("id", assignmentIds);
+      return restored.data?.filter((item) => item.scheduled_date === missedDate).length;
+    }).toBe(1);
+
+    await page.goto("/app");
+    await page.getByRole("button", { name: "Previous day" }).click();
+    await page.locator(".day-assignment").filter({ hasText: "Phonics · Lesson 1" }).click();
+    await page.getByRole("button", { name: "Not finished" }).click();
+    const adjustedTab = page.getByRole("button", { name: /Klio adjusted/ });
+    await expect(adjustedTab).toBeVisible();
+    await adjustedTab.click();
+    const panel = page.locator("aside[data-spatial-object]");
+    await expect(panel.getByRole("button", { name: "Acknowledge" })).toBeVisible();
+    await panel.getByRole("button", { name: "Acknowledge" }).click();
+    await expect(adjustedTab).toHaveCount(0);
+    await expect(panel).toHaveCount(0);
+
+    await expect.poll(async () => (await admin.from("adjustment_proposals").select("acknowledged_at").eq("family_id", family.data!.id).eq("status", "applied").order("created_at", { ascending: false }).limit(1).single()).data?.acknowledged_at).not.toBeNull();
+    const acknowledged = await admin.from("adjustment_proposals").select("id,summary,status,undo_status,acknowledged_at").eq("family_id", family.data!.id).eq("status", "applied").order("created_at", { ascending: false }).limit(1).single();
+    expect(acknowledged.error).toBeNull();
+    expect(acknowledged.data).toMatchObject({ status: "applied", undo_status: "available" });
+    expect(acknowledged.data!.acknowledged_at).toBeTruthy();
+    const repeatedAcknowledgement = await page.evaluate(async (proposalId) => {
+      const response = await fetch(`/api/adjustments/${proposalId}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ decision: "acknowledge" }) });
+      return { status: response.status, body: await response.json() };
+    }, acknowledged.data!.id);
+    expect(repeatedAcknowledgement).toMatchObject({ status: 200, body: { status: "acknowledged", alreadyAcknowledged: true, acknowledgedCount: 0 } });
+    await page.reload();
+    await expect(page.getByRole("button", { name: /Klio adjusted/ })).toHaveCount(0);
+    await page.goto("/app/activity");
+    const historyEntry = page.locator(".activity-row").filter({ hasText: acknowledged.data!.summary });
+    await expect(historyEntry.getByText("Schedule update")).toBeVisible();
+    await historyEntry.locator("summary").click();
+    await expect(historyEntry.getByRole("button", { name: "Undo change" })).toBeVisible();
   } finally {
     if (userId) {
       await admin.from("families").delete().eq("created_by", userId);
@@ -87,8 +119,10 @@ test("unfinished work replaces the all-clear and offers a reviewable reschedule"
 });
 
 function dateOffset(days: number) {
-  const value = new Date();
-  value.setUTCHours(12, 0, 0, 0);
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" })
+    .formatToParts(new Date());
+  const part = (type: "year" | "month" | "day") => Number(parts.find((item) => item.type === type)?.value);
+  const value = new Date(Date.UTC(part("year"), part("month") - 1, part("day"), 12));
   value.setUTCDate(value.getUTCDate() + days);
   return value.toISOString().slice(0, 10);
 }

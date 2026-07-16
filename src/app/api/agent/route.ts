@@ -5,17 +5,20 @@ import { createClient } from "@/lib/supabase/server";
 import { checkRateLimit } from "@/lib/security/rate-limit";
 import { enqueueAgentJob, safelyProcessAgentJob } from "@/lib/agent/jobs";
 import type { AgentIntent } from "@/lib/agent/run-agent";
-import { enqueueWorkspaceTurn, type WorkspaceGoal } from "@/lib/agent/workspace/turns";
+import { enqueueWorkspaceTurn, interactionModeForRequest, type WorkspaceGoal } from "@/lib/agent/workspace/turns";
 import { processWorkspaceTurn } from "@/lib/agent/workspace/runtime";
 import { serverEnv } from "@/lib/env";
+import { postgresUuidSchema } from "@/lib/validation/postgres-uuid";
+import { assignmentGuidanceRequest, explicitlyMentionedStudentId, isAssignmentGuidanceRequest } from "@/lib/agent/workspace/request-routing";
+import { appendAgentConversationMessage, ensureAgentConversation } from "@/lib/agent/workspace/conversations";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
 const schema = z.object({
-  familyId: z.uuid(), studentId: z.uuid().nullable().optional(), evidenceIds: z.array(z.uuid()).max(20).default([]),
+  familyId: postgresUuidSchema, studentId: postgresUuidSchema.nullable().optional(), evidenceIds: z.array(postgresUuidSchema).max(20).default([]),
   intent: z.enum(["general", "organize", "understand", "update_records", "next_step", "weekly_plan", "lesson", "summary", "practice", "portfolio"]),
-  request: z.string().trim().min(3).max(4000), requestId: z.uuid(),
+  request: z.string().trim().min(3).max(4000), requestId: z.uuid(), contextDate: z.iso.date().optional(), assignmentId: postgresUuidSchema.optional(), conversationId: postgresUuidSchema.optional(),
 });
 
 export async function POST(request: Request) {
@@ -28,12 +31,25 @@ export async function POST(request: Request) {
     const supabase = await createClient();
     const { data: membership } = await supabase.from("family_members").select("family_id").eq("family_id", parsed.data.familyId).eq("user_id", parent.id).maybeSingle();
     if (!membership) return NextResponse.json({ error: "You do not have access to that workspace." }, { status: 403 });
+    const students = await supabase.from("students").select("id,display_name").eq("family_id", parsed.data.familyId).eq("active", true);
+    if (students.error) throw students.error;
+    const assignment = parsed.data.assignmentId ? await supabase.from("assignments").select("id,student_id,title,subject").eq("family_id", parsed.data.familyId).eq("id", parsed.data.assignmentId).maybeSingle() : null;
+    if (assignment?.error) throw assignment.error;
+    if (parsed.data.assignmentId && !assignment?.data) return NextResponse.json({ error: "That lesson is no longer available in this workspace." }, { status: 404 });
     if (serverEnv.klioAgentRuntime === "codex_app_server") {
       const goal = intentGoal(parsed.data.intent);
       const idempotencyKey = `workspace:${parsed.data.requestId}`;
-      const workspace = await enqueueWorkspaceTurn({ familyId: parsed.data.familyId, requestedBy: parent.id, evidenceIds: parsed.data.evidenceIds, studentId: parsed.data.studentId, trigger: "parent_message", goal, idempotencyKey, request: parsed.data.request });
+      const assignmentGuidance = Boolean(assignment?.data && isAssignmentGuidanceRequest(parsed.data.request));
+      const contextualRequest = assignment?.data && assignmentGuidance ? assignmentGuidanceRequest({ title: assignment.data.title, subject: assignment.data.subject, request: parsed.data.request }) : parsed.data.request;
+      const interactionMode = interactionModeForRequest({ goal, request: parsed.data.request, assignmentGuidance });
+      const mentionedStudentId = explicitlyMentionedStudentId(parsed.data.request, students.data.map((student) => ({ id: student.id, displayName: student.display_name })));
+      const effectiveStudentId = assignment?.data?.student_id ?? mentionedStudentId ?? parsed.data.studentId;
+      const conversationId = await ensureAgentConversation({ familyId: parsed.data.familyId, requestedBy: parent.id, conversationId: parsed.data.conversationId, studentId: effectiveStudentId, openingRequest: parsed.data.request });
+      const presentation = requestPresentation(parsed.data.intent, contextualRequest, assignment?.data, interactionMode);
+      const workspace = await enqueueWorkspaceTurn({ familyId: parsed.data.familyId, requestedBy: parent.id, evidenceIds: parsed.data.evidenceIds, studentId: effectiveStudentId, trigger: "parent_message", goal, idempotencyKey, request: contextualRequest, contextDate: parsed.data.contextDate, conversationId, interactionMode, ...presentation });
+      await appendAgentConversationMessage({ conversationId, familyId: parsed.data.familyId, role: "user", content: parsed.data.request, agentTurnId: workspace.turn.id, idempotencyKey: `turn:${parsed.data.requestId}:user` });
       if (serverEnv.klioAgentInline && !workspace.duplicate) after(() => processWorkspaceTurn(workspace.turn.id));
-      return NextResponse.json({ turn: workspace.turn }, { status: 202 });
+      return NextResponse.json({ turn: workspace.turn, conversationId, interactionMode }, { status: 202 });
     }
     if (!parsed.data.studentId || !parsed.data.evidenceIds.length) return NextResponse.json({ error: "This workspace request requires the Codex agent runtime." }, { status: 503 });
     const job = await enqueueAgentJob({
@@ -63,4 +79,13 @@ function intentGoal(intent: z.infer<typeof schema>["intent"]): WorkspaceGoal {
   if (intent === "update_records" || intent === "understand") return "records";
   if (intent === "organize") return "capture";
   return "general";
+}
+
+function requestPresentation(intent: z.infer<typeof schema>["intent"], request: string, assignment: { title: string; subject: string } | null | undefined, interactionMode: "answer" | "act") {
+  if (assignment) return { taskName: `Answering how to teach ${assignment.title}`, subject: assignment.subject, expectedOutput: "A concrete teaching approach grounded in this lesson" };
+  if (interactionMode === "answer") return { taskName: "Answering your question", expectedOutput: "A clear answer grounded in your family workspace" };
+  if (intent === "weekly_plan" && /\b(?:organiz|overlap|rebalance|timed\s+(?:plan|schedule))\w*/i.test(request)) {
+    return { taskName: "Organizing today’s schedule", expectedOutput: "A usable non-overlapping schedule with Undo" };
+  }
+  return {};
 }

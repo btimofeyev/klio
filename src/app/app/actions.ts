@@ -9,6 +9,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { writeAuditEvent } from "@/lib/audit/write-audit-event";
 import { normalizePracticeSpec } from "@/lib/practice/spec";
 import { subjectSlug } from "@/lib/onboarding/subjects";
+import { FamilyWeekPlanError, planFamilyWeek } from "@/lib/assignments/plan-family-week";
 
 const reviewSchema = z.object({
   familyId: z.uuid(), entityId: z.uuid(), entityType: z.enum(["artifact", "skill_observation"]),
@@ -131,9 +132,26 @@ export async function updateStudentSetupAction(_: LearnerSetupState, formData: F
   } catch (syncError) {
     return { error: syncError instanceof Error ? syncError.message : "Klio could not update those subjects.", success: null };
   }
+  let plannedMessage = "";
+  try {
+    const planned = await planFamilyWeek({
+      supabase,
+      familyId: setup.learner.familyId,
+      parentId: parent.id,
+      actorType: "agent",
+    });
+    const learnerPlan = planned.learners.find((learner) => learner.studentId === setup.learner.studentId);
+    if (learnerPlan?.assignmentCount) plannedMessage = ` Klio also placed ${learnerPlan.assignmentCount} ${learnerPlan.assignmentCount === 1 ? "lesson" : "lessons"} into the current week.`;
+  } catch (planningError) {
+    if (planningError instanceof FamilyWeekPlanError && planningError.code === "FREQUENCY_OVER_CAPACITY") {
+      return { error: null, success: `${setup.learner.displayName}’s learning setup is updated. Klio left the week unchanged: ${planningError.message}` };
+    }
+    console.error("Automatic learner week planning failed", planningError);
+    plannedMessage = " The setup is safe, but Klio could not refresh the week yet.";
+  }
   revalidatePath("/app", "layout");
   revalidatePath("/app/settings");
-  return { error: null, success: `${setup.learner.displayName}’s learning setup is updated.` };
+  return { error: null, success: `${setup.learner.displayName}’s learning setup is updated.${plannedMessage}` };
 }
 
 function readLearnerSetup(formData: FormData) {
@@ -217,10 +235,13 @@ export async function launchPracticeAction(formData: FormData) {
   if (!artifact?.student_id || !artifact.content || typeof artifact.content !== "object" || Array.isArray(artifact.content)) redirect(`/app/artifacts/${artifactId}`);
   const practice = normalizePracticeSpec(artifact.content.practice);
   if (!practice) redirect(`/app/artifacts/${artifactId}`);
+  const existing = await supabase.from("practice_sessions").select("id").eq("family_id", artifact.family_id).eq("artifact_id", artifact.id).in("status", ["ready", "in_progress"]).order("created_at", { ascending: false }).limit(1).maybeSingle();
+  if (existing.error) throw existing.error;
+  if (existing.data) redirect(`/app?practice=${existing.data.id}`);
   const { data: session, error } = await supabase.from("practice_sessions").insert({
     family_id: artifact.family_id, student_id: artifact.student_id, artifact_id: artifact.id,
     created_by: parent.id, spec: practice,
   }).select("id").single();
   if (error) throw error;
-  redirect(`/practice/${session.id}`);
+  redirect(`/app?practice=${session.id}`);
 }

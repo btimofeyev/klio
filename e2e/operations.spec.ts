@@ -17,6 +17,7 @@ test("a family plans curriculum, reviews submitted work, and approves a coordina
     await page.getByLabel("Learner’s first name").fill("Rowan");
     await page.getByLabel("Add a subject").selectOption("Math");
     await page.getByLabel("Math course or curriculum").fill("Algebra I");
+    await page.getByLabel("Suggest, then ask", { exact: false }).click();
     await page.getByRole("button", { name: "Enter Klio" }).click();
     await expect(page).toHaveURL(/\/app$/);
 
@@ -41,12 +42,23 @@ test("a family plans curriculum, reviews submitted work, and approves a coordina
     await page.goto(`/app?date=${dateAfter(nextMonday(), 2)}`);
     const lesson8 = page.locator(".day-assignment").filter({ hasText: "Algebra I · Lesson 8" });
     await lesson8.getByRole("button", { name: "Done" }).click();
-    await expect(page.getByText("Algebra I · Lesson 8 marked complete.")).toBeVisible();
+    await expect(page.getByText("Algebra I · Lesson 8 is done. Klio recorded it and is checking the follow-through.")).toBeVisible();
+    await expect(lesson8).toHaveClass(/completed/);
+    const completedDetails = lesson8.getByRole("button", { name: "View details for Algebra I · Lesson 8" });
+    await expect(completedDetails).toHaveAttribute("aria-expanded", "false");
+    expect((await lesson8.boundingBox())!.height).toBeLessThanOrEqual(56);
+    await expect(lesson8.locator(".lesson-focus-detail")).toHaveCount(0);
+    await expect(lesson8.getByRole("button", { name: "Hand to Klio" })).toHaveCount(0);
+    await completedDetails.click();
+    const hideCompletedDetails = lesson8.getByRole("button", { name: "Hide details for Algebra I · Lesson 8" });
+    await expect(hideCompletedDetails).toHaveAttribute("aria-expanded", "true");
+    await expect(lesson8.getByRole("button", { name: "Hand to Klio" })).toBeVisible();
+    await hideCompletedDetails.click();
+    await expect(completedDetails).toHaveAttribute("aria-expanded", "false");
     await expect(lesson8).toHaveCSS("transform", "none");
     await expect(lesson8).toHaveAttribute("draggable", "true");
-    await expect(lesson8.getByRole("button", { name: "Add work" })).toBeVisible();
-    await lesson8.dragTo(page.locator(".teacher-klio-dock .quiet-capture"));
-    const completedWorkInput = page.getByLabel("What happened in learning today?");
+    await lesson8.dragTo(page.locator(".spatial-assistant-surface .quiet-capture"));
+    const completedWorkInput = page.getByLabel("Hand something to Klio");
     await expect(completedWorkInput).toHaveAttribute("spellcheck", "true");
     await expect(completedWorkInput).toHaveAttribute("autocorrect", "on");
     await expect(completedWorkInput).toHaveAttribute("autocapitalize", "sentences");
@@ -68,16 +80,16 @@ test("a family plans curriculum, reviews submitted work, and approves a coordina
     await correctionMenu.getByRole("menuitem", { name: "minutes", exact: true }).click();
     await expect(completedWorkInput).toHaveValue("Finished in thirty minutes");
     await page.getByRole("button", { name: "Save to Klio" }).click();
-    await expect(page.getByText("Algebra I · Lesson 8 marked complete. The note was filed in Math.")).toBeVisible();
+    await expect(page.getByText("Algebra I · Lesson 8 marked complete. The note was filed in Math.").or(page.getByText("Saved. Klio is putting it away."))).toBeVisible();
     await page.goto("/app/review");
     await expect(page.locator(".grade-review").filter({ hasText: "Algebra I · Lesson 8" })).toHaveCount(0);
 
     await page.goto(`/app?date=${dateAfter(nextMonday(), 2)}`);
     const completedLesson8 = page.locator(".day-assignment").filter({ hasText: "Algebra I · Lesson 8" });
-    await completedLesson8.dragTo(page.locator(".teacher-klio-dock .quiet-capture"));
-    await page.getByLabel("What happened in learning today?").fill("Score: 92%. Completed worksheet attached for the record.");
+    await completedLesson8.dragTo(page.locator(".spatial-assistant-surface .quiet-capture"));
+    await page.getByLabel("Hand something to Klio").fill("Score: 92%. Completed worksheet attached for the record.");
     await page.getByRole("button", { name: "Save to Klio" }).click();
-    await expect(page.getByText("Algebra I · Lesson 8 is filed and ready for review.")).toBeVisible();
+    await expect(page.getByText("Algebra I · Lesson 8 is complete and the submitted work is ready for review.")).toBeVisible();
     await expect(completedLesson8).toHaveClass(/completed/);
     await page.goto("/app/review");
     const lesson8Review = page.locator(".grade-review").filter({ hasText: "Algebra I · Lesson 8" });
@@ -87,10 +99,19 @@ test("a family plans curriculum, reviews submitted work, and approves a coordina
 
     await page.goto(`/app?date=${nextMonday()}`);
     const lesson6 = page.locator(".day-assignment").filter({ hasText: "Algebra I · Lesson 6" });
-    await lesson6.dragTo(page.locator(".teacher-klio-dock .quiet-capture"));
+    await lesson6.dragTo(page.locator(".spatial-assistant-surface .quiet-capture"));
+    await page.getByLabel("Hand something to Klio").fill("Did great on this today.");
+    await page.getByRole("button", { name: "Save to Klio" }).click();
+    await expect(page.getByText("Note added to Algebra I · Lesson 6. Klio will keep it with this lesson.")).toBeVisible();
+    await page.goto("/app/review");
+    await expect(page.locator(".grade-review").filter({ hasText: "Algebra I · Lesson 6" })).toHaveCount(0);
+
+    await page.goto(`/app?date=${nextMonday()}`);
+    const lesson6ForReview = page.locator(".day-assignment").filter({ hasText: "Algebra I · Lesson 6" });
+    await lesson6ForReview.dragTo(page.locator(".spatial-assistant-surface .quiet-capture"));
     await expect(page.getByText("Working with")).toBeVisible();
     await expect(page.locator(".quiet-assignment-context").getByText("Algebra I · Lesson 6")).toBeVisible();
-    await page.getByLabel("What happened in learning today?").fill("Score: 68%. Negative slopes were reversed on two questions.");
+    await page.getByLabel("Hand something to Klio").fill("Score: 68%. Negative slopes were reversed on two questions.");
     await page.getByRole("button", { name: "Save to Klio" }).click();
     await expect(page.getByText("Algebra I · Lesson 6 is filed and ready for review.")).toBeVisible();
     await page.goto("/app/review");
@@ -101,18 +122,20 @@ test("a family plans curriculum, reviews submitted work, and approves a coordina
     await lesson6Review.getByRole("button", { name: "Looks right — approve" }).click();
     await expect(page.getByText(/review was approved/)).toBeVisible();
     await page.goto("/app/adjustments");
-    await expect(page.getByText(/Add 15 minutes of focused Math review/)).toBeVisible();
+    await expect(page.getByText(/Add .*focused Math review/)).toHaveCount(0);
 
     await page.goto("/app/week");
     await page.getByRole("button", { name: /Tue/ }).click();
     await page.locator(".teacher-week-item").filter({ hasText: "Algebra I · Lesson 7" }).click();
-    const lesson7 = page.locator(".day-assignment").filter({ hasText: "Algebra I · Lesson 7" });
-    await lesson7.dragTo(page.locator(".teacher-klio-dock .quiet-capture"));
-    const attachedInput = page.getByLabel("What happened in learning today?");
+    const lesson7 = page.locator("[data-spatial-id='lesson']").filter({ hasText: "Algebra I · Lesson 7" });
+    await expect(lesson7).toBeInViewport();
+    await lesson7.getByRole("button", { name: "Hand to Klio" }).click();
+    const attachedInput = page.getByLabel("Hand something to Klio");
+    await expect(page.locator(".spatial-assistant-surface .quiet-capture")).toHaveClass(/assignment-context-mode/);
     await expect.poll(async () => (await attachedInput.boundingBox())?.height ?? 0).toBeGreaterThan(90);
     await attachedInput.fill("Push this to tomorrow and adjust accordingly.");
     await page.getByRole("button", { name: "Save to Klio" }).click();
-    await expect(page.getByText(/Week updated\. Move Algebra I · Lesson 7/)).toBeVisible();
+    await expect(page.getByText(/Week updated\. Moved Algebra I · Lesson 7/)).toBeVisible();
     await page.goto(`/app?date=${dateAfter(nextMonday(), 2)}`);
     await expect(page.locator(".day-assignment").filter({ hasText: "Algebra I · Lesson 7" })).toBeVisible();
     await expect(page.getByText("Push this to tomorrow and adjust accordingly.")).toHaveCount(0);

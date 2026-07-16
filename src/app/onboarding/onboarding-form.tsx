@@ -9,6 +9,7 @@ const initialState: OnboardingState = { error: null };
 export function OnboardingForm() {
   const [state, action, pending] = useActionState(createWorkspaceAction, initialState);
   const [subjects, setSubjects] = useState<SubjectSetupValue[]>([]);
+  const [autonomyPreset, setAutonomyPreset] = useState("");
 
   return (
     <form action={action} className="onboarding-form">
@@ -46,7 +47,7 @@ export function OnboardingForm() {
       </section>
 
       <section className="onboarding-section onboarding-rhythm" aria-labelledby="rhythm-heading">
-        <div className="onboarding-section-title"><span>03</span><div><h2 id="rhythm-heading">What does a normal week look like?</h2><p>This gives Klio realistic boundaries when plans change.</p></div></div>
+        <div className="onboarding-section-title"><span>03</span><div><h2 id="rhythm-heading">What does a normal week look like?</h2><p>Weekends stay off unless you enable them here. Klio only schedules on checked days.</p></div></div>
         <div className="rhythm-fields">
           <fieldset><legend>Learning days</legend><div className="day-picker">{["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((day) => <label key={day}><input type="checkbox" name="learningDays" value={day} defaultChecked={["Mon", "Tue", "Wed", "Thu", "Fri"].includes(day)} /><span>{day.slice(0, 1)}</span></label>)}</div></fieldset>
           <div className="field capacity-field">
@@ -59,9 +60,20 @@ export function OnboardingForm() {
         </div>
       </section>
 
+      <section className="onboarding-section" aria-labelledby="autonomy-heading">
+        <div className="onboarding-section-title"><span>04</span><div><h2 id="autonomy-heading">How should Klio handle changes?</h2><p>Choose the operating style you want. You can change it later in Settings.</p></div></div>
+        <fieldset className="autonomy-choice"><legend className="sr-only">Choose how Klio handles changes</legend>
+          {[
+            { value: "helpful", title: "Suggest, then ask", detail: "Klio can prepare practice and plans, but asks before changing the schedule.", note: "A calm place to start" },
+            { value: "proactive", title: "Autopilot", detail: "Klio may schedule practice and move unfinished work automatically, with an undo option.", note: "More automatic" },
+            { value: "ask_first", title: "Ask before everything", detail: "Klio explains proposed actions and waits for approval before making changes.", note: "Most control" },
+          ].map((option) => <label className={autonomyPreset === option.value ? "selected" : ""} key={option.value}><input required type="radio" name="autonomyPreset" value={option.value} checked={autonomyPreset === option.value} onChange={(event) => setAutonomyPreset(event.target.value)} /><span><small>{option.note}</small><strong>{option.title}</strong><em>{option.detail}</em></span></label>)}
+        </fieldset>
+      </section>
+
       <footer className="onboarding-submit">
         <p><strong>{subjects.length || "No"} subjects selected.</strong> You can change this setup anytime.</p>
-        <button className="form-button" disabled={pending || subjects.length === 0}>{pending ? "Preparing Klio…" : "Enter Klio"}</button>
+        <button className="form-button" disabled={pending || subjects.length === 0 || !autonomyPreset}>{pending ? "Preparing Klio…" : "Enter Klio"}</button>
       </footer>
       <p className="form-note onboarding-privacy">Learner information stays inside your family workspace and is never public.</p>
     </form>

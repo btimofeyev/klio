@@ -1,6 +1,7 @@
 /*
- * The homeschool workspace is staged as an open teacher's desk:
- * independent paper schedules, uneven rhythm, and pinned Klio notes.
+ * The homeschool workspace is staged as a calm teacher's desk. The daily
+ * surface keeps its paper character; the family week stays aligned so it can
+ * be scanned across learners without decorative layout getting in the way.
  */
 
 @media (min-width: 1001px) {
@@ -24,7 +25,7 @@
   }
 
   .teacher-week-toolbar {
-    width: min(690px, 70%);
+    width: 100%;
   }
 
   /* Today: one compact paper floating inside the note orbit. */
@@ -135,56 +136,49 @@
   .teacher-notes-left .teacher-note:nth-child(2) { margin-left: 20px; }
   .teacher-notes-right .teacher-note:nth-child(2) { margin-left: -18px; }
 
-  /* Week: five separate strips, deliberately staggered on the canvas. */
-  .teacher-week-orbit {
-    position: relative;
-    min-height: 500px;
-    display: block;
-    padding: 14px 0 8px;
-    overflow: visible;
-  }
+  /* Week: one aligned family canvas with Klio notes attached above it. */
+  .teacher-week-canvas { display: block; }
 
   .teacher-week-sheet {
-    width: min(790px, 73%);
+    width: 100%;
     max-height: none;
     margin: 0 auto;
     display: grid;
     grid-template-columns: repeat(5, minmax(118px, 1fr));
-    gap: 16px;
-    overflow: visible;
-    background: transparent;
-    border: 0;
-    border-radius: 0;
-    box-shadow: none;
+    align-items: stretch;
+    gap: 0;
+    overflow: hidden;
+    background: #fffefa;
+    border: 1px solid rgba(58, 66, 55, .14);
+    border-radius: 10px;
+    box-shadow: 0 20px 46px rgba(57, 52, 42, .08), 0 3px 8px rgba(57, 52, 42, .05);
   }
 
   .teacher-week-sheet > section {
-    position: relative;
     min-width: 0;
-    padding: 0 8px 10px;
-    background: #fffefa;
-    border: 1px solid rgba(58, 66, 55, .13);
-    border-radius: 4px;
-    box-shadow: 0 15px 34px rgba(57, 52, 42, .09), 0 2px 6px rgba(57, 52, 42, .05);
-    transition: transform 180ms cubic-bezier(.16, 1, .3, 1), box-shadow 180ms;
+    margin: 0;
+    padding: 0 8px 14px;
+    align-self: stretch;
+    background: transparent;
+    border: 0;
+    border-right: 1px solid rgba(58, 66, 55, .1);
+    border-radius: 0;
+    box-shadow: none;
+    transform: none;
+    transition: background 160ms;
   }
 
-  .teacher-week-sheet > section:nth-child(1) { margin-top: 42px; transform: rotate(-.45deg); }
-  .teacher-week-sheet > section:nth-child(2) { margin-top: 5px; transform: rotate(.25deg); }
-  .teacher-week-sheet > section:nth-child(3) { margin-top: 66px; transform: rotate(-.2deg); }
-  .teacher-week-sheet > section:nth-child(4) { margin-top: 22px; transform: rotate(.45deg); }
-  .teacher-week-sheet > section:nth-child(5) { margin-top: 54px; transform: rotate(-.3deg); }
+  .teacher-week-sheet > section:last-child { border-right: 0; }
 
   .teacher-week-sheet > section:hover {
-    z-index: 2;
-    transform: translateY(-5px) rotate(0deg);
-    box-shadow: 0 20px 42px rgba(57, 52, 42, .13), 0 3px 8px rgba(57, 52, 42, .06);
+    background: rgba(242, 236, 214, .2);
+    transform: none;
+    box-shadow: none;
   }
 
   .teacher-week-sheet > section.selected {
-    background: #fffef9;
-    outline: 2px solid rgba(96, 121, 98, .16);
-    outline-offset: 3px;
+    background: rgba(242, 236, 214, .32);
+    outline: 0;
   }
 
   .teacher-week-day-head {
@@ -342,12 +336,6 @@
 }
 
 @media (min-width: 1001px) and (max-height: 760px) {
-  .teacher-week-sheet > section:nth-child(1),
-  .teacher-week-sheet > section:nth-child(3),
-  .teacher-week-sheet > section:nth-child(5) { margin-top: 24px; }
-  .teacher-week-sheet > section:nth-child(2),
-  .teacher-week-sheet > section:nth-child(4) { margin-top: 0; }
-  .teacher-week-orbit { min-height: 420px; }
   .teacher-week-item { min-height: 43px; padding-block: 5px; }
   .teacher-day-sheet { max-height: 420px; }
 }
@@ -372,25 +360,25 @@
 }
 
 /* Shared parent surfaces: the same open desk, paper, and note language. */
-.ops-workspace:not(:has(.teacher-canvas)) {
+.ops-workspace:not(:has(.teacher-canvas)):not(:has(.spatial-workspace)) {
   width: min(1240px, 100%);
   min-height: 100dvh;
   padding: 38px clamp(34px, 5vw, 72px) 90px;
 }
 
-.ops-workspace:not(:has(.teacher-canvas)) .ops-header {
+.ops-workspace:not(:has(.teacher-canvas)):not(:has(.spatial-workspace)) .ops-header {
   min-height: 116px;
   align-items: center;
   border-bottom-color: rgba(58, 66, 55, .11);
 }
 
-.ops-workspace:not(:has(.teacher-canvas)) .ops-header h1 {
+.ops-workspace:not(:has(.teacher-canvas)):not(:has(.spatial-workspace)) .ops-header h1 {
   max-width: 620px;
   margin-top: 7px;
   font-size: clamp(30px, 3.2vw, 42px);
 }
 
-.ops-workspace:not(:has(.teacher-canvas)) .ops-header p {
+.ops-workspace:not(:has(.teacher-canvas)):not(:has(.spatial-workspace)) .ops-header p {
   max-width: 560px;
   font-size: 11px;
 }
@@ -699,7 +687,7 @@
 }
 
 @media (max-width: 900px) {
-  .ops-workspace:not(:has(.teacher-canvas)),
+  .ops-workspace:not(:has(.teacher-canvas)):not(:has(.spatial-workspace)),
   .folder-library,
   .section-page.settings-page,
   .learner-route-page {
@@ -735,7 +723,7 @@
 }
 
 @media (max-width: 620px) {
-  .ops-workspace:not(:has(.teacher-canvas)) .ops-header {
+  .ops-workspace:not(:has(.teacher-canvas)):not(:has(.spatial-workspace)) .ops-header {
     min-height: 132px;
     align-items: flex-start;
   }
@@ -778,4 +766,176 @@
   .learner-setup-form > footer button { width: 100%; }
   .new-learner-form > footer { align-items: stretch; flex-direction: column; }
   .new-learner-form > footer button { width: 100%; }
+}
+
+/* Spatial week objects own elevation; the schedule inside is one uninterrupted paper. */
+.spatial-week-schedule .teacher-week-sheet {
+  width: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: #fffefa;
+  border: 0;
+  border-radius: 0 0 11px 11px;
+  box-shadow: none;
+}
+
+.spatial-week-schedule .teacher-week-sheet > section {
+  margin: 0;
+  border-top: 0;
+  border-bottom: 0;
+  border-left: 0;
+  border-radius: 0;
+  box-shadow: none;
+  transform: none;
+}
+
+.spatial-week-schedule .teacher-week-sheet > section:hover { transform: none; box-shadow: none; }
+
+.spatial-day-schedule .teacher-day-sheet {
+  width: 100%;
+  max-height: none;
+  margin: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0 0 11px 11px;
+  box-shadow: none;
+  transform: none;
+}
+
+.spatial-day-schedule .teacher-day-list { max-height: none; overflow: visible; }
+
+.spatial-day-schedule .day-order-hint {
+  margin: -2px 0 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #69736b;
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.spatial-day-schedule .day-drag-grip {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  right: 2px;
+  width: 20px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  color: #7b857d;
+  opacity: .42;
+  transform: translateY(-50%);
+  transition: color 160ms cubic-bezier(.16, 1, .3, 1), opacity 160ms cubic-bezier(.16, 1, .3, 1), transform 160ms cubic-bezier(.16, 1, .3, 1);
+}
+
+.spatial-day-schedule .day-assignment:hover .day-drag-grip,
+.spatial-day-schedule .day-assignment.selected .day-drag-grip {
+  color: #526657;
+  opacity: 1;
+}
+
+.spatial-day-schedule .day-assignment:active .day-drag-grip { transform: translateY(-50%) scale(.92); }
+
+.spatial-day-schedule .day-assignment.day-drop-before::after,
+.spatial-day-schedule .day-assignment.day-drop-after::after {
+  position: absolute;
+  z-index: 3;
+  right: 4px;
+  left: 4px;
+  height: 2px;
+  content: "";
+  background: #526d57;
+  border-radius: 99px;
+  box-shadow: 0 0 0 3px rgba(82, 109, 87, .12);
+  pointer-events: none;
+}
+
+.spatial-day-schedule .day-assignment.day-drop-before::after { top: -4px; }
+.spatial-day-schedule .day-assignment.day-drop-after::after { bottom: -4px; }
+.spatial-day-schedule .day-row-actions { row-gap: 6px; }
+
+/* The finite teaching board has room for a genuinely readable daily plan. */
+@media (min-width: 761px) {
+  .spatial-day-schedule .teacher-day-sheet .day-assignment {
+    min-height: 76px;
+    padding: 10px 12px;
+    grid-template-columns: 68px 32px minmax(0, 1fr) 58px 56px;
+    gap: 10px;
+  }
+
+  .spatial-day-schedule .teacher-day-sheet .day-assignment > time { font-size: 11px; }
+  .spatial-day-schedule .teacher-day-sheet .day-subject-mark { width: 30px; height: 30px; font-size: 10px; }
+  .spatial-day-schedule .teacher-day-sheet .day-assignment strong { font-size: 14px; }
+  .spatial-day-schedule .teacher-day-sheet .day-assignment small { font-size: 10px; }
+  .spatial-day-schedule .teacher-day-sheet .day-assignment p { font-size: 11px; line-height: 1.35; }
+  .spatial-day-schedule .teacher-day-sheet .day-duration { font-size: 10px; }
+  .spatial-day-schedule .teacher-day-sheet .day-state { display: inline-flex; font-size: 10px; }
+  .spatial-day-schedule .teacher-day-sheet .day-row-actions { grid-column: 3 / 6; }
+  .spatial-day-schedule .teacher-day-sheet .day-row-actions button { min-height: 30px; padding-inline: 9px; font-size: 11px; }
+}
+
+/* Finished work recedes into a compact ledger line until the parent opens it. */
+.spatial-day-schedule .teacher-day-sheet .day-assignment.completed:not(.focused) {
+  min-height: 50px;
+  padding: 5px 12px;
+  grid-template-columns: 58px 26px minmax(0, 1fr) 52px;
+  gap: 9px;
+  background: rgba(226, 235, 226, .52);
+}
+
+.spatial-day-schedule .teacher-day-sheet .day-assignment.completed:not(.focused) .day-subject-mark {
+  width: 25px;
+  height: 25px;
+  font-size: 9px;
+}
+
+.spatial-day-schedule .teacher-day-sheet .day-assignment.completed:not(.focused) > div:not(.day-row-actions) {
+  gap: 1px;
+}
+
+.spatial-day-schedule .teacher-day-sheet .day-assignment.completed:not(.focused) strong {
+  font-size: 12px;
+}
+
+.spatial-day-schedule .teacher-day-sheet .day-assignment.completed:not(.focused) small {
+  font-size: 8px;
+}
+
+.spatial-day-schedule .teacher-day-sheet .day-assignment.completed:not(.focused) p,
+.spatial-day-schedule .teacher-day-sheet .day-assignment.completed:not(.focused) .day-duration {
+  display: none;
+}
+
+.spatial-day-schedule .teacher-day-sheet .day-assignment.completed:not(.focused) .day-state {
+  display: inline-flex;
+  grid-column: 4;
+  font-size: 9px;
+}
+
+.spatial-day-schedule .teacher-day-sheet .day-completed-open {
+  padding: 4px 0;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.spatial-day-schedule .teacher-day-sheet .day-completed-open:focus-visible {
+  outline: 2px solid #536d57;
+  outline-offset: 2px;
+}
+
+.spatial-day-schedule .teacher-day-sheet .day-assignment.completed:not(.focused).selected::before {
+  top: 8px;
+  bottom: 8px;
+}
+
+@media (max-width: 760px) {
+  .spatial-day-schedule .teacher-day-sheet .day-assignment.completed:not(.focused) {
+    grid-template-columns: 45px 24px minmax(0, 1fr) 44px;
+    gap: 6px;
+  }
+  .spatial-day-schedule .teacher-day-sheet .day-row-actions button { min-height: 30px; font-size: 10px; }
 }

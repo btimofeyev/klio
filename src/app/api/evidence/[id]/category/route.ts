@@ -4,6 +4,7 @@ import { requireParentApi } from "@/lib/auth/require-parent";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { writeAuditEvent } from "@/lib/audit/write-audit-event";
+import { enqueueProactiveEvaluation } from "@/lib/proactive/evaluate";
 
 const schema = z.object({
   familyId: z.uuid(),
@@ -87,6 +88,7 @@ export async function POST(request: Request, { params }: RouteContext<"/api/evid
     });
     if (correctionError) throw correctionError;
     await writeAuditEvent(admin, { familyId: parsed.data.familyId, actorId: parent.id, actorType: "parent", action: "evidence.folder_corrected", entityType: "evidence_item", entityId: id, metadata: { from: previous?.categories.name ?? null, to: category.name, student_id: parsed.data.studentId ?? null, cues } });
+    await enqueueProactiveEvaluation({ familyId: parsed.data.familyId, studentId: parsed.data.studentId ?? null, requestedBy: parent.id, eventKind: "parent_correction", entityType: "evidence_item", entityId: id, idempotencyKey: `filing-correction:${id}:${category.id}:${parsed.data.studentId ?? "family"}` });
     return NextResponse.json({ moved: true, category });
   } catch (error) {
     if (error instanceof Error && error.message === "UNAUTHORIZED") return NextResponse.json({ error: "Sign in to continue." }, { status: 401 });

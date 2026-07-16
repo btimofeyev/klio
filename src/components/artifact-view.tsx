@@ -2,6 +2,7 @@ import { AlertCircle, Check, Clock, Sparkles } from "lucide-react";
 import { launchPracticeAction, reviewEntityAction } from "@/app/app/actions";
 import type { Json } from "@/lib/supabase/database.types";
 import { parsePracticeSpec } from "@/lib/practice/spec";
+import { PracticePreview } from "@/components/practice-preview";
 
 type ArtifactListEntry = string | Record<string, unknown>;
 
@@ -56,6 +57,7 @@ export function ArtifactView({ artifact }: {
         <section key={entryKey(section, sectionIndex)}><h2>{section.heading}</h2><p>{section.body}</p>{section.items?.length ? <ul>{section.items.map((item, index) => <li key={entryKey(item, index)}>{item}</li>)}</ul> : null}</section>
       ))}
       {content.suggested_actions?.length ? <section><h2>Suggested next moves</h2><ol>{content.suggested_actions.map((item, index) => <li key={entryKey(item, index)}>{item}</li>)}</ol></section> : null}
+      {artifact.type === "practice" && practiceSpec ? <PracticePreview value={content.practice} document /> : null}
       {artifact.rationale ? <footer><strong>Why Klio suggested this</strong><p>{artifact.rationale}</p></footer> : null}
       {artifact.type === "practice" && artifact.status === "approved" && practiceSpec ? (
         <form action={launchPracticeAction} className="practice-launch"><input type="hidden" name="artifactId" value={artifact.id} /><button className="primary-button">Start practice</button></form>

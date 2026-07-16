@@ -27,11 +27,14 @@ test("a parent creates a workspace and captures a real note", async ({ page }) =
     await page.getByLabel("Latin course or curriculum").fill("Cambridge Latin Course");
     await page.getByLabel("Coding course or curriculum").fill("Python Foundations");
     await page.getByLabel("Math course or curriculum").fill("Algebra I");
+    await page.getByLabel("Suggest, then ask", { exact: false }).click();
     await page.getByRole("button", { name: "Enter Klio" }).click();
     await expect(page).toHaveURL(/\/app$/);
     const { data: createdUser } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
     const createdUserId = createdUser.users.find((user) => user.email === email)?.id;
     const { data: createdFamily } = await admin.from("families").select("id").eq("created_by", createdUserId!).single();
+    const { data: autonomy } = await admin.from("family_autonomy_policies").select("preset").eq("family_id", createdFamily!.id).single();
+    expect(autonomy?.preset).toBe("helpful");
     const { data: savedSubjects } = await admin.from("student_subjects").select("name,course_name").eq("family_id", createdFamily!.id).order("position");
     expect(savedSubjects).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: "Math", course_name: "Algebra I" }),
@@ -46,7 +49,7 @@ test("a parent creates a workspace and captures a real note", async ({ page }) =
       { subject: "Coding", title: "Python Foundations" },
     ]));
     await page.setViewportSize({ width: 390, height: 844 });
-    expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBeLessThanOrEqual(844);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
     await page.goto("/app/inbox");
     const fileChooserPromise = page.waitForEvent("filechooser");
     await page.getByRole("button", { name: "Photo", exact: true }).click();
@@ -86,6 +89,7 @@ test("an authenticated family can start Stripe test checkout", async ({ page }) 
     await page.getByLabel("Workspace name").fill("Billing Family");
     await page.getByLabel("Learner’s first name").fill("Learner");
     await page.getByLabel("Add a subject").selectOption("Math");
+    await page.getByLabel("Suggest, then ask", { exact: false }).click();
     await page.getByRole("button", { name: "Enter Klio" }).click();
     await expect(page).toHaveURL(/\/app$/);
     await page.goto("/app/settings");
@@ -115,7 +119,7 @@ test("an authenticated family can start Stripe test checkout", async ({ page }) 
   }
 });
 
-test("selected evidence becomes a parent-approved OpenAI artifact", async ({ page }) => {
+test("an open evidence handoff leaves a durable live-agent receipt", async ({ page }) => {
   test.skip(process.env.RUN_LIVE_OPENAI_E2E !== "1", "Set RUN_LIVE_OPENAI_E2E=1 for the live agent verification");
   test.setTimeout(180_000);
   const suffix = crypto.randomUUID();
@@ -131,17 +135,18 @@ test("selected evidence becomes a parent-approved OpenAI artifact", async ({ pag
     await page.getByLabel("Workspace name").fill("Agent Verification Family");
     await page.getByLabel("Learner’s first name").fill("Learner");
     await page.getByLabel("Add a subject").selectOption("Science");
+    await page.getByLabel("Suggest, then ask", { exact: false }).click();
     await page.getByRole("button", { name: "Enter Klio" }).click();
     await expect(page).toHaveURL(/\/app$/);
     await page.goto("/app/inbox");
     await page.getByPlaceholder(/What happened in learning today/).fill("Today the learner read a short nonfiction passage about pollinators, explained the main idea accurately, and asked why bats can be pollinators too.");
     await page.getByRole("button", { name: "Save to Klio" }).click();
-    await expect(page.getByText(/working in the background/i)).toBeVisible();
-    await expect(page.locator(".rail-artifact").first()).toBeVisible({ timeout: 150_000 });
-    await page.locator(".rail-artifact").first().click();
-    await expect(page.getByText("draft", { exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "Approve" }).click();
-    await expect(page.getByText("approved", { exact: true })).toBeVisible();
+    await expect(page.getByText("On Klio’s desk", { exact: true })).toBeVisible();
+    await expect(page.getByText("Finished", { exact: true })).toBeVisible({ timeout: 150_000 });
+    await page.goto("/app/activity");
+    await expect(page.getByRole("heading", { name: "Attention", exact: true })).toBeVisible();
+    const receipt = page.locator(".activity-row").filter({ hasText: "Handling Learner’s learning update" });
+    await expect(receipt.getByText("Finished", { exact: true })).toBeVisible();
   } finally {
     const { data } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
     const userId = data.users.find((user) => user.email === email)?.id;

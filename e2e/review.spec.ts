@@ -15,6 +15,7 @@ test("a parent checks source-backed Klio suggestions and corrections", async ({ 
     await page.getByRole("button", { name: "Create workspace" }).click();
     await page.getByLabel("Workspace name").fill("Review Family"); await page.getByLabel("Learner’s first name").fill("Maya");
     await page.getByLabel("Add a subject").selectOption("Math");
+    await page.getByLabel("Suggest, then ask", { exact: false }).click();
     await page.getByRole("button", { name: "Enter Klio" }).click(); await expect(page).toHaveURL(/\/app$/);
 
     const users = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
@@ -47,13 +48,13 @@ test("a parent checks source-backed Klio suggestions and corrections", async ({ 
     expect(wrongFamily).toBe(403);
 
     await page.goto("/app/activity");
-    await expect(page.getByRole("heading", { name: "Klio needs your help" })).toBeVisible();
-    await expect(page.getByText("File anything Klio could not place, then confirm what it understood. This disappears when you are done.")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "What happened" })).toBeVisible();
+    await expect(page.getByText("Open any row for its full receipt.")).toBeVisible();
     await expect(page.getByRole("heading", { name: "Fraction worksheet" })).toBeVisible();
     await expect(page.getByText("Orphan draft must stay hidden")).toHaveCount(0);
     await expect(page.getByText("Another family private suggestion")).toHaveCount(0);
     await expect(page.getByText(/1 older suggestion is no longer available/)).toBeVisible();
-    await expect(page.locator('.app-nav a[href="/app/review"] b')).toHaveText("3");
+    await expect(page.locator('.app-nav a[href="/app/activity"] b')).toHaveText("4");
 
     await page.setViewportSize({ width: 390, height: 844 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
@@ -76,13 +77,14 @@ test("a parent checks source-backed Klio suggestions and corrections", async ({ 
     await observationCard.getByRole("button", { name: "Looks right" }).click();
     await expect(observationCard).toHaveCount(0);
     await expect(artifactCard).toBeVisible();
-    await expect(page.locator('.mobile-nav a[href="/app/review"] b')).toHaveText("2");
+    await expect(page.locator('.mobile-nav a[href="/app/activity"] b')).toHaveText("3");
     await artifactCard.getByRole("button", { name: "Not quite" }).click();
     await artifactCard.getByLabel("What needs correcting?").selectOption("not_enough_information");
     await artifactCard.getByLabel(/Anything else/).fill("We need another independent sample.");
     await artifactCard.getByRole("button", { name: "Submit correction" }).click();
-    await expect(page.getByRole("heading", { name: "You’re all caught up" })).toBeVisible();
-    await expect(page.locator('.mobile-nav a[href="/app/review"] b')).toHaveText("1");
+    await expect(artifactCard).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "1 capture to file" })).toBeVisible();
+    await expect(page.locator('.mobile-nav a[href="/app/activity"] b')).toHaveText("2");
 
     const savedObservation = await admin.from("skill_observations").select("approval_status,skill_label").eq("id", observation.data.id).single();
     expect(savedObservation.data).toEqual({ approval_status: "approved", skill_label: "Compares familiar fractions" });

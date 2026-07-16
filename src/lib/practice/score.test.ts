@@ -36,6 +36,25 @@ describe("dynamic practice scoring", () => {
       { activityId: "graph", type: "graph_line", points: [{ x: 0, y: 5 }, { x: 1, y: 3 }] },
       { activityId: "explain", type: "written_response", value: "It falls as x increases." },
     ]);
-    expect(result).toMatchObject({ score: 100, masteryMet: true, complete: true, gradedCount: 3, reviewNeeded: true });
+    expect(result).toMatchObject({ score: 100, masteryMet: false, complete: true, gradedCount: 3, reviewNeeded: true, scoringState: "provisional" });
+  });
+
+  it("never declares mastery when all responses require parent review", () => {
+    const written = {
+      ...spec,
+      activities: [{ id: "written", type: "written_response" as const, prompt: "Explain", success_criteria: ["Uses evidence"], max_length: 500, hints: [], explanation: "Review with a parent." }],
+    };
+    expect(scoreDynamicPractice(written, [{ activityId: "written", type: "written_response", value: "My explanation" }]))
+      .toMatchObject({ score: 0, masteryMet: false, reviewNeeded: true, scoringState: "provisional" });
+  });
+
+  it("includes a Klio-reviewed written response in the final result", () => {
+    const result = scoreDynamicPractice(spec, [
+      { activityId: "choice", type: "multiple_choice", value: "-2" },
+      { activityId: "text", type: "short_answer", value: "y=-2x+5" },
+      { activityId: "graph", type: "graph_line", points: [{ x: 0, y: 5 }, { x: 1, y: 3 }] },
+      { activityId: "explain", type: "written_response", value: "It falls as x increases." },
+    ], new Map([["explain", true]]));
+    expect(result).toMatchObject({ score: 100, masteryMet: true, complete: true, gradedCount: 4, reviewNeeded: false, scoringState: "final" });
   });
 });

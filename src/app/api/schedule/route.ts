@@ -4,6 +4,7 @@ import { writeAuditEvent } from "@/lib/audit/write-audit-event";
 import { requireParentApi } from "@/lib/auth/require-parent";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { referenceUrlSchema } from "@/lib/security/reference-url";
 
 const createScheduleItemSchema = z.object({
   familyId: z.uuid(),
@@ -14,7 +15,7 @@ const createScheduleItemSchema = z.object({
   scheduledDate: z.iso.date(),
   scheduledTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).nullable().optional(),
   estimatedMinutes: z.number().int().min(5).max(480).nullable().optional(),
-  curriculumUrl: z.url().max(2000).nullable().optional(),
+  curriculumUrl: referenceUrlSchema.nullable().optional(),
 }).strict();
 
 export async function POST(request: Request) {

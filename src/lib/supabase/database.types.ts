@@ -34,6 +34,92 @@ export type Database = {
   }
   public: {
     Tables: {
+      academic_term_weekdays: {
+        Row: {
+          created_at: string
+          family_id: string
+          term_id: string
+          weekday: number
+        }
+        Insert: {
+          created_at?: string
+          family_id: string
+          term_id: string
+          weekday: number
+        }
+        Update: {
+          created_at?: string
+          family_id?: string
+          term_id?: string
+          weekday?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "academic_term_weekdays_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "academic_term_weekdays_term_id_family_id_fkey"
+            columns: ["term_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "academic_terms"
+            referencedColumns: ["id", "family_id"]
+          },
+        ]
+      }
+      academic_terms: {
+        Row: {
+          created_at: string
+          created_by: string
+          ends_on: string
+          family_id: string
+          id: string
+          name: string
+          notes: string | null
+          starts_on: string
+          status: string
+          target_instructional_days: number | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          ends_on: string
+          family_id: string
+          id?: string
+          name: string
+          notes?: string | null
+          starts_on: string
+          status?: string
+          target_instructional_days?: number | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          ends_on?: string
+          family_id?: string
+          id?: string
+          name?: string
+          notes?: string | null
+          starts_on?: string
+          status?: string
+          target_instructional_days?: number | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "academic_terms_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       adjustment_actions: {
         Row: {
           action_type: string
@@ -97,6 +183,9 @@ export type Database = {
       }
       adjustment_proposals: {
         Row: {
+          acknowledged_at: string | null
+          acknowledged_by: string | null
+          after_snapshot_version: number | null
           agent_turn_id: string | null
           applied_at: string | null
           approved_at: string | null
@@ -104,15 +193,25 @@ export type Database = {
           created_at: string
           family_id: string
           id: string
+          idempotency_key: string | null
+          policy_decision: Json
           reason: string
           snapshot_version: number
           status: string
           student_id: string
           summary: string
+          trigger_event: Json
+          undo_expires_at: string | null
+          undo_status: string
+          undone_at: string | null
+          undone_by: string | null
           updated_at: string
           week_start: string
         }
         Insert: {
+          acknowledged_at?: string | null
+          acknowledged_by?: string | null
+          after_snapshot_version?: number | null
           agent_turn_id?: string | null
           applied_at?: string | null
           approved_at?: string | null
@@ -120,15 +219,25 @@ export type Database = {
           created_at?: string
           family_id: string
           id?: string
+          idempotency_key?: string | null
+          policy_decision?: Json
           reason: string
           snapshot_version: number
           status?: string
           student_id: string
           summary: string
+          trigger_event?: Json
+          undo_expires_at?: string | null
+          undo_status?: string
+          undone_at?: string | null
+          undone_by?: string | null
           updated_at?: string
           week_start: string
         }
         Update: {
+          acknowledged_at?: string | null
+          acknowledged_by?: string | null
+          after_snapshot_version?: number | null
           agent_turn_id?: string | null
           applied_at?: string | null
           approved_at?: string | null
@@ -136,11 +245,18 @@ export type Database = {
           created_at?: string
           family_id?: string
           id?: string
+          idempotency_key?: string | null
+          policy_decision?: Json
           reason?: string
           snapshot_version?: number
           status?: string
           student_id?: string
           summary?: string
+          trigger_event?: Json
+          undo_expires_at?: string | null
+          undo_status?: string
+          undone_at?: string | null
+          undone_by?: string | null
           updated_at?: string
           week_start?: string
         }
@@ -161,6 +277,109 @@ export type Database = {
           },
           {
             foreignKeyName: "adjustment_proposals_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "students"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      agent_conversation_messages: {
+        Row: {
+          agent_turn_id: string | null
+          content: string
+          conversation_id: string
+          created_at: string
+          family_id: string
+          id: string
+          idempotency_key: string | null
+          role: string
+        }
+        Insert: {
+          agent_turn_id?: string | null
+          content: string
+          conversation_id: string
+          created_at?: string
+          family_id: string
+          id?: string
+          idempotency_key?: string | null
+          role: string
+        }
+        Update: {
+          agent_turn_id?: string | null
+          content?: string
+          conversation_id?: string
+          created_at?: string
+          family_id?: string
+          id?: string
+          idempotency_key?: string | null
+          role?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_conversation_messages_agent_turn_id_family_id_fkey"
+            columns: ["agent_turn_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "agent_turns"
+            referencedColumns: ["id", "family_id"]
+          },
+          {
+            foreignKeyName: "agent_conversation_messages_conversation_id_family_id_fkey"
+            columns: ["conversation_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "agent_conversations"
+            referencedColumns: ["id", "family_id"]
+          },
+          {
+            foreignKeyName: "agent_conversation_messages_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      agent_conversations: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          family_id: string
+          id: string
+          status: string
+          student_id: string | null
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          family_id: string
+          id?: string
+          status?: string
+          student_id?: string | null
+          title?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          family_id?: string
+          id?: string
+          status?: string
+          student_id?: string | null
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_conversations_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_conversations_student_id_fkey"
             columns: ["student_id"]
             isOneToOne: false
             referencedRelation: "students"
@@ -528,6 +747,7 @@ export type Database = {
       agent_threads: {
         Row: {
           agent_kind: string
+          conversation_id: string | null
           created_at: string
           family_id: string
           generation: number
@@ -542,6 +762,7 @@ export type Database = {
         }
         Insert: {
           agent_kind?: string
+          conversation_id?: string | null
           created_at?: string
           family_id: string
           generation?: number
@@ -556,6 +777,7 @@ export type Database = {
         }
         Update: {
           agent_kind?: string
+          conversation_id?: string | null
           created_at?: string
           family_id?: string
           generation?: number
@@ -569,6 +791,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "agent_threads_conversation_family_fkey"
+            columns: ["conversation_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "agent_conversations"
+            referencedColumns: ["id", "family_id"]
+          },
           {
             foreignKeyName: "agent_threads_family_id_fkey"
             columns: ["family_id"]
@@ -657,80 +886,123 @@ export type Database = {
       agent_turns: {
         Row: {
           attempt_count: number
+          cancel_requested_at: string | null
           completed_at: string | null
+          conversation_id: string | null
           created_at: string
           current_snapshot_version: number
+          dismissed_at: string | null
           error_code: string | null
+          expected_output: string | null
           family_id: string
           goal: string
           id: string
           idempotency_key: string
           initial_snapshot_version: number
+          interaction_mode: string
           last_heartbeat_at: string | null
+          last_progress_at: string | null
+          normalized_step: string | null
           outcome: string | null
           provider_turn_id: string | null
           public_result: Json | null
           requested_by: string | null
           snapshot_hash: string
           snapshot_summary: Json
+          source_count: number
           source_evidence_id: string | null
           started_at: string | null
           status: string
+          streamed_message: string | null
+          student_id: string | null
+          subject: string | null
+          task_name: string | null
           thread_id: string
           trigger: string
           updated_at: string
         }
         Insert: {
           attempt_count?: number
+          cancel_requested_at?: string | null
           completed_at?: string | null
+          conversation_id?: string | null
           created_at?: string
           current_snapshot_version: number
+          dismissed_at?: string | null
           error_code?: string | null
+          expected_output?: string | null
           family_id: string
           goal: string
           id?: string
           idempotency_key: string
           initial_snapshot_version: number
+          interaction_mode?: string
           last_heartbeat_at?: string | null
+          last_progress_at?: string | null
+          normalized_step?: string | null
           outcome?: string | null
           provider_turn_id?: string | null
           public_result?: Json | null
           requested_by?: string | null
           snapshot_hash: string
           snapshot_summary?: Json
+          source_count?: number
           source_evidence_id?: string | null
           started_at?: string | null
           status?: string
+          streamed_message?: string | null
+          student_id?: string | null
+          subject?: string | null
+          task_name?: string | null
           thread_id: string
           trigger: string
           updated_at?: string
         }
         Update: {
           attempt_count?: number
+          cancel_requested_at?: string | null
           completed_at?: string | null
+          conversation_id?: string | null
           created_at?: string
           current_snapshot_version?: number
+          dismissed_at?: string | null
           error_code?: string | null
+          expected_output?: string | null
           family_id?: string
           goal?: string
           id?: string
           idempotency_key?: string
           initial_snapshot_version?: number
+          interaction_mode?: string
           last_heartbeat_at?: string | null
+          last_progress_at?: string | null
+          normalized_step?: string | null
           outcome?: string | null
           provider_turn_id?: string | null
           public_result?: Json | null
           requested_by?: string | null
           snapshot_hash?: string
           snapshot_summary?: Json
+          source_count?: number
           source_evidence_id?: string | null
           started_at?: string | null
           status?: string
+          streamed_message?: string | null
+          student_id?: string | null
+          subject?: string | null
+          task_name?: string | null
           thread_id?: string
           trigger?: string
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "agent_turns_conversation_family_fkey"
+            columns: ["conversation_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "agent_conversations"
+            referencedColumns: ["id", "family_id"]
+          },
           {
             foreignKeyName: "agent_turns_family_id_fkey"
             columns: ["family_id"]
@@ -743,6 +1015,13 @@ export type Database = {
             columns: ["source_evidence_id"]
             isOneToOne: false
             referencedRelation: "evidence_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_turns_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "students"
             referencedColumns: ["id"]
           },
           {
@@ -947,65 +1226,95 @@ export type Database = {
         Row: {
           agent_turn_id: string | null
           assignment_id: string
+          comparable_key: string | null
           created_at: string
           draft_feedback: string | null
           draft_score: number | null
+          evidence_kind: string
+          evidence_strength: string
           family_id: string
           feedback: string | null
+          grading_state: string
           id: string
           mastery_signals: Json
+          return_reason: string | null
+          returned_at: string | null
           reviewed_at: string | null
           reviewed_by: string | null
           rubric: Json
           score: number | null
           score_label: string | null
+          score_origin: string
+          skill_key: string | null
           status: string
           student_id: string
           submission_id: string
           uncertainty_flags: Json
           updated_at: string
+          written_review_completed: boolean
+          written_review_required: boolean
         }
         Insert: {
           agent_turn_id?: string | null
           assignment_id: string
+          comparable_key?: string | null
           created_at?: string
           draft_feedback?: string | null
           draft_score?: number | null
+          evidence_kind?: string
+          evidence_strength?: string
           family_id: string
           feedback?: string | null
+          grading_state?: string
           id?: string
           mastery_signals?: Json
+          return_reason?: string | null
+          returned_at?: string | null
           reviewed_at?: string | null
           reviewed_by?: string | null
           rubric?: Json
           score?: number | null
           score_label?: string | null
+          score_origin?: string
+          skill_key?: string | null
           status?: string
           student_id: string
           submission_id: string
           uncertainty_flags?: Json
           updated_at?: string
+          written_review_completed?: boolean
+          written_review_required?: boolean
         }
         Update: {
           agent_turn_id?: string | null
           assignment_id?: string
+          comparable_key?: string | null
           created_at?: string
           draft_feedback?: string | null
           draft_score?: number | null
+          evidence_kind?: string
+          evidence_strength?: string
           family_id?: string
           feedback?: string | null
+          grading_state?: string
           id?: string
           mastery_signals?: Json
+          return_reason?: string | null
+          returned_at?: string | null
           reviewed_at?: string | null
           reviewed_by?: string | null
           rubric?: Json
           score?: number | null
           score_label?: string | null
+          score_origin?: string
+          skill_key?: string | null
           status?: string
           student_id?: string
           submission_id?: string
           uncertainty_flags?: Json
           updated_at?: string
+          written_review_completed?: boolean
+          written_review_required?: boolean
         }
         Relationships: [
           {
@@ -1334,6 +1643,111 @@ export type Database = {
           },
         ]
       }
+      curriculum_pacing_targets: {
+        Row: {
+          constraints: string | null
+          created_at: string
+          created_by: string
+          curriculum_unit_id: string
+          expected_assignments: number | null
+          family_id: string
+          goal_id: string | null
+          id: string
+          priority: number
+          start_sequence: number
+          starts_on: string
+          status: string
+          student_id: string
+          target_completion_date: string
+          target_sequence: number
+          term_id: string
+          updated_at: string
+          version: number
+          weekly_cadence: number
+          weekly_effort_minutes: number
+        }
+        Insert: {
+          constraints?: string | null
+          created_at?: string
+          created_by: string
+          curriculum_unit_id: string
+          expected_assignments?: number | null
+          family_id: string
+          goal_id?: string | null
+          id?: string
+          priority?: number
+          start_sequence?: number
+          starts_on: string
+          status?: string
+          student_id: string
+          target_completion_date: string
+          target_sequence: number
+          term_id: string
+          updated_at?: string
+          version?: number
+          weekly_cadence: number
+          weekly_effort_minutes: number
+        }
+        Update: {
+          constraints?: string | null
+          created_at?: string
+          created_by?: string
+          curriculum_unit_id?: string
+          expected_assignments?: number | null
+          family_id?: string
+          goal_id?: string | null
+          id?: string
+          priority?: number
+          start_sequence?: number
+          starts_on?: string
+          status?: string
+          student_id?: string
+          target_completion_date?: string
+          target_sequence?: number
+          term_id?: string
+          updated_at?: string
+          version?: number
+          weekly_cadence?: number
+          weekly_effort_minutes?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "curriculum_pacing_targets_curriculum_unit_id_family_id_fkey"
+            columns: ["curriculum_unit_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "curriculum_units"
+            referencedColumns: ["id", "family_id"]
+          },
+          {
+            foreignKeyName: "curriculum_pacing_targets_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "curriculum_pacing_targets_goal_id_family_id_fkey"
+            columns: ["goal_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "learning_goals"
+            referencedColumns: ["id", "family_id"]
+          },
+          {
+            foreignKeyName: "curriculum_pacing_targets_student_id_family_id_fkey"
+            columns: ["student_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "students"
+            referencedColumns: ["id", "family_id"]
+          },
+          {
+            foreignKeyName: "curriculum_pacing_targets_term_id_family_id_fkey"
+            columns: ["term_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "academic_terms"
+            referencedColumns: ["id", "family_id"]
+          },
+        ]
+      }
       curriculum_units: {
         Row: {
           created_at: string
@@ -1618,6 +2032,79 @@ export type Database = {
         }
         Relationships: []
       }
+      family_autonomy_policies: {
+        Row: {
+          created_at: string
+          family_id: string
+          policies: Json
+          preset: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          created_at?: string
+          family_id: string
+          policies?: Json
+          preset?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          created_at?: string
+          family_id?: string
+          policies?: Json
+          preset?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "family_autonomy_policies_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: true
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      family_execution_leases: {
+        Row: {
+          acquired_at: string
+          expires_at: string
+          family_id: string
+          heartbeat_at: string
+          owner_token: string
+          work_id: string
+          work_kind: string
+        }
+        Insert: {
+          acquired_at?: string
+          expires_at: string
+          family_id: string
+          heartbeat_at?: string
+          owner_token: string
+          work_id: string
+          work_kind: string
+        }
+        Update: {
+          acquired_at?: string
+          expires_at?: string
+          family_id?: string
+          heartbeat_at?: string
+          owner_token?: string
+          work_id?: string
+          work_kind?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "family_execution_leases_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: true
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       family_members: {
         Row: {
           created_at: string
@@ -1644,6 +2131,154 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "families"
             referencedColumns: ["id"]
+          },
+        ]
+      }
+      family_workspace_layouts: {
+        Row: {
+          created_at: string
+          family_id: string
+          layout_version: number
+          positions: Json
+          scope_key: string
+          surface: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          created_at?: string
+          family_id: string
+          layout_version: number
+          positions?: Json
+          scope_key: string
+          surface: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          created_at?: string
+          family_id?: string
+          layout_version?: number
+          positions?: Json
+          scope_key?: string
+          surface?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "family_workspace_layouts_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      goal_progress_records: {
+        Row: {
+          actor_type: string
+          created_at: string
+          family_id: string
+          goal_id: string
+          id: string
+          note: string | null
+          observed_on: string
+          progress_unit: string
+          progress_value: number
+          recorded_by: string | null
+          source_assignment_id: string | null
+          source_evidence_id: string | null
+          source_kind: string
+          source_review_id: string | null
+          student_id: string
+          supersedes_id: string | null
+        }
+        Insert: {
+          actor_type: string
+          created_at?: string
+          family_id: string
+          goal_id: string
+          id?: string
+          note?: string | null
+          observed_on?: string
+          progress_unit: string
+          progress_value: number
+          recorded_by?: string | null
+          source_assignment_id?: string | null
+          source_evidence_id?: string | null
+          source_kind: string
+          source_review_id?: string | null
+          student_id: string
+          supersedes_id?: string | null
+        }
+        Update: {
+          actor_type?: string
+          created_at?: string
+          family_id?: string
+          goal_id?: string
+          id?: string
+          note?: string | null
+          observed_on?: string
+          progress_unit?: string
+          progress_value?: number
+          recorded_by?: string | null
+          source_assignment_id?: string | null
+          source_evidence_id?: string | null
+          source_kind?: string
+          source_review_id?: string | null
+          student_id?: string
+          supersedes_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "goal_progress_records_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "goal_progress_records_goal_id_family_id_fkey"
+            columns: ["goal_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "learning_goals"
+            referencedColumns: ["id", "family_id"]
+          },
+          {
+            foreignKeyName: "goal_progress_records_source_assignment_id_family_id_fkey"
+            columns: ["source_assignment_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "assignments"
+            referencedColumns: ["id", "family_id"]
+          },
+          {
+            foreignKeyName: "goal_progress_records_source_evidence_id_family_id_fkey"
+            columns: ["source_evidence_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "evidence_items"
+            referencedColumns: ["id", "family_id"]
+          },
+          {
+            foreignKeyName: "goal_progress_records_source_review_id_family_id_fkey"
+            columns: ["source_review_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "assignment_reviews"
+            referencedColumns: ["id", "family_id"]
+          },
+          {
+            foreignKeyName: "goal_progress_records_student_id_family_id_fkey"
+            columns: ["student_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "students"
+            referencedColumns: ["id", "family_id"]
+          },
+          {
+            foreignKeyName: "goal_progress_records_supersedes_id_family_id_fkey"
+            columns: ["supersedes_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "goal_progress_records"
+            referencedColumns: ["id", "family_id"]
           },
         ]
       }
@@ -1688,6 +2323,307 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "families"
             referencedColumns: ["id"]
+          },
+        ]
+      }
+      instructional_day_overrides: {
+        Row: {
+          available_minutes: number | null
+          created_at: string
+          created_by: string
+          family_id: string
+          id: string
+          instructional_date: string
+          is_instructional: boolean
+          reason: string | null
+          term_id: string
+          updated_at: string
+        }
+        Insert: {
+          available_minutes?: number | null
+          created_at?: string
+          created_by: string
+          family_id: string
+          id?: string
+          instructional_date: string
+          is_instructional: boolean
+          reason?: string | null
+          term_id: string
+          updated_at?: string
+        }
+        Update: {
+          available_minutes?: number | null
+          created_at?: string
+          created_by?: string
+          family_id?: string
+          id?: string
+          instructional_date?: string
+          is_instructional?: boolean
+          reason?: string | null
+          term_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "instructional_day_overrides_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "instructional_day_overrides_term_id_family_id_fkey"
+            columns: ["term_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "academic_terms"
+            referencedColumns: ["id", "family_id"]
+          },
+        ]
+      }
+      instructional_day_records: {
+        Row: {
+          created_at: string
+          created_by: string
+          family_id: string
+          id: string
+          instructional_date: string
+          instructional_minutes: number | null
+          note: string | null
+          source_evidence_id: string | null
+          status: string
+          student_id: string
+          term_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          family_id: string
+          id?: string
+          instructional_date: string
+          instructional_minutes?: number | null
+          note?: string | null
+          source_evidence_id?: string | null
+          status: string
+          student_id: string
+          term_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          family_id?: string
+          id?: string
+          instructional_date?: string
+          instructional_minutes?: number | null
+          note?: string | null
+          source_evidence_id?: string | null
+          status?: string
+          student_id?: string
+          term_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "instructional_day_records_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "instructional_day_records_source_evidence_id_family_id_fkey"
+            columns: ["source_evidence_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "evidence_items"
+            referencedColumns: ["id", "family_id"]
+          },
+          {
+            foreignKeyName: "instructional_day_records_student_id_family_id_fkey"
+            columns: ["student_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "students"
+            referencedColumns: ["id", "family_id"]
+          },
+          {
+            foreignKeyName: "instructional_day_records_term_id_family_id_fkey"
+            columns: ["term_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "academic_terms"
+            referencedColumns: ["id", "family_id"]
+          },
+        ]
+      }
+      klio_insights: {
+        Row: {
+          action_ref: Json
+          created_at: string
+          dedupe_key: string
+          dismissed_at: string | null
+          dismissed_by: string | null
+          evaluation_id: string | null
+          evidence_refs: Json
+          family_id: string
+          id: string
+          kind: string
+          priority: number
+          reason: string | null
+          status: string
+          student_id: string | null
+          summary: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          action_ref?: Json
+          created_at?: string
+          dedupe_key: string
+          dismissed_at?: string | null
+          dismissed_by?: string | null
+          evaluation_id?: string | null
+          evidence_refs?: Json
+          family_id: string
+          id?: string
+          kind: string
+          priority?: number
+          reason?: string | null
+          status?: string
+          student_id?: string | null
+          summary: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          action_ref?: Json
+          created_at?: string
+          dedupe_key?: string
+          dismissed_at?: string | null
+          dismissed_by?: string | null
+          evaluation_id?: string | null
+          evidence_refs?: Json
+          family_id?: string
+          id?: string
+          kind?: string
+          priority?: number
+          reason?: string | null
+          status?: string
+          student_id?: string | null
+          summary?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "klio_insights_evaluation_id_family_id_fkey"
+            columns: ["evaluation_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "proactive_evaluations"
+            referencedColumns: ["id", "family_id"]
+          },
+          {
+            foreignKeyName: "klio_insights_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "klio_insights_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "students"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      learning_goals: {
+        Row: {
+          constraints: string | null
+          created_at: string
+          created_by: string
+          description: string | null
+          family_id: string
+          goal_kind: string
+          id: string
+          priority: number
+          status: string
+          student_id: string
+          subject: string
+          target_date: string | null
+          target_unit: string | null
+          target_value: number | null
+          term_id: string | null
+          title: string
+          updated_at: string
+          version: number
+          weekly_cadence: number | null
+          weekly_effort_minutes: number | null
+        }
+        Insert: {
+          constraints?: string | null
+          created_at?: string
+          created_by: string
+          description?: string | null
+          family_id: string
+          goal_kind?: string
+          id?: string
+          priority?: number
+          status?: string
+          student_id: string
+          subject: string
+          target_date?: string | null
+          target_unit?: string | null
+          target_value?: number | null
+          term_id?: string | null
+          title: string
+          updated_at?: string
+          version?: number
+          weekly_cadence?: number | null
+          weekly_effort_minutes?: number | null
+        }
+        Update: {
+          constraints?: string | null
+          created_at?: string
+          created_by?: string
+          description?: string | null
+          family_id?: string
+          goal_kind?: string
+          id?: string
+          priority?: number
+          status?: string
+          student_id?: string
+          subject?: string
+          target_date?: string | null
+          target_unit?: string | null
+          target_value?: number | null
+          term_id?: string | null
+          title?: string
+          updated_at?: string
+          version?: number
+          weekly_cadence?: number | null
+          weekly_effort_minutes?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "learning_goals_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "learning_goals_student_id_family_id_fkey"
+            columns: ["student_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "students"
+            referencedColumns: ["id", "family_id"]
+          },
+          {
+            foreignKeyName: "learning_goals_term_id_family_id_fkey"
+            columns: ["term_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "academic_terms"
+            referencedColumns: ["id", "family_id"]
           },
         ]
       }
@@ -1792,6 +2728,161 @@ export type Database = {
           },
         ]
       }
+      pacing_checkpoints: {
+        Row: {
+          actual_value: number
+          approved_evidence_count: number
+          as_of_date: string
+          basis: string
+          capacity_minutes_remaining: number | null
+          created_at: string
+          expected_value: number
+          family_id: string
+          feasible: boolean
+          goal_id: string
+          id: string
+          overdue_count: number
+          pacing_target_id: string | null
+          planned_record_count: number
+          projected_completion_date: string | null
+          remaining_value: number
+          state: string
+          student_id: string
+          target_value: number
+        }
+        Insert: {
+          actual_value: number
+          approved_evidence_count?: number
+          as_of_date: string
+          basis: string
+          capacity_minutes_remaining?: number | null
+          created_at?: string
+          expected_value: number
+          family_id: string
+          feasible: boolean
+          goal_id: string
+          id?: string
+          overdue_count?: number
+          pacing_target_id?: string | null
+          planned_record_count?: number
+          projected_completion_date?: string | null
+          remaining_value: number
+          state: string
+          student_id: string
+          target_value: number
+        }
+        Update: {
+          actual_value?: number
+          approved_evidence_count?: number
+          as_of_date?: string
+          basis?: string
+          capacity_minutes_remaining?: number | null
+          created_at?: string
+          expected_value?: number
+          family_id?: string
+          feasible?: boolean
+          goal_id?: string
+          id?: string
+          overdue_count?: number
+          pacing_target_id?: string | null
+          planned_record_count?: number
+          projected_completion_date?: string | null
+          remaining_value?: number
+          state?: string
+          student_id?: string
+          target_value?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pacing_checkpoints_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pacing_checkpoints_goal_id_family_id_fkey"
+            columns: ["goal_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "learning_goals"
+            referencedColumns: ["id", "family_id"]
+          },
+          {
+            foreignKeyName: "pacing_checkpoints_pacing_target_id_family_id_fkey"
+            columns: ["pacing_target_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "curriculum_pacing_targets"
+            referencedColumns: ["id", "family_id"]
+          },
+          {
+            foreignKeyName: "pacing_checkpoints_student_id_family_id_fkey"
+            columns: ["student_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "students"
+            referencedColumns: ["id", "family_id"]
+          },
+        ]
+      }
+      parent_agent_corrections: {
+        Row: {
+          corrected_value: Json
+          correction_kind: string
+          created_at: string
+          created_by: string
+          domain: string
+          family_id: string
+          id: string
+          note: string | null
+          original_value: Json
+          student_id: string | null
+          target_entity_id: string
+          target_type: string
+        }
+        Insert: {
+          corrected_value?: Json
+          correction_kind: string
+          created_at?: string
+          created_by: string
+          domain: string
+          family_id: string
+          id?: string
+          note?: string | null
+          original_value?: Json
+          student_id?: string | null
+          target_entity_id: string
+          target_type: string
+        }
+        Update: {
+          corrected_value?: Json
+          correction_kind?: string
+          created_at?: string
+          created_by?: string
+          domain?: string
+          family_id?: string
+          id?: string
+          note?: string | null
+          original_value?: Json
+          student_id?: string | null
+          target_entity_id?: string
+          target_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "parent_agent_corrections_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "parent_agent_corrections_student_id_family_id_fkey"
+            columns: ["student_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "students"
+            referencedColumns: ["id", "family_id"]
+          },
+        ]
+      }
       parent_profiles: {
         Row: {
           created_at: string
@@ -1813,39 +2904,181 @@ export type Database = {
         }
         Relationships: []
       }
+      planning_proposals: {
+        Row: {
+          action_name: string
+          agent_turn_id: string | null
+          created_at: string
+          family_id: string
+          id: string
+          idempotency_key: string
+          proposal_kind: string
+          proposed_changes: Json
+          reason: string
+          reviewed_at: string | null
+          reviewed_by: string | null
+          risk: string
+          snapshot_version: number
+          status: string
+          student_id: string | null
+          summary: string
+          target_assignment_id: string | null
+          target_curriculum_unit_id: string | null
+          target_goal_id: string | null
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          action_name: string
+          agent_turn_id?: string | null
+          created_at?: string
+          family_id: string
+          id?: string
+          idempotency_key: string
+          proposal_kind: string
+          proposed_changes: Json
+          reason: string
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          risk: string
+          snapshot_version: number
+          status?: string
+          student_id?: string | null
+          summary: string
+          target_assignment_id?: string | null
+          target_curriculum_unit_id?: string | null
+          target_goal_id?: string | null
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          action_name?: string
+          agent_turn_id?: string | null
+          created_at?: string
+          family_id?: string
+          id?: string
+          idempotency_key?: string
+          proposal_kind?: string
+          proposed_changes?: Json
+          reason?: string
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          risk?: string
+          snapshot_version?: number
+          status?: string
+          student_id?: string | null
+          summary?: string
+          target_assignment_id?: string | null
+          target_curriculum_unit_id?: string | null
+          target_goal_id?: string | null
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "planning_proposals_agent_turn_id_family_id_fkey"
+            columns: ["agent_turn_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "agent_turns"
+            referencedColumns: ["id", "family_id"]
+          },
+          {
+            foreignKeyName: "planning_proposals_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "planning_proposals_student_id_family_id_fkey"
+            columns: ["student_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "students"
+            referencedColumns: ["id", "family_id"]
+          },
+          {
+            foreignKeyName: "planning_proposals_target_assignment_id_family_id_fkey"
+            columns: ["target_assignment_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "assignments"
+            referencedColumns: ["id", "family_id"]
+          },
+          {
+            foreignKeyName: "planning_proposals_target_curriculum_unit_id_family_id_fkey"
+            columns: ["target_curriculum_unit_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "curriculum_units"
+            referencedColumns: ["id", "family_id"]
+          },
+          {
+            foreignKeyName: "planning_proposals_target_goal_id_family_id_fkey"
+            columns: ["target_goal_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "learning_goals"
+            referencedColumns: ["id", "family_id"]
+          },
+        ]
+      }
       practice_results: {
         Row: {
           answers: Json
+          auto_score: number | null
+          comparable_key: string | null
           created_at: string
           evidence_id: string | null
+          evidence_strength: string
           family_id: string
+          final_score: number | null
+          finalized_at: string | null
+          finalized_by: string | null
           id: string
           mastery_met: boolean
           practice_session_id: string
           score: number
+          scoring_state: string
           student_id: string
+          written_review_completed: boolean
+          written_review_required: boolean
         }
         Insert: {
           answers: Json
+          auto_score?: number | null
+          comparable_key?: string | null
           created_at?: string
           evidence_id?: string | null
+          evidence_strength?: string
           family_id: string
+          final_score?: number | null
+          finalized_at?: string | null
+          finalized_by?: string | null
           id?: string
           mastery_met: boolean
           practice_session_id: string
           score: number
+          scoring_state?: string
           student_id: string
+          written_review_completed?: boolean
+          written_review_required?: boolean
         }
         Update: {
           answers?: Json
+          auto_score?: number | null
+          comparable_key?: string | null
           created_at?: string
           evidence_id?: string | null
+          evidence_strength?: string
           family_id?: string
+          final_score?: number | null
+          finalized_at?: string | null
+          finalized_by?: string | null
           id?: string
           mastery_met?: boolean
           practice_session_id?: string
           score?: number
+          scoring_state?: string
           student_id?: string
+          written_review_completed?: boolean
+          written_review_required?: boolean
         }
         Relationships: [
           {
@@ -1884,6 +3117,9 @@ export type Database = {
           completed_at: string | null
           created_at: string
           created_by: string
+          dismissal_reason: string | null
+          dismissed_at: string | null
+          dismissed_by: string | null
           family_id: string
           id: string
           launched_at: string | null
@@ -1897,6 +3133,9 @@ export type Database = {
           completed_at?: string | null
           created_at?: string
           created_by: string
+          dismissal_reason?: string | null
+          dismissed_at?: string | null
+          dismissed_by?: string | null
           family_id: string
           id?: string
           launched_at?: string | null
@@ -1910,6 +3149,9 @@ export type Database = {
           completed_at?: string | null
           created_at?: string
           created_by?: string
+          dismissal_reason?: string | null
+          dismissed_at?: string | null
+          dismissed_by?: string | null
           family_id?: string
           id?: string
           launched_at?: string | null
@@ -1942,6 +3184,93 @@ export type Database = {
           },
           {
             foreignKeyName: "practice_sessions_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "students"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      proactive_evaluations: {
+        Row: {
+          attempt_count: number
+          completed_at: string | null
+          created_at: string
+          entity_id: string | null
+          entity_type: string
+          error_code: string | null
+          event_kind: string
+          family_id: string
+          id: string
+          idempotency_key: string
+          last_heartbeat_at: string | null
+          last_progress_at: string | null
+          outcome: string | null
+          queued_at: string
+          requested_by: string | null
+          result: Json
+          started_at: string | null
+          status: string
+          student_id: string | null
+          summary: string | null
+          updated_at: string
+        }
+        Insert: {
+          attempt_count?: number
+          completed_at?: string | null
+          created_at?: string
+          entity_id?: string | null
+          entity_type: string
+          error_code?: string | null
+          event_kind: string
+          family_id: string
+          id?: string
+          idempotency_key: string
+          last_heartbeat_at?: string | null
+          last_progress_at?: string | null
+          outcome?: string | null
+          queued_at?: string
+          requested_by?: string | null
+          result?: Json
+          started_at?: string | null
+          status?: string
+          student_id?: string | null
+          summary?: string | null
+          updated_at?: string
+        }
+        Update: {
+          attempt_count?: number
+          completed_at?: string | null
+          created_at?: string
+          entity_id?: string | null
+          entity_type?: string
+          error_code?: string | null
+          event_kind?: string
+          family_id?: string
+          id?: string
+          idempotency_key?: string
+          last_heartbeat_at?: string | null
+          last_progress_at?: string | null
+          outcome?: string | null
+          queued_at?: string
+          requested_by?: string | null
+          result?: Json
+          started_at?: string | null
+          status?: string
+          student_id?: string | null
+          summary?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "proactive_evaluations_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "proactive_evaluations_student_id_fkey"
             columns: ["student_id"]
             isOneToOne: false
             referencedRelation: "students"
@@ -1997,6 +3326,8 @@ export type Database = {
           created_by: string | null
           family_id: string
           id: string
+          idempotency_key: string | null
+          reply_to_message_id: string | null
           role: string
           thread_id: string
         }
@@ -2008,6 +3339,8 @@ export type Database = {
           created_by?: string | null
           family_id: string
           id?: string
+          idempotency_key?: string | null
+          reply_to_message_id?: string | null
           role: string
           thread_id: string
         }
@@ -2019,6 +3352,8 @@ export type Database = {
           created_by?: string | null
           family_id?: string
           id?: string
+          idempotency_key?: string | null
+          reply_to_message_id?: string | null
           role?: string
           thread_id?: string
         }
@@ -2038,6 +3373,20 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "question_messages_reply_family_fkey"
+            columns: ["reply_to_message_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "question_messages"
+            referencedColumns: ["id", "family_id"]
+          },
+          {
+            foreignKeyName: "question_messages_thread_family_fkey"
+            columns: ["thread_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "question_threads"
+            referencedColumns: ["id", "family_id"]
+          },
+          {
             foreignKeyName: "question_messages_thread_id_fkey"
             columns: ["thread_id"]
             isOneToOne: false
@@ -2049,30 +3398,51 @@ export type Database = {
       question_threads: {
         Row: {
           agent_thread_id: string | null
+          answered_at: string | null
+          answered_by: string | null
+          awaiting_turn_id: string | null
+          cancelled_at: string | null
+          cancelled_by: string | null
           created_at: string
           created_by: string
           family_id: string
           id: string
+          resumed_by_turn_id: string | null
+          status: string
           student_id: string | null
           title: string
           updated_at: string
         }
         Insert: {
           agent_thread_id?: string | null
+          answered_at?: string | null
+          answered_by?: string | null
+          awaiting_turn_id?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
           created_at?: string
           created_by: string
           family_id: string
           id?: string
+          resumed_by_turn_id?: string | null
+          status?: string
           student_id?: string | null
           title: string
           updated_at?: string
         }
         Update: {
           agent_thread_id?: string | null
+          answered_at?: string | null
+          answered_by?: string | null
+          awaiting_turn_id?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
           created_at?: string
           created_by?: string
           family_id?: string
           id?: string
+          resumed_by_turn_id?: string | null
+          status?: string
           student_id?: string | null
           title?: string
           updated_at?: string
@@ -2086,11 +3456,25 @@ export type Database = {
             referencedColumns: ["id", "family_id"]
           },
           {
+            foreignKeyName: "question_threads_awaiting_turn_family_fkey"
+            columns: ["awaiting_turn_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "agent_turns"
+            referencedColumns: ["id", "family_id"]
+          },
+          {
             foreignKeyName: "question_threads_family_id_fkey"
             columns: ["family_id"]
             isOneToOne: false
             referencedRelation: "families"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "question_threads_resumed_turn_family_fkey"
+            columns: ["resumed_by_turn_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "agent_turns"
+            referencedColumns: ["id", "family_id"]
           },
           {
             foreignKeyName: "question_threads_student_id_fkey"
@@ -2523,6 +3907,16 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      acquire_family_execution_lease: {
+        Args: {
+          p_family_id: string
+          p_owner_token: string
+          p_ttl_seconds?: number
+          p_work_id: string
+          p_work_kind: string
+        }
+        Returns: boolean
+      }
       apply_agent_workspace_tool: {
         Args: {
           p_arguments: Json
@@ -2541,6 +3935,56 @@ export type Database = {
           p_tool_name: string
           p_turn_id: string
         }
+        Returns: Json
+      }
+      apply_grade_return_proposal: {
+        Args: { p_actor_id: string; p_proposal_id: string }
+        Returns: Json
+      }
+      apply_klio_adjustment: {
+        Args: { p_actor_id: string; p_proposal_id: string }
+        Returns: Json
+      }
+      apply_planning_proposal: {
+        Args: { p_actor_id: string; p_proposal_id: string }
+        Returns: Json
+      }
+      finalize_assignment_review: {
+        Args: {
+          p_actor_id: string
+          p_decision: string
+          p_review_id: string
+          p_values?: Json
+        }
+        Returns: Json
+      }
+      heartbeat_family_execution_lease: {
+        Args: {
+          p_family_id: string
+          p_owner_token: string
+          p_ttl_seconds?: number
+        }
+        Returns: boolean
+      }
+      record_explicit_parent_score: {
+        Args: {
+          p_actor_id: string
+          p_agent_turn_id: string
+          p_assignment_id: string
+          p_family_id: string
+          p_feedback?: string
+          p_score: number
+          p_score_label?: string
+          p_submission_id?: string
+        }
+        Returns: Json
+      }
+      release_family_execution_lease: {
+        Args: { p_family_id: string; p_owner_token: string }
+        Returns: boolean
+      }
+      undo_klio_adjustment: {
+        Args: { p_actor_id: string; p_proposal_id: string }
         Returns: Json
       }
     }

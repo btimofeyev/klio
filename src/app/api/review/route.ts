@@ -4,6 +4,7 @@ import { requireParentApi } from "@/lib/auth/require-parent";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { writeAuditEvent } from "@/lib/audit/write-audit-event";
+import { enqueueProactiveEvaluation } from "@/lib/proactive/evaluate";
 
 const reasonCodes = ["wrong_learner", "wrong_subject", "misunderstood_work", "parent_or_sibling_helped", "not_enough_information", "something_else"] as const;
 const reasonSchema = z.object({ code: z.enum(reasonCodes), detail: z.string().trim().min(1).max(1000).optional() });
@@ -96,6 +97,7 @@ async function processItem(admin: ReturnType<typeof createAdminClient>, parentId
       familyId, actorId: parentId, actorType: "parent", action: item.decision ? `${item.entityType}.${item.decision}` : `${item.entityType}.edited`, entityType: item.entityType, entityId: item.entityId,
       metadata: { bulk, edited: Boolean(item.updates), ...(item.entityType === "artifact" ? { title: auditTitle } : { skill_label: auditTitle }), student_name: studentName, correction_code: item.reason?.code ?? null, correction_label: item.reason ? correctionLabels[item.reason.code] : null, has_correction_detail: Boolean(item.reason?.detail) },
     });
+    if (item.updates || item.decision === "rejected") await enqueueProactiveEvaluation({ familyId, studentId, requestedBy: parentId, eventKind: "parent_correction", entityType: item.entityType, entityId: item.entityId, idempotencyKey: `review-correction:${item.requestId}:${reviewedAt}` });
     return result("completed");
   } catch {
     return result("failed", "This suggestion could not be updated.");

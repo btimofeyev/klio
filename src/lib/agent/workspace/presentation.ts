@@ -10,9 +10,11 @@ export function agentEventLabel(kind: string, payload: unknown) {
   return "Prepared the result";
 }
 
-function workspaceToolLabel(tool: string | undefined, completed: boolean) {
+export function workspaceToolLabel(tool: string | undefined, completed: boolean) {
   const labels: Record<string, string> = {
     file_capture: "Filed the learning evidence", create_reminder: "Added the reminder", ask_parent: "Prepared one question",
+    record_explicit_completion: "Recorded the completed lesson", move_unfinished_work: "Adjusted the unfinished work",
+    organize_day_schedule: "Organized the day’s schedule",
     update_subject_summary_draft: "Drafted the subject summary", build_dashboard: "Built the learning dashboard",
     draft_weekly_plan: "Drafted the weekly plan", create_lesson: "Created the lesson",
     create_practice_activity: "Created the practice activity", build_portfolio: "Built the portfolio",

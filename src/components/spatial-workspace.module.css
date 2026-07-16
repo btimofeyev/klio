@@ -1,0 +1,240 @@
+.viewport {
+  position: relative;
+  width: 100%;
+  height: 100dvh;
+  min-height: 640px;
+  overflow: hidden;
+  color: #30372f;
+  background: #f2efe7;
+}
+
+.toolbar {
+  position: absolute;
+  z-index: 6;
+  top: 14px;
+  left: 50%;
+  max-width: calc(100% - 300px);
+  transform: translateX(-50%);
+}
+
+.board {
+  position: absolute;
+  top: 94px;
+  right: 18px;
+  bottom: 152px;
+  left: 18px;
+  display: grid;
+  grid-template-columns: minmax(112px, 148px) minmax(620px, 1120px) minmax(112px, 148px);
+  justify-content: center;
+  gap: clamp(12px, 1.5vw, 24px);
+}
+.boardQuiet { grid-template-columns: minmax(620px, 1120px); }
+
+.scheduleStage {
+  grid-column: 2;
+  position: relative;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #fffefa;
+  border: 1px solid rgba(58, 66, 55, .16);
+  border-radius: 12px;
+  box-shadow: 0 18px 46px rgba(57, 52, 42, .09), 0 2px 7px rgba(57, 52, 42, .05);
+}
+
+.scheduleHeader {
+  min-height: 54px;
+  padding: 8px 14px 8px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  color: #4d5b50;
+  background: #faf8f2;
+  border-bottom: 1px solid rgba(58, 66, 55, .11);
+}
+
+.scheduleHeader > div { min-width: 0; display: grid; gap: 2px; }
+.scheduleHeader span { color: #68756b; font-size: 9px; font-weight: 850; letter-spacing: .12em; line-height: 1.2; text-transform: uppercase; }
+.scheduleHeader strong { overflow: hidden; color: #303830; font-size: 14px; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
+.scheduleHeader small { color: #7a827a; font-size: 10px; }
+.scheduleHeader button { min-height: 31px; padding: 0 10px; display: inline-flex; align-items: center; gap: 6px; color: #455a49; background: transparent; border: 1px solid rgba(69, 90, 73, .2); border-radius: 7px; cursor: pointer; font-size: 10px; font-weight: 750; }
+.scheduleHeader button:hover { background: #edf1e9; }
+.scheduleHeader button:active { transform: scale(.98); }
+
+.scheduleScroll {
+  height: calc(100% - 54px);
+  padding: 14px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: rgba(75, 88, 77, .28) transparent;
+}
+
+.scheduleScroll > :global(.teacher-week-sheet),
+.scheduleScroll > :global(.teacher-day-sheet) { width: 100%; min-height: 100%; box-shadow: none; }
+
+.rail {
+  min-width: 0;
+  padding-top: 8px;
+  overflow: hidden auto;
+  scrollbar-width: none;
+}
+.railLeft { grid-column: 1; }
+.railRight { grid-column: 3; }
+.rail::-webkit-scrollbar { display: none; }
+.railLabel { display: block; margin: 0 8px 9px; color: #858b83; font-size: 8px; font-weight: 850; letter-spacing: .13em; text-transform: uppercase; }
+.railTabs { display: grid; align-content: start; gap: 7px; }
+
+.tabWrap {
+  min-width: 0;
+  overflow: hidden;
+  background: rgba(250, 248, 242, .72);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  transition: background 180ms cubic-bezier(.16, 1, .3, 1), border-color 180ms cubic-bezier(.16, 1, .3, 1), transform 180ms cubic-bezier(.16, 1, .3, 1);
+}
+.tabWrap:hover { background: rgba(255, 254, 250, .94); border-color: rgba(58, 66, 55, .13); transform: translateY(-1px); }
+.tabActive { background: #fffefa; border-color: rgba(72, 96, 76, .28); box-shadow: 0 6px 18px rgba(55, 49, 40, .06); }
+.tabWrap[draggable="true"] { cursor: grab; }
+.tabWrap[draggable="true"]:active { cursor: grabbing; }
+
+.tab {
+  width: 100%;
+  min-height: 59px;
+  padding: 9px 10px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-content: center;
+  gap: 2px 5px;
+  color: #364139;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+}
+.tab:active { transform: scale(.985); }
+.grip { grid-row: 1 / 3; align-self: center; color: #8a9088; }
+.tab span { overflow: hidden; font-size: 11px; font-weight: 820; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
+.tab small { grid-column: 1 / -1; overflow: hidden; color: #747d75; font-size: 9px; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
+.tab:has(.grip) small { grid-column: 2; }
+.railLeft .tab { text-align: right; }
+.railLeft .grip { grid-column: 2; }
+.railLeft .tab span { grid-column: 1; grid-row: 1; }
+.railLeft .tab:has(.grip) small { grid-column: 1; }
+
+.tabActions { padding: 0 6px 6px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px; }
+.tabActions button { min-height: 26px; display: grid; place-items: center; color: #536057; background: #f0eee7; border: 0; border-radius: 5px; cursor: pointer; }
+.tabActions button:hover:not(:disabled) { color: #fff; background: #596f5b; }
+.tabActions button:disabled { cursor: not-allowed; opacity: .32; }
+.tabActions button:active:not(:disabled) { transform: scale(.94); }
+
+.panel {
+  position: absolute;
+  z-index: 4;
+  top: 12px;
+  width: min(440px, calc(100% - 190px));
+  max-height: calc(100% - 24px);
+  overflow: hidden;
+  background: #fffefa;
+  border: 1px solid rgba(58, 66, 55, .17);
+  border-radius: 11px;
+  box-shadow: 0 24px 70px rgba(55, 49, 40, .16), 0 3px 10px rgba(55, 49, 40, .06);
+}
+.panelLeft { left: max(8px, calc(50% - 560px)); }
+.panelRight { right: max(8px, calc(50% - 560px)); }
+.panelHeader { min-height: 46px; padding: 6px 7px 6px 9px; display: flex; align-items: center; justify-content: space-between; gap: 7px; background: #fffefa; border-bottom: 1px solid rgba(58, 66, 55, .1); }
+.panelHeader button { width: 32px; height: 32px; display: grid; place-items: center; color: #56625a; background: transparent; border: 0; border-radius: 6px; cursor: pointer; }
+.panelHeader .panelBack { width: auto; padding: 0 8px 0 5px; display: inline-flex; gap: 5px; color: #5d6b60; font-size: 10px; font-weight: 780; }
+.panelBack span { line-height: 1; }
+.panelHeader button:hover { background: #ecefe7; }
+.panelHeader button:active { transform: scale(.94); }
+.panelContent { max-height: calc(100% - 46px); overflow: auto; overscroll-behavior: contain; }
+
+.layoutControls {
+  position: absolute;
+  z-index: 6;
+  right: 20px;
+  bottom: 114px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.layoutControls > button { min-height: 33px; padding: 0 10px; display: inline-flex; align-items: center; gap: 6px; color: #4b594e; background: rgba(250, 248, 242, .94); border: 1px solid rgba(58, 66, 55, .15); border-radius: 7px; cursor: pointer; box-shadow: 0 6px 18px rgba(55, 49, 40, .06); font-size: 10px; font-weight: 750; }
+.layoutControls > button:hover { background: #fffefa; }
+.layoutControls > button:active { transform: scale(.97); }
+.layoutControls > button[aria-pressed="true"] { color: #fff; background: #536d57; border-color: #536d57; }
+.layoutStatus { min-height: 31px; padding: 0 8px; display: inline-flex; align-items: center; gap: 4px; color: #58705a; background: rgba(250, 248, 242, .94); border-radius: 7px; font-size: 9px; font-weight: 750; }
+.layoutError { color: #966258; }
+.arrangeHint { position: absolute; right: 232px; bottom: 124px; margin: 0; color: #717a72; font-size: 9px; }
+
+.assistant {
+  position: absolute;
+  z-index: 7;
+  right: 20px;
+  bottom: 18px;
+  left: 20px;
+  width: min(790px, calc(100% - 40px));
+  margin: auto;
+}
+
+.viewport:has(:global(.spatial-assistant-surface .quiet-capture:focus-within))::after {
+  content: "";
+  position: absolute;
+  z-index: 6;
+  inset: 0;
+  pointer-events: none;
+  background: rgba(242, 239, 231, .34);
+  backdrop-filter: blur(3px) saturate(.72);
+}
+
+.viewport:has(:global(.spatial-assistant-surface .quiet-capture:focus-within)) .assistant {
+  transform: translateY(-64px);
+}
+
+@media (max-width: 980px) {
+  .toolbar { max-width: calc(100% - 24px); }
+  .board { grid-template-columns: 92px minmax(520px, 1fr) 92px; gap: 9px; }
+  .railLabel { display: none; }
+  .tab { min-height: 52px; padding: 8px; }
+  .tab small { display: none; }
+  .panel { width: min(410px, calc(100% - 120px)); }
+}
+
+@media (max-width: 760px) {
+  .viewport { min-height: 100dvh; }
+  .toolbar { top: 8px; width: calc(100% - 16px); max-width: none; }
+  .board { top: 76px; right: 8px; bottom: 204px; left: 8px; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr); gap: 7px; }
+  .rail { min-height: 36px; padding: 0; overflow: visible; }
+  .railLeft { grid-column: 1; grid-row: 1; }
+  .railRight { grid-column: 1; grid-row: 2; }
+  .scheduleStage { grid-column: 1; grid-row: 3; min-height: 0; }
+  .boardQuiet { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+  .boardQuiet .scheduleStage { grid-row: 1; }
+  .railTabs { display: flex; gap: 5px; overflow-x: auto; scrollbar-width: none; }
+  .railTabs::-webkit-scrollbar { display: none; }
+  .tabWrap { flex: 0 0 auto; }
+  .tab { width: auto; min-width: 78px; min-height: 36px; padding: 7px 10px; display: flex; align-items: center; gap: 5px; text-align: left; }
+  .tab small { display: none; }
+  .tab span { font-size: 10px; }
+  .railLeft .tab { text-align: left; }
+  .tabActions { grid-template-columns: repeat(3, 30px); }
+  .scheduleHeader { min-height: 45px; padding: 6px 10px 6px 12px; }
+  .scheduleHeader span { font-size: 8px; }
+  .scheduleHeader strong { font-size: 12px; }
+  .scheduleHeader small { display: none; }
+  .scheduleHeader button { min-height: 29px; padding-inline: 8px; font-size: 9px; }
+  .scheduleScroll { height: calc(100% - 45px); padding: 8px; }
+  .panel { z-index: 8; top: 0; bottom: auto; width: min(430px, 100%); max-height: min(560px, calc(100dvh - 250px)); border-radius: 10px; }
+  .panelLeft { right: auto; left: 0; }
+  .panelRight { right: 0; left: auto; }
+  .panelContent { max-height: min(514px, calc(100dvh - 296px)); }
+  .layoutControls { right: 10px; bottom: 160px; }
+  .layoutControls > button { min-height: 30px; padding-inline: 8px; font-size: 9px; }
+  .layoutStatus { display: none; }
+  .arrangeHint { display: none; }
+  .assistant { right: 8px; bottom: 72px; left: 8px; width: calc(100% - 16px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tabWrap { transition-duration: 1ms; }
+}

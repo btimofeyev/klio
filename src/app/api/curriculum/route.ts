@@ -5,6 +5,7 @@ import { requireParentApi } from "@/lib/auth/require-parent";
 import { scheduleDates } from "@/lib/assignments/dates";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { referenceUrlSchema } from "@/lib/security/reference-url";
 
 const schema = z.object({
   curriculumUnitId: z.uuid().nullable().optional(),
@@ -13,7 +14,7 @@ const schema = z.object({
   count: z.number().int().min(1).max(40).default(10), startDate: z.iso.date(), weekdays: z.array(z.number().int().min(0).max(6)).min(1).max(7),
   scheduledTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).nullable().optional(), estimatedMinutes: z.number().int().min(5).max(480).default(40),
   weeklyFrequency: z.number().int().min(1).max(7).default(5),
-  curriculumUrl: z.url().max(2048).nullable().optional(),
+  curriculumUrl: referenceUrlSchema.nullable().optional(),
 }).strict();
 
 export async function POST(request: Request) {

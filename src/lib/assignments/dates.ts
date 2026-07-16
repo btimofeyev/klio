@@ -17,6 +17,18 @@ export function weekDates(date: string, weekdays: number[] = [1, 2, 3, 4, 5]) {
   return scheduleDates(start, weekdays, 5);
 }
 
+/** Dates in the calendar week that the family has explicitly enabled for learning. */
+export function learningWeekDates(date: string, weekdays: number[] = [1, 2, 3, 4, 5]) {
+  const current = new Date(`${date}T12:00:00Z`);
+  current.setUTCDate(current.getUTCDate() - ((current.getUTCDay() + 6) % 7));
+  const allowed = new Set(weekdays.length ? weekdays : [1, 2, 3, 4, 5]);
+  return Array.from({ length: 7 }, (_, offset) => {
+    const day = new Date(current);
+    day.setUTCDate(current.getUTCDate() + offset);
+    return day;
+  }).filter((day) => allowed.has(day.getUTCDay())).map((day) => day.toISOString().slice(0, 10));
+}
+
 export function learnerWeekdays(schedulePreferences: unknown, familyDays: unknown) {
   const learnerDays = schedulePreferences && typeof schedulePreferences === "object" && !Array.isArray(schedulePreferences) && "learningDays" in schedulePreferences
     ? schedulePreferences.learningDays

@@ -50,22 +50,29 @@ export const dynamicActivitySchema = z.union([
   writtenResponseActivitySchema,
 ]);
 
-export const dynamicPracticeSpecSchema = z.object({
-  version: z.literal(2),
-  subject: z.string().trim().min(1).max(80),
-  skill_key: z.string().trim().min(1).max(160),
-  level_band: z.string().trim().min(1).max(80),
-  instructions: z.string().trim().min(1).max(2000),
-  mastery_percent: z.number().int().min(1).max(100),
-  activities: z.array(dynamicActivitySchema).min(3).max(12),
-}).strict().superRefine((spec, context) => {
-  if (new Set(spec.activities.map((activity) => activity.id)).size !== spec.activities.length) {
-    context.addIssue({ code: "custom", message: "Activity IDs must be unique.", path: ["activities"] });
-  }
-  if (new Set(spec.activities.map((activity) => activity.type)).size < 2) {
-    context.addIssue({ code: "custom", message: "Use at least two activity types.", path: ["activities"] });
-  }
-});
+function practiceSpecSchemaWithRange(minActivities: number, maxActivities: number) {
+  return z.object({
+    version: z.literal(2),
+    subject: z.string().trim().min(1).max(80),
+    skill_key: z.string().trim().min(1).max(160),
+    level_band: z.string().trim().min(1).max(80),
+    instructions: z.string().trim().min(1).max(2000),
+    mastery_percent: z.number().int().min(1).max(100),
+    activities: z.array(dynamicActivitySchema).min(minActivities).max(maxActivities),
+  }).strict().superRefine((spec, context) => {
+    if (new Set(spec.activities.map((activity) => activity.id)).size !== spec.activities.length) {
+      context.addIssue({ code: "custom", message: "Activity IDs must be unique.", path: ["activities"] });
+    }
+    if (new Set(spec.activities.map((activity) => activity.type)).size < 2) {
+      context.addIssue({ code: "custom", message: "Use at least two activity types.", path: ["activities"] });
+    }
+  });
+}
+
+// Existing and imported practice remains playable. New Klio-generated practice
+// is held to the tighter five-to-eight activity teaching contract below.
+export const dynamicPracticeSpecSchema = practiceSpecSchemaWithRange(3, 12);
+export const generatedPracticeSpecSchema = practiceSpecSchemaWithRange(5, 8);
 
 const legacyQuestionSchema = z.object({
   prompt: z.string(), choices: z.array(z.string()).min(2), correct_answer: z.string(), hints: z.array(z.string()),

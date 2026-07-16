@@ -36,17 +36,26 @@ export function evaluateActivityAnswer(activity: DynamicActivity, answer: Practi
   return false;
 }
 
-export function scoreDynamicPractice(spec: DynamicPracticeSpec, answers: PracticeAnswer[]) {
+export function scoreDynamicPractice(spec: DynamicPracticeSpec, answers: PracticeAnswer[], writtenEvaluations: ReadonlyMap<string, boolean> = new Map()) {
   const byId = new Map(answers.map((answer) => [answer.activityId, answer]));
   const evaluations = spec.activities.map((activity) => {
     const answer = byId.get(activity.id);
-    return answer ? evaluateActivityAnswer(activity, answer) : false;
+    const evaluated = answer ? evaluateActivityAnswer(activity, answer) : false;
+    return evaluated === null && writtenEvaluations.has(activity.id) ? writtenEvaluations.get(activity.id)! : evaluated;
   });
   const graded = evaluations.filter((result): result is boolean => result !== null);
   const correct = graded.filter(Boolean).length;
   const complete = answers.length === spec.activities.length;
   const score = graded.length ? Math.round((correct / graded.length) * 100) : 0;
-  return { score: complete ? score : 0, masteryMet: complete && graded.length > 0 && score >= spec.mastery_percent, complete, gradedCount: graded.length, reviewNeeded: evaluations.some((result) => result === null) };
+  const reviewNeeded = evaluations.some((result) => result === null);
+  return {
+    score: complete ? score : 0,
+    masteryMet: complete && !reviewNeeded && graded.length > 0 && score >= spec.mastery_percent,
+    complete,
+    gradedCount: graded.length,
+    reviewNeeded,
+    scoringState: reviewNeeded ? "provisional" as const : "final" as const,
+  };
 }
 
 function normalizeText(value: string) { return value.trim().toLocaleLowerCase(); }

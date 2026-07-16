@@ -13,6 +13,10 @@ describe("assignmentReviewDraftSchema", () => {
       rubric: [{ criterion: "Historical accuracy", level: "Mostly accurate", note: "One date needs correction." }],
       masterySignals: [{ skill: "Uses historical evidence", status: "developing" }],
       uncertaintyFlags: [],
+      responseMode: "written",
+      skillKey: "historical-evidence",
+      comparableKey: "history:historical-evidence",
+      evidenceStrength: "curriculum",
     });
     expect(draft.score).toBe(88);
   });
@@ -23,6 +27,7 @@ describe("assignmentReviewDraftSchema", () => {
       scoreLabel: null,
       feedback: "The second page is not visible, so completion cannot be checked.",
       rubric: [], masterySignals: [], uncertaintyFlags: ["Only page one was supplied."],
+      responseMode: "insufficient", skillKey: null, comparableKey: null, evidenceStrength: "curriculum",
     });
     expect(draft.score).toBeNull();
   });

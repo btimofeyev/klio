@@ -7,6 +7,7 @@ import { CalendarDays, Check, ChevronLeft, ChevronRight, Circle, Clock3, Externa
 import { InboxWorkspace, type InboxWorkspaceProps } from "@/components/inbox-workspace";
 import type { ArtifactDTO, ReminderDTO, ScheduleItemDTO, StudentDTO } from "@/lib/data/workspace";
 import { buildCurriculumSequence, inferNextCurriculumLessons } from "@/lib/schedule/sequence";
+import { safeReferenceUrl } from "@/lib/security/reference-url";
 
 type Props = {
   familyId: string;
@@ -91,7 +92,7 @@ export function ParentWeekWorkspace({ familyId, timezone, availableDays, student
           title: formData.get("title"), subject: formData.get("subject"), description: formData.get("description"),
           scheduledDate: formData.get("scheduledDate"), scheduledTime: formData.get("scheduledTime") || null,
           estimatedMinutes: Number.isFinite(estimatedMinutes) && estimatedMinutes > 0 ? estimatedMinutes : null,
-          curriculumUrl: formData.get("curriculumUrl") || null,
+          curriculumUrl: safeReferenceUrl(String(formData.get("curriculumUrl") || "")),
         }),
       });
       const result = await response.json();
@@ -173,7 +174,7 @@ export function ParentWeekWorkspace({ familyId, timezone, availableDays, student
           <AnimatePresence mode="popLayout">
             {adding ? <motion.form className="schedule-add-form" onSubmit={addScheduleItem} initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}>
               <header><div><span>New curriculum sequence</span><strong>Add the first lesson. Klio can schedule what follows.</strong></div><button type="button" onClick={() => setAdding(false)} aria-label="Close"><X size={15} /></button></header>
-              <div className="schedule-form-grid"><label><span>First lesson or assignment</span><input name="title" required maxLength={200} placeholder="Algebra I · Lesson 4" autoFocus /></label><label><span>Subject</span><input name="subject" required maxLength={80} placeholder="Algebra I" /></label><label><span>First date</span><input name="scheduledDate" type="date" required defaultValue={selectedDate} /></label><label><span>Time</span><input name="scheduledTime" type="time" /></label><label><span>Minutes</span><input name="estimatedMinutes" type="number" min={5} max={480} defaultValue={30} /></label><label className="wide"><span>Curriculum link</span><input name="curriculumUrl" type="url" placeholder="Optional link" /></label><label className="wide"><span>Note</span><input name="description" maxLength={1000} placeholder="Pages, materials, or what counts as done" /></label></div>
+              <div className="schedule-form-grid"><label><span>First lesson or assignment</span><input name="title" required maxLength={200} placeholder="Algebra I · Lesson 4" autoFocus /></label><label><span>Subject</span><input name="subject" required maxLength={80} placeholder="Algebra I" /></label><label><span>First date</span><input name="scheduledDate" type="date" required defaultValue={selectedDate} /></label><label><span>Time</span><input name="scheduledTime" type="time" /></label><label><span>Minutes</span><input name="estimatedMinutes" type="number" min={5} max={480} defaultValue={30} /></label><label className="wide"><span>Reference link (Klio won’t open it)</span><input name="curriculumUrl" type="url" placeholder="Optional HTTP(S) reference" /></label><label className="wide"><span>Note</span><input name="description" maxLength={1000} placeholder="Pages, materials, or what counts as done" /></label></div>
               <footer><button type="button" onClick={() => setAdding(false)}>Cancel</button><button type="submit">Add first lesson</button></footer>
             </motion.form> : null}
             {sequenceProposal ? <motion.section className="schedule-sequence-proposal" initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}>
@@ -190,7 +191,7 @@ export function ParentWeekWorkspace({ familyId, timezone, availableDays, student
               {selectedItems.map((item) => <motion.article className={item.completedAt ? "schedule-item completed" : "schedule-item"} layout initial={{ opacity: 0, y: 7 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, x: 12 }} key={item.id}>
                 <button type="button" className="schedule-check" onClick={() => void updateItem(item, item.completedAt ? "reopen" : "complete")} disabled={workingId === item.id} aria-label={item.completedAt ? `Mark ${item.title} not finished` : `Mark ${item.title} finished`}>{item.completedAt ? <Check size={15} /> : <Circle size={16} />}</button>
                 <div className="schedule-copy"><p><span>{item.subject ?? "Learning"}</span>{item.scheduledTime ? <small>{formatTime(item.scheduledTime)}</small> : null}{item.estimatedMinutes ? <small>{item.estimatedMinutes} min</small> : null}</p><strong>{item.title}</strong>{item.description ? <em>{item.description}</em> : null}</div>
-                <div className="schedule-actions">{item.curriculumUrl ? <a href={item.curriculumUrl} target="_blank" rel="noreferrer">Open <ExternalLink size={12} /></a> : item.artifactId ? <Link href={`/app/artifacts/${item.artifactId}`}>Open <ChevronRight size={12} /></Link> : null}{!item.completedAt ? <button type="button" onClick={() => void updateItem(item, "move_forward")} disabled={workingId === item.id}><RotateCcw size={12} />Not done</button> : null}</div>
+                <div className="schedule-actions">{safeReferenceUrl(item.curriculumUrl) ? <a href={safeReferenceUrl(item.curriculumUrl)!} target="_blank" rel="noreferrer">Open <ExternalLink size={12} /></a> : item.artifactId ? <Link href={`/app/artifacts/${item.artifactId}`}>Open <ChevronRight size={12} /></Link> : null}{!item.completedAt ? <button type="button" onClick={() => void updateItem(item, "move_forward")} disabled={workingId === item.id}><RotateCcw size={12} />Not done</button> : null}</div>
               </motion.article>)}
             </AnimatePresence>
             {!selectedItems.length && !adding && !sequenceProposal ? <div className="schedule-empty"><CalendarDays size={22} /><p>Nothing planned for this day.</p><button type="button" onClick={() => setAdding(true)}>Add a lesson</button></div> : null}
@@ -210,6 +211,7 @@ export function ParentWeekWorkspace({ familyId, timezone, availableDays, student
     </div>
   );
 }
+
 
 function startOfWeek(date: string) {
   const value = new Date(`${date}T12:00:00Z`);

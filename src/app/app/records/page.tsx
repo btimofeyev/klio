@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { BookOpen, Camera, ChevronLeft, FileText, Folder, Mic, Paperclip, Sparkles } from "lucide-react";
+import { BookOpen, Camera, ChevronLeft, Clock3, FileText, Folder, Mic, Paperclip, Sparkles, TrendingDown, TrendingUp } from "lucide-react";
 import { getWorkspace, type EvidenceDTO } from "@/lib/data/workspace";
 import { createClient } from "@/lib/supabase/server";
 
@@ -16,7 +16,7 @@ export default async function RecordsPage({ searchParams }: { searchParams: Reco
   if (!workspace.students.length) return null;
 
   const supabase = await createClient();
-  const [evidenceResult, subjectsResult] = await Promise.all([
+  const [evidenceResult, subjectsResult, insightsResult, reviewsResult] = await Promise.all([
     supabase.from("evidence_items")
       .select("id, capture_submission_id, capture_route, kind, title, raw_text, mime_type, storage_path, source_at, processing_status, created_at, evidence_students(student_id), evidence_categories(document_type, tags, confidence, categories(id, name, slug))")
       .eq("family_id", workspace.family.id)
@@ -24,9 +24,13 @@ export default async function RecordsPage({ searchParams }: { searchParams: Reco
       .order("source_at", { ascending: false })
       .limit(300),
     supabase.from("student_subjects").select("student_id,name").eq("family_id", workspace.family.id).eq("status", "active"),
+    supabase.from("klio_insights").select("id,student_id,title,summary,reason,evidence_refs,action_ref,created_at").eq("family_id", workspace.family.id).neq("status", "dismissed").in("kind", ["noticed", "adjusted", "practice_ready"]).order("priority", { ascending: false }).limit(12),
+    supabase.from("assignment_reviews").select("id,student_id,assignment_id,score,skill_key,evidence_kind,reviewed_at").eq("family_id", workspace.family.id).eq("status", "approved").not("score", "is", null).order("reviewed_at", { ascending: false }).limit(30),
   ]);
   if (evidenceResult.error) throw evidenceResult.error;
   if (subjectsResult.error) throw subjectsResult.error;
+  if (insightsResult.error) throw insightsResult.error;
+  if (reviewsResult.error) throw reviewsResult.error;
   const evidenceRows = evidenceResult.data;
 
   const evidence = (evidenceRows ?? []).map((item): EvidenceDTO => ({
@@ -58,23 +62,40 @@ export default async function RecordsPage({ searchParams }: { searchParams: Reco
   const showUnfiled = requestedFolder === "unfiled" || (!activeCategory && unfiled.length > 0);
   const visibleEvidence = showUnfiled ? unfiled : evidence.filter((item) => item.categories.some((filing) => filing.id === activeCategory?.id));
   const activeName = showUnfiled ? "Needs your help" : activeCategory?.name ?? "Learning";
+  const progressInsights = insightsResult.data.filter((item) => familyView || item.student_id === selectedStudent.id).slice(0, 3);
+  const recentReviews = reviewsResult.data.filter((item) => familyView || item.student_id === selectedStudent.id).slice(0, 8);
 
   return (
     <main className="folder-library">
       <header className="folder-library-header">
         <Link href="/app" className="folder-back"><ChevronLeft size={15} /> Home</Link>
         <div>
-          <p>Learning folders</p>
-          <h1>{familyView ? "Family learning" : `${selectedStudent.displayName}’s learning`}</h1>
-          <span>Books, notes, worksheets, and activities—filed by subject.</span>
+          <p>Progress</p>
+          <h1>{familyView ? "Family progress" : `${selectedStudent.displayName}’s progress`}</h1>
+          <span>What the approved work shows, why Klio acted, and the original learning record.</span>
         </div>
-        <Link href={familyView ? "/app/portfolio" : `/app/portfolio?student=${selectedStudent.id}`} className="folder-tools-link"><Sparkles size={13} /> Create portfolio</Link>
+        <div className="folder-header-actions">
+          <Link href="/app/activity" className="folder-tools-link"><Clock3 size={13} /> Klio activity</Link>
+          <Link href={familyView ? "/app/portfolio" : `/app/portfolio?student=${selectedStudent.id}`} className="folder-tools-link"><Sparkles size={13} /> Create portfolio</Link>
+        </div>
       </header>
 
       <nav className="learner-tabs" aria-label="Choose a learner">
         <Link className={familyView ? "active" : ""} href="/app/records"><i>F</i>Family</Link>
         {workspace.students.map((student) => <Link className={student.id === selectedStudent?.id ? "active" : ""} href={`/app/records?student=${student.id}`} key={student.id}><i>{student.displayName.charAt(0)}</i>{student.displayName}</Link>)}
       </nav>
+
+      <section className="progress-evidence" aria-label="Learning progress">
+        <header><div><span>Evidence-backed progress</span><h2>{progressInsights.length ? "What Klio is watching" : "No meaningful trend yet"}</h2></div><small>Draft reviews never count toward trends</small></header>
+        <div className="progress-evidence-grid">
+          {progressInsights.length ? progressInsights.map((insight) => {
+            const refs = jsonArray(insight.evidence_refs);
+            const action = jsonObject(insight.action_ref);
+            return <article key={insight.id}><span>{insight.title.toLowerCase().includes("less consistent") ? <TrendingDown size={15} /> : <TrendingUp size={15} />}Klio noticed</span><h3>{insight.title}</h3><p>{insight.summary}</p><footer><small>{refs.length} supporting {refs.length === 1 ? "record" : "records"}</small>{typeof action.artifactId === "string" ? <Link href={`/app/artifacts/${action.artifactId}`}>Open practice</Link> : null}</footer>{insight.reason ? <details><summary>Why this counts</summary><p>{insight.reason}</p></details> : null}</article>;
+          }) : <article className="progress-on-track"><Sparkles size={17} /><h3>This week is on track</h3><p>Klio has not found enough related, approved evidence to call a trend. One low result will not trigger extra practice.</p></article>}
+          <aside><span>Recent approved results</span>{recentReviews.length ? recentReviews.map((review) => <div key={review.id}><strong>{Math.round(Number(review.score))}%</strong><p>{review.skill_key?.replaceAll("_", " ") || "Recorded work"}<small>{review.evidence_kind === "practice" ? "Supplemental practice" : "Curriculum work"}</small></p></div>) : <p>No approved scores yet.</p>}</aside>
+        </div>
+      </section>
 
       <div className="folder-library-layout">
         <aside className="subject-folders">
@@ -118,3 +139,5 @@ function entryTitle(item: EvidenceDTO) { return (item.title || item.rawText || k
 function entryDetail(item: EvidenceDTO) { const type = item.categories[0]?.documentType || kindLabel(item.kind); const text = item.rawText && item.rawText !== item.title ? item.rawText.slice(0, 150) : null; return text ? `${type} · ${text}` : type; }
 function kindLabel(kind: string) { return ({ photo: "Photo", voice: "Voice note", document: "File", note: "Note", grade: "Grade", book: "Book", activity: "Activity", csv_import: "Imported record" } as Record<string,string>)[kind] ?? kind.replaceAll("_", " "); }
 function kindIcon(kind: string) { if (kind === "photo") return <Camera size={16} />; if (kind === "voice") return <Mic size={16} />; if (kind === "document" || kind === "csv_import") return <Paperclip size={16} />; return <FileText size={16} />; }
+function jsonArray(value: unknown): unknown[] { return Array.isArray(value) ? value : []; }
+function jsonObject(value: unknown): Record<string, unknown> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }

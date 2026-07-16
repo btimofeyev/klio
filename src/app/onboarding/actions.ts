@@ -14,6 +14,7 @@ const schema = z.object({
   gradeBand: z.enum(["pre-k", "k-2", "3-5", "6-8", "9-12", "other"]),
   learningPreferences: z.string().trim().max(2000).optional(),
   dailyCapacityMinutes: z.coerce.number().int().min(60).max(480),
+  autonomyPreset: z.enum(["proactive", "helpful", "ask_first"]),
 });
 
 const subjectSetupSchema = z.array(z.object({
@@ -105,6 +106,17 @@ export async function createWorkspaceAction(_: OnboardingState, formData: FormDa
   if (categoriesError) {
     await supabase.from("families").delete().eq("id", family.id);
     return { error: categoriesError.message };
+  }
+
+  const { error: autonomyError } = await supabase.from("family_autonomy_policies").insert({
+    family_id: family.id,
+    preset: parsed.data.autonomyPreset,
+    policies: {},
+    updated_by: parent.id,
+  });
+  if (autonomyError) {
+    await supabase.from("families").delete().eq("id", family.id);
+    return { error: autonomyError.message };
   }
 
   redirect("/app");

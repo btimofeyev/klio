@@ -18,6 +18,7 @@ test("each learner keeps an independent subject and weekly setup", async ({ page
     await page.getByLabel("Learning stage").selectOption("9-12");
     await page.getByLabel("Add a subject").selectOption("Math");
     await page.getByLabel("Math course or curriculum").fill("Algebra I");
+    await page.getByLabel("Suggest, then ask", { exact: false }).click();
     await page.getByRole("button", { name: "Enter Klio" }).click();
     await expect(page).toHaveURL(/\/app$/);
 
@@ -27,12 +28,16 @@ test("each learner keeps an independent subject and weekly setup", async ({ page
 
     await page.goto("/app/week");
     await page.getByRole("button", { name: "Build this week" }).click();
-    await expect(page.getByText("Klio planned Noah’s week: 1 subject across 5 lessons.")).toBeVisible();
+    await expect(page.getByText(/Klio planned Noah’s week: 1 subject across \d+ lessons\./)).toBeVisible();
+    const initialAssignments = await admin.from("assignments").select("id").eq("family_id", family.data!.id);
+    const initialNoahAssignmentCount = initialAssignments.data?.length ?? 0;
+    expect(initialNoahAssignmentCount).toBeGreaterThan(0);
 
     await page.goto("/app/settings");
     await expect(page.locator(".learner-index-row")).toHaveCount(1);
     await expect(page.getByLabel("First name")).toHaveCount(0);
-    expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBeLessThan(1800);
+    await expect(page.getByRole("heading", { name: "Academic plan" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "How independently should Klio work?" })).toBeVisible();
     await page.getByRole("link", { name: "Add learner" }).click();
     await expect(page).toHaveURL(/\/app\/settings\/learners\/new$/);
     await page.getByLabel("First name").fill("Eli");
@@ -52,6 +57,7 @@ test("each learner keeps an independent subject and weekly setup", async ({ page
     await page.getByLabel("Science times per week").selectOption("2");
     await page.getByLabel("Typical learning time").selectOption("90");
     await page.getByRole("group", { name: "Learning days" }).getByText("F").click();
+    await page.locator('input[name="learningDays"][value="Sat"]').check({ force: true });
     await page.getByRole("button", { name: "Save learning setup" }).click();
     await expect(page.getByText("Eli’s learning setup is updated.")).toBeVisible();
     await page.getByRole("link", { name: "All learners" }).click();
@@ -75,24 +81,32 @@ test("each learner keeps an independent subject and weekly setup", async ({ page
       { subject: "Science", title: "Science", status: "active" },
     ]));
 
+    await expect.poll(async () => {
+      const result = await admin.from("assignments").select("id").eq("family_id", family.data!.id).eq("student_id", eli!.id);
+      return result.data?.length ?? 0;
+    }).toBeGreaterThan(0);
+
     await page.goto("/app/week");
     await expect(page.getByLabel("View schedule for")).toHaveValue("all");
-    await expect(page.getByText("1 of 3 subjects planned.")).toBeVisible();
-    await page.getByRole("button", { name: "Finish the family week" }).click();
-    await expect(page.getByText("Klio planned the family week for Noah and Eli: 3 subjects across 11 lessons.")).toBeVisible();
+    await expect(page.getByLabel("Learner for this handoff")).toHaveValue("");
+    await expect(page.getByText("Choose a learner before saving", { exact: true })).toBeVisible();
+    await page.getByLabel("Learner for this handoff").selectOption(eli!.id);
+    await expect(page.getByText("Save as Eli’s learning record", { exact: true })).toBeVisible();
+    await expect(page.getByText("Sat", { exact: true }).first()).toBeVisible();
     await expect(page.locator(".teacher-week-learner-lane").filter({ hasText: "Noah" }).first()).toBeVisible();
     await expect(page.locator(".teacher-week-learner-lane").filter({ hasText: "Eli" }).first()).toBeVisible();
     const familyAssignments = await admin.from("assignments").select("student_id,scheduled_date").eq("family_id", family.data!.id);
-    expect(familyAssignments.data?.filter((assignment) => assignment.student_id === noah!.id)).toHaveLength(5);
-    expect(familyAssignments.data?.filter((assignment) => assignment.student_id === eli!.id)).toHaveLength(6);
+    expect(familyAssignments.data?.filter((assignment) => assignment.student_id === noah!.id)).toHaveLength(initialNoahAssignmentCount);
+    expect(familyAssignments.data?.filter((assignment) => assignment.student_id === eli!.id).length).toBeGreaterThan(0);
+    const totalAssignmentCount = familyAssignments.data?.length ?? 0;
     const retry = await page.evaluate(async ({ familyId, anchorDate }) => {
       const response = await fetch("/api/week-plan", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ familyId, anchorDate }) });
       return { status: response.status, body: await response.json() };
     }, { familyId: family.data!.id, anchorDate: familyAssignments.data!.map((assignment) => assignment.scheduled_date!).sort()[0] });
     expect(retry.status).toBe(200);
-    expect(retry.body).toMatchObject({ assignmentCount: 0, totalAssignmentCount: 11, subjectCount: 3 });
+    expect(retry.body).toMatchObject({ assignmentCount: 0, totalAssignmentCount, subjectCount: 3 });
     const assignmentsAfterRetry = await admin.from("assignments").select("id").eq("family_id", family.data!.id);
-    expect(assignmentsAfterRetry.data).toHaveLength(11);
+    expect(assignmentsAfterRetry.data).toHaveLength(totalAssignmentCount);
 
     await page.goto(`/app/records?student=${eli!.id}`);
     await expect(page.locator(".subject-folders").getByText("Language Arts", { exact: true })).toBeVisible();

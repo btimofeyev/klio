@@ -12,11 +12,14 @@ import { enqueueWorkspaceTurn } from "@/lib/agent/workspace/turns";
 import { processWorkspaceTurn } from "@/lib/agent/workspace/runtime";
 import { serverEnv } from "@/lib/env";
 import { createHash } from "node:crypto";
+import { enqueueProactiveEvaluation } from "@/lib/proactive/evaluate";
+import { referenceUrlSchema } from "@/lib/security/reference-url";
+import { postgresUuidSchema } from "@/lib/validation/postgres-uuid";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
-const inputSchema = z.object({ familyId: z.uuid(), studentId: z.uuid(), assignmentId: z.uuid().optional(), text: z.string().max(20000).optional(), kind: z.enum(["note", "grade", "book", "activity"]).default("note") });
+const inputSchema = z.object({ familyId: postgresUuidSchema, studentId: postgresUuidSchema, assignmentId: postgresUuidSchema.optional(), text: z.string().max(20000).optional(), linkUrl: referenceUrlSchema.optional(), kind: z.enum(["note", "grade", "book", "activity"]).default("note") });
 const intentsSchema = z.array(z.enum(["organize", "understand", "update_records", "next_step", "weekly_plan", "lesson", "summary", "practice", "portfolio"])).min(1).max(3);
 const allowedTypes = new Set(["image/jpeg", "image/png", "image/webp", "application/pdf", "audio/webm", "audio/mpeg", "audio/mp4", "audio/wav", "text/csv"]);
 
@@ -29,6 +32,7 @@ export async function POST(request: Request) {
     const parsed = inputSchema.safeParse({
       familyId: form.get("familyId"), studentId: form.get("studentId"), assignmentId: typeof form.get("assignmentId") === "string" && form.get("assignmentId") ? form.get("assignmentId") : undefined,
       text: typeof form.get("text") === "string" ? form.get("text") : undefined,
+      linkUrl: typeof form.get("linkUrl") === "string" && form.get("linkUrl") ? form.get("linkUrl") : undefined,
       kind: typeof form.get("kind") === "string" ? form.get("kind") : "note",
     });
     if (!parsed.success) return NextResponse.json({ error: "The capture is missing required details." }, { status: 400 });
@@ -38,7 +42,7 @@ export async function POST(request: Request) {
     if (!intents.success) return NextResponse.json({ error: "Choose one to three Klio actions." }, { status: 400 });
 
     const files = form.getAll("file").filter((value): value is File => value instanceof File && value.size > 0);
-    if (!files.length && !parsed.data.text?.trim()) return NextResponse.json({ error: "Add a note, photo, voice clip, or file." }, { status: 400 });
+    if (!files.length && !parsed.data.text?.trim() && !parsed.data.linkUrl) return NextResponse.json({ error: "Add a note, reference link, photo, voice clip, or file." }, { status: 400 });
     if (files.length > 10) return NextResponse.json({ error: "You can attach up to 10 files at once." }, { status: 400 });
     if (files.some((file) => file.size > 50 * 1024 * 1024 || !allowedTypes.has(file.type))) {
       return NextResponse.json({ error: "That file type or size is not supported." }, { status: 400 });
@@ -76,11 +80,11 @@ export async function POST(request: Request) {
     const captureSubmissionId = crypto.randomUUID();
     const evidence = captures.map(({ id, file }, index) => ({
       id, family_id: parsed.data.familyId, created_by: parent.id, kind: file ? inferKind(file) : parsed.data.kind,
-      title: (index === 0 ? text?.slice(0, 120) : null) || file?.name || null,
-      raw_text: index === 0 ? text : null, storage_path: file ? storagePaths[index] : null,
+      title: (index === 0 ? text?.slice(0, 120) ?? (parsed.data.linkUrl ? "Saved reference link" : null) : null) || file?.name || null,
+      raw_text: index === 0 ? text ?? (parsed.data.linkUrl ? `Reference URL: ${parsed.data.linkUrl}` : null) : null, storage_path: file ? storagePaths[index] : null,
       capture_submission_id: captureSubmissionId,
       mime_type: file?.type || null, file_size: file?.size || null,
-      provenance: { source: "klio_inbox", original_filename: file?.name ?? null, assignment_id: linkedAssignment.data?.id ?? null },
+      provenance: { source: "klio_inbox", original_filename: file?.name ?? null, assignment_id: linkedAssignment.data?.id ?? null, reference_url: index === 0 ? parsed.data.linkUrl ?? null : null, retrieved: false },
     }));
     const { error: evidenceError } = await supabase.from("evidence_items").insert(evidence);
     if (evidenceError) {
@@ -154,11 +158,18 @@ export async function POST(request: Request) {
       const { error: readyError } = await admin.from("evidence_items").update({ capture_route: "learning", processing_status: "ready" }).eq("family_id", parsed.data.familyId).in("id", ids);
       if (readyError) throw readyError;
       await writeAuditEvent(admin, { familyId: parsed.data.familyId, actorId: parent.id, actorType: "parent", action: "evidence.organized_from_label", entityType: "category", entityId: category.id, metadata: { evidence_ids: ids, student_id: effectiveStudentId, subject: explicitSubject } });
+      await enqueueProactiveEvaluation({ familyId: parsed.data.familyId, studentId: effectiveStudentId, requestedBy: parent.id, eventKind: "capture_filed", entityType: "evidence_item", entityId: ids[0], idempotencyKey: `capture-filed:${captureSubmissionId}` });
+      if (serverEnv.klioAgentRuntime === "codex_app_server") {
+        const idempotencyKey = `capture:${createHash("sha256").update(ids.join(",")).digest("hex").slice(0, 32)}:v1`;
+        const workspace = await enqueueWorkspaceTurn({ familyId: parsed.data.familyId, requestedBy: parent.id, evidenceIds: ids, studentId: effectiveStudentId, trigger: "capture", goal: "capture", idempotencyKey, request: text, taskName: `Reviewing ${explicitSubject} handoff`, subject: explicitSubject, expectedOutput: "Filed work and any safe follow-through across the week" });
+        if (serverEnv.klioAgentInline && !workspace.duplicate) after(() => processWorkspaceTurn(workspace.turn.id));
+        return NextResponse.json({ id: ids[0], ids, status: workspace.turn.status, turn: workspace.turn, category, studentId: effectiveStudentId }, { status: 201 });
+      }
       return NextResponse.json({ id: ids[0], ids, status: "ready", job: null, category, studentId: effectiveStudentId }, { status: 201 });
     }
     if (serverEnv.klioAgentRuntime === "codex_app_server") {
       const idempotencyKey = `capture:${createHash("sha256").update(ids.join(",")).digest("hex").slice(0, 32)}:v1`;
-      const workspace = await enqueueWorkspaceTurn({ familyId: parsed.data.familyId, requestedBy: parent.id, evidenceIds: ids, studentId: effectiveStudentId, trigger: "capture", goal: "capture", idempotencyKey });
+      const workspace = await enqueueWorkspaceTurn({ familyId: parsed.data.familyId, requestedBy: parent.id, evidenceIds: ids, studentId: effectiveStudentId, trigger: "capture", goal: "capture", idempotencyKey, request: text, taskName: text ? `Handling ${namedLearner?.display_name ?? learners.find((learner) => learner.id === effectiveStudentId)?.display_name ?? "learner"}’s learning update` : "Reviewing submitted work", expectedOutput: "One concise receipt of what changed across the family workspace" });
       if (serverEnv.klioAgentInline && !workspace.duplicate) after(() => processWorkspaceTurn(workspace.turn.id));
       return NextResponse.json({ id: ids[0], ids, status: workspace.turn.status, turn: workspace.turn, studentId: effectiveStudentId }, { status: 201 });
     }
