@@ -18,7 +18,8 @@ test("a parent creates an academic term and a normalized subject pacing goal", a
     await page.getByLabel("Science course or curriculum").fill("Biology");
     await page.getByLabel("Suggest, then ask", { exact: false }).click();
     await page.getByRole("button", { name: "Enter Klio" }).click();
-    await page.goto("/app/settings");
+    await expect(page).toHaveURL(/\/app$/);
+    await page.goto("/app/settings?view=academic");
 
     await page.getByLabel("Name", { exact: true }).fill("2026–27 school year");
     await page.getByLabel("Starts").fill("2026-08-03");

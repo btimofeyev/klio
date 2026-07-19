@@ -10,6 +10,7 @@ import { writeAuditEvent } from "@/lib/audit/write-audit-event";
 import { normalizePracticeSpec } from "@/lib/practice/spec";
 import { subjectSlug } from "@/lib/onboarding/subjects";
 import { FamilyWeekPlanError, planFamilyWeek } from "@/lib/assignments/plan-family-week";
+import { mergeSchedulePreferences } from "@/lib/schedule/availability";
 
 const reviewSchema = z.object({
   familyId: z.uuid(), entityId: z.uuid(), entityType: z.enum(["artifact", "skill_observation"]),
@@ -80,6 +81,11 @@ const learnerSubjectsSchema = z.array(z.object({
   name: z.string().trim().min(1).max(80),
   courseName: z.string().trim().max(120),
   weeklyFrequency: z.number().int().min(1).max(7),
+  attentionMode: z.enum(["unspecified", "parent_led", "independent", "flexible"]),
+  parentAttentionMinutes: z.number().int().min(1).max(480).nullable(),
+}).superRefine((subject, context) => {
+  if (subject.attentionMode === "flexible" && subject.parentAttentionMinutes === null) context.addIssue({ code: "custom", path: ["parentAttentionMinutes"], message: `Add the minutes together for ${subject.name}.` });
+  if (subject.attentionMode !== "flexible" && subject.parentAttentionMinutes !== null) context.addIssue({ code: "custom", path: ["parentAttentionMinutes"], message: `Minutes together are only used for Start together.` });
 })).min(1, "Add at least one subject for this learner.").max(16);
 
 export async function createStudentProfileAction(_: NewLearnerState, formData: FormData): Promise<NewLearnerState> {
@@ -117,16 +123,26 @@ export async function updateStudentSetupAction(_: LearnerSetupState, formData: F
   if ("error" in setup) return { error: setup.error ?? "Check the learner setup.", success: null };
   if (!setup.learner.studentId) return { error: "Choose a learner to update.", success: null };
   const supabase = await createClient();
-  const membership = await supabase.from("family_members").select("family_id").eq("family_id", setup.learner.familyId).eq("user_id", parent.id).maybeSingle();
+  const membership = await supabase.from("family_members").select("family_id").eq("family_id", setup.learner.familyId).eq("user_id", parent.id).in("role", ["owner", "editor"]).maybeSingle();
   if (!membership.data) return { error: "You do not have access to that family.", success: null };
+  const current = await supabase.from("students").select("schedule_preferences").eq("id", setup.learner.studentId).eq("family_id", setup.learner.familyId).maybeSingle();
+  if (current.error || !current.data) return { error: current.error ? "Klio could not load this learner’s teaching hours." : "Learner not found.", success: null };
+  let schedulePreferences: ReturnType<typeof mergeSchedulePreferences>;
+  try { schedulePreferences = mergeSchedulePreferences(current.data.schedule_preferences, { learningDays: setup.learningDays, teachingWindows: setup.teachingWindows }); }
+  catch (error) { return { error: error instanceof Error ? error.message : "Check the teaching hours.", success: null }; }
   const updated = await supabase.from("students").update({
     display_name: setup.learner.displayName,
     grade_band: setup.learner.gradeBand,
     learning_preferences: setup.learner.learningPreferences || null,
     daily_capacity_minutes: setup.learner.dailyCapacityMinutes,
-    schedule_preferences: { learningDays: setup.learningDays },
+    schedule_preferences: schedulePreferences,
   }).eq("id", setup.learner.studentId).eq("family_id", setup.learner.familyId).select("id").maybeSingle();
-  if (updated.error || !updated.data) return { error: updated.error?.message ?? "Learner not found.", success: null };
+  if (updated.error || !updated.data) return { error: updated.error ? "Klio could not update this learner’s setup." : "Learner not found.", success: null };
+  await writeAuditEvent(createAdminClient(), {
+    familyId: setup.learner.familyId, actorId: parent.id, actorType: "parent",
+    action: "teaching_availability.updated", entityType: "student", entityId: setup.learner.studentId,
+    metadata: { learning_days: setup.learningDays, teaching_windows: schedulePreferences.teachingWindows },
+  });
   try {
     await replaceLearnerSubjects(supabase, { familyId: setup.learner.familyId, studentId: setup.learner.studentId, parentId: parent.id, subjects: setup.subjects });
   } catch (syncError) {
@@ -144,14 +160,14 @@ export async function updateStudentSetupAction(_: LearnerSetupState, formData: F
     if (learnerPlan?.assignmentCount) plannedMessage = ` Klio also placed ${learnerPlan.assignmentCount} ${learnerPlan.assignmentCount === 1 ? "lesson" : "lessons"} into the current week.`;
   } catch (planningError) {
     if (planningError instanceof FamilyWeekPlanError && planningError.code === "FREQUENCY_OVER_CAPACITY") {
-      return { error: null, success: `${setup.learner.displayName}’s learning setup is updated. Klio left the week unchanged: ${planningError.message}` };
+      return { error: null, success: `${setup.learner.displayName}’s learning setup is updated. Current lessons were not moved. Klio left the week unchanged: ${planningError.message}` };
     }
     console.error("Automatic learner week planning failed", planningError);
     plannedMessage = " The setup is safe, but Klio could not refresh the week yet.";
   }
   revalidatePath("/app", "layout");
   revalidatePath("/app/settings");
-  return { error: null, success: `${setup.learner.displayName}’s learning setup is updated.${plannedMessage}` };
+  return { error: null, success: `${setup.learner.displayName}’s learning setup is updated. Current lessons were not moved.${plannedMessage}` };
 }
 
 function readLearnerSetup(formData: FormData) {
@@ -166,10 +182,27 @@ function readLearnerSetup(formData: FormData) {
   if (new Set(names).size !== names.length) return { error: "Each subject can only be added once." } as const;
   const learningDays = formData.getAll("learningDays").filter((value): value is string => typeof value === "string" && ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].includes(value));
   if (!learningDays.length) return { error: "Choose at least one learning day." } as const;
-  return { learner: learner.data, subjects: subjects.data, learningDays } as const;
+  let teachingWindows: unknown;
+  try { teachingWindows = JSON.parse(String(formData.get("teachingWindows") ?? "{}")); }
+  catch { return { error: "The teaching hours could not be read. Please try again." } as const; }
+  return { learner: learner.data, subjects: subjects.data, learningDays, teachingWindows } as const;
 }
 
 async function replaceLearnerSubjects(supabase: Awaited<ReturnType<typeof createClient>>, input: { familyId: string; studentId: string; parentId: string; subjects: z.infer<typeof learnerSubjectsSchema> }) {
+  const curricula = await supabase.from("curriculum_units").select("id,subject,title,status,default_minutes,schedule_rule,attention_mode,parent_attention_minutes").eq("family_id", input.familyId).eq("student_id", input.studentId);
+  if (curricula.error) throw curricula.error;
+  const inheritedAssignments = curricula.data.length
+    ? await supabase.from("assignments").select("curriculum_unit_id,estimated_minutes").eq("family_id", input.familyId).eq("student_id", input.studentId).in("curriculum_unit_id", curricula.data.map((unit) => unit.id)).is("attention_mode", null)
+    : { data: [], error: null };
+  if (inheritedAssignments.error) throw inheritedAssignments.error;
+  for (const subject of input.subjects) {
+    if (subject.attentionMode !== "flexible") continue;
+    const title = subject.courseName || subject.name;
+    const match = curricula.data.find((unit) => unit.subject.toLowerCase() === subject.name.toLowerCase() && unit.title.toLowerCase() === title.toLowerCase());
+    const concreteMinutes = match ? inheritedAssignments.data.filter((assignment) => assignment.curriculum_unit_id === match.id).map((assignment) => assignment.estimated_minutes ?? 0) : [];
+    const maximum = Math.min(match?.default_minutes ?? 40, ...concreteMinutes);
+    if (subject.parentAttentionMinutes! > maximum) throw new Error(`${subject.name} minutes together cannot be longer than its shortest ${maximum}-minute lesson.`);
+  }
   const existingSubjects = await supabase.from("student_subjects").select("id").eq("family_id", input.familyId).eq("student_id", input.studentId);
   if (existingSubjects.error) throw existingSubjects.error;
   if (existingSubjects.data.length) {
@@ -187,20 +220,21 @@ async function replaceLearnerSubjects(supabase: Awaited<ReturnType<typeof create
   })));
   if (inserted.error) throw inserted.error;
 
-  const curricula = await supabase.from("curriculum_units").select("id,subject,title,status").eq("family_id", input.familyId).eq("student_id", input.studentId);
-  if (curricula.error) throw curricula.error;
   const keep = new Set<string>();
   for (const subject of input.subjects) {
     const title = subject.courseName || subject.name;
     const match = curricula.data.find((unit) => unit.subject.toLowerCase() === subject.name.toLowerCase() && unit.title.toLowerCase() === title.toLowerCase());
     if (match) {
       keep.add(match.id);
-      const result = await supabase.from("curriculum_units").update({ status: "active", schedule_rule: { weeklyFrequency: subject.weeklyFrequency } }).eq("id", match.id).eq("family_id", input.familyId);
+      const attentionChanged = match.attention_mode !== subject.attentionMode || match.parent_attention_minutes !== subject.parentAttentionMinutes;
+      const result = await supabase.from("curriculum_units").update({ status: "active", schedule_rule: mergeScheduleRule(match.schedule_rule, subject.weeklyFrequency), attention_mode: subject.attentionMode, parent_attention_minutes: subject.parentAttentionMinutes }).eq("id", match.id).eq("family_id", input.familyId);
       if (result.error) throw result.error;
+      if (attentionChanged) await writeAuditEvent(createAdminClient(), { familyId: input.familyId, actorId: input.parentId, actorType: "parent", action: "curriculum.attention_preference_changed", entityType: "curriculum_unit", entityId: match.id, metadata: { attention_mode: subject.attentionMode, parent_attention_minutes: subject.parentAttentionMinutes, existing_schedule_unchanged: true } });
     } else {
-      const result = await supabase.from("curriculum_units").insert({ family_id: input.familyId, student_id: input.studentId, created_by: input.parentId, subject: subject.name, title, schedule_rule: { weeklyFrequency: subject.weeklyFrequency } }).select("id").single();
+      const result = await supabase.from("curriculum_units").insert({ family_id: input.familyId, student_id: input.studentId, created_by: input.parentId, subject: subject.name, title, schedule_rule: { weeklyFrequency: subject.weeklyFrequency }, attention_mode: subject.attentionMode, parent_attention_minutes: subject.parentAttentionMinutes }).select("id").single();
       if (result.error) throw result.error;
       keep.add(result.data.id);
+      if (subject.attentionMode !== "unspecified") await writeAuditEvent(createAdminClient(), { familyId: input.familyId, actorId: input.parentId, actorType: "parent", action: "curriculum.attention_preference_changed", entityType: "curriculum_unit", entityId: result.data.id, metadata: { attention_mode: subject.attentionMode, parent_attention_minutes: subject.parentAttentionMinutes, existing_schedule_unchanged: true } });
     }
   }
   const archiveIds = curricula.data.filter((unit) => unit.status !== "archived" && !keep.has(unit.id)).map((unit) => unit.id);
@@ -225,6 +259,11 @@ async function replaceLearnerSubjects(supabase: Awaited<ReturnType<typeof create
     const categoriesInserted = await supabase.from("categories").insert(missing);
     if (categoriesInserted.error) throw categoriesInserted.error;
   }
+}
+
+function mergeScheduleRule(value: unknown, weeklyFrequency: number) {
+  const current = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  return { ...current, weeklyFrequency };
 }
 
 export async function launchPracticeAction(formData: FormData) {

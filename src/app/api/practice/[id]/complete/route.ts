@@ -72,6 +72,19 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     }).select("id").single();
     if (savedResult.error) throw savedResult.error;
     await admin.from("practice_sessions").update({ status: "completed", completed_at: new Date().toISOString() }).eq("id", session.id).eq("family_id", session.family_id);
+    if (session.artifact_id) {
+      const placement = await admin.from("weekly_plan_items").select("assignment_id").eq("family_id", session.family_id).eq("artifact_id", session.artifact_id).not("assignment_id", "is", null).limit(1).maybeSingle();
+      if (placement.error) throw placement.error;
+      if (placement.data?.assignment_id) {
+        const completedAt = new Date().toISOString();
+        const assignment = await admin.from("assignments").select("version").eq("family_id", session.family_id).eq("id", placement.data.assignment_id).single();
+        if (assignment.error) throw assignment.error;
+        const completedAssignment = await admin.from("assignments").update({ status: "completed", completed_at: completedAt, version: assignment.data.version + 1 }).eq("family_id", session.family_id).eq("id", placement.data.assignment_id).eq("version", assignment.data.version);
+        if (completedAssignment.error) throw completedAssignment.error;
+        const completedPlacement = await admin.from("weekly_plan_items").update({ completed_at: completedAt }).eq("family_id", session.family_id).eq("assignment_id", placement.data.assignment_id);
+        if (completedPlacement.error) throw completedPlacement.error;
+      }
+    }
     const activeInsights = await admin.from("klio_insights").select("id,action_ref").eq("family_id", session.family_id).eq("status", "active").limit(50);
     if (activeInsights.error) throw activeInsights.error;
     const replacedIds = activeInsights.data.filter((item) => {

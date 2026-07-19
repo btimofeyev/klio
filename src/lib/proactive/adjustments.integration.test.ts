@@ -84,7 +84,8 @@ describe("unfinished curriculum operations", () => {
   });
 
   it("turns overlapping work into one learner-scoped timed sequence and restores it with undo", async () => {
-    const date = dateInTimezone(new Date(), "America/New_York");
+    const today = dateInTimezone(new Date(), "America/New_York");
+    const date = scheduleDates(today, [1, 2, 3, 4, 5], 1)[0];
     const learners = await admin.from("students").insert([
       { family_id: familyId, display_name: "Schedule learner", daily_capacity_minutes: 180 },
       { family_id: familyId, display_name: "Schedule sibling", daily_capacity_minutes: 90 },
@@ -96,10 +97,12 @@ describe("unfinished curriculum operations", () => {
       { family_id: familyId, student_id: learnerId, created_by: userId, title: "Math", subject: "Math", sequence_number: 1, scheduled_date: date, scheduled_time: "09:00:00", estimated_minutes: 30 },
       { family_id: familyId, student_id: learnerId, created_by: userId, title: "Reading", subject: "Reading", sequence_number: 2, scheduled_date: date, scheduled_time: "09:00:00", estimated_minutes: 30 },
       { family_id: familyId, student_id: learnerId, created_by: userId, title: "Science", subject: "Science", sequence_number: 3, scheduled_date: date, scheduled_time: "09:10:00", estimated_minutes: 30 },
-      { family_id: familyId, student_id: siblingId, created_by: userId, title: "Sibling work", subject: "Math", scheduled_date: date, scheduled_time: "09:00:00", estimated_minutes: 25 },
+      { family_id: familyId, student_id: siblingId, created_by: userId, title: "Sibling work", subject: "Math", scheduled_date: date, scheduled_time: "09:00:00", estimated_minutes: 25, attention_mode: "parent_led" },
     ]).select("id,title");
     if (work.error) throw work.error;
-    const thread = await admin.from("agent_threads").insert({ family_id: familyId, provider: "codex_app_server" }).select("id").single();
+    const existingThread = await admin.from("agent_threads").select("id").eq("family_id", familyId).is("conversation_id", null).in("status", ["active", "awaiting_parent", "replacing"]).limit(1).maybeSingle();
+    if (existingThread.error) throw existingThread.error;
+    const thread = existingThread.data ? { data: existingThread.data, error: null } : await admin.from("agent_threads").insert({ family_id: familyId, provider: "codex_app_server" }).select("id").single();
     if (thread.error) throw thread.error;
     const version = await admin.from("families").select("agent_context_version").eq("id", familyId).single();
     if (version.error) throw version.error;
@@ -111,20 +114,70 @@ describe("unfinished curriculum operations", () => {
     if (turn.error) throw turn.error;
     const key = `organize:${crypto.randomUUID()}`;
     const organized = await organizeDaySchedule({ familyId, studentId: learnerId, scheduledDate: date, actorId: userId, agentTurnId: turn.data.id, snapshotVersion: version.data.agent_context_version, idempotencyKey: key });
-    expect(organized).toMatchObject({ outcome: "completed", changedCount: 2, overlapCount: 2, undoAvailable: true });
-    expect((organized as { summary: string }).summary).toContain("9:00 AM");
+    expect(organized).toMatchObject({ outcome: "completed", changedCount: 3, overlapCount: 2, undoAvailable: true });
+    expect((organized as { summary: string }).summary).toContain("9:25 AM");
     const changed = await admin.from("assignments").select("title,scheduled_time").in("id", work.data.map((item) => item.id));
-    expect(changed.data?.find((item) => item.title === "Math")?.scheduled_time).toBe("09:00:00");
-    expect(changed.data?.find((item) => item.title === "Reading")?.scheduled_time).toBe("09:40:00");
-    expect(changed.data?.find((item) => item.title === "Science")?.scheduled_time).toBe("10:20:00");
+    expect(changed.data?.find((item) => item.title === "Math")?.scheduled_time).toBe("09:25:00");
+    expect(changed.data?.find((item) => item.title === "Reading")?.scheduled_time).toBe("09:55:00");
+    expect(changed.data?.find((item) => item.title === "Science")?.scheduled_time).toBe("10:25:00");
     expect(changed.data?.find((item) => item.title === "Sibling work")?.scheduled_time).toBe("09:00:00");
     const duplicate = await organizeDaySchedule({ familyId, studentId: learnerId, scheduledDate: date, actorId: userId, agentTurnId: turn.data.id, snapshotVersion: version.data.agent_context_version, idempotencyKey: key });
     expect(duplicate).toMatchObject({ duplicate: true, undoAvailable: true });
     const undone = await admin.rpc("undo_klio_adjustment", { p_proposal_id: (organized as { proposalId: string }).proposalId, p_actor_id: userId });
     expect(undone.data).toMatchObject({ status: "undone" });
     const restored = await admin.from("assignments").select("title,scheduled_time").in("id", work.data.map((item) => item.id));
+    expect(restored.data?.find((item) => item.title === "Math")?.scheduled_time).toBe("09:00:00");
     expect(restored.data?.find((item) => item.title === "Reading")?.scheduled_time).toBe("09:00:00");
     expect(restored.data?.find((item) => item.title === "Science")?.scheduled_time).toBe("09:10:00");
+    await admin.from("agent_turns").update({ status: "completed", completed_at: new Date().toISOString() }).eq("id", turn.data.id);
+  });
+
+  it("moves enough work from an overloaded day, validates capacity, isolates siblings, and supports undo", async () => {
+    const today = dateInTimezone(new Date(), "America/New_York");
+    const dates = scheduleDates(today, [1, 2, 3, 4, 5], 4);
+    const targetDate = dates[0];
+    const learners = await admin.from("students").insert([
+      { family_id: familyId, display_name: "Capacity learner", daily_capacity_minutes: 60, schedule_preferences: { learningDays: ["Mon", "Tue", "Wed", "Thu", "Fri"] } },
+      { family_id: familyId, display_name: "Capacity sibling", daily_capacity_minutes: 60, schedule_preferences: {} },
+    ]).select("id,display_name");
+    if (learners.error) throw learners.error;
+    const learnerId = learners.data.find((item) => item.display_name === "Capacity learner")!.id;
+    const siblingId = learners.data.find((item) => item.display_name === "Capacity sibling")!.id;
+    const work = await admin.from("assignments").insert([
+      { family_id: familyId, student_id: learnerId, created_by: userId, title: "Math", subject: "Math", scheduled_date: targetDate, scheduled_time: "09:00:00", estimated_minutes: 30 },
+      { family_id: familyId, student_id: learnerId, created_by: userId, title: "Reading", subject: "Reading", scheduled_date: targetDate, scheduled_time: "10:00:00", estimated_minutes: 30 },
+      { family_id: familyId, student_id: learnerId, created_by: userId, title: "Science", subject: "Science", scheduled_date: targetDate, scheduled_time: "11:00:00", estimated_minutes: 30 },
+      { family_id: familyId, student_id: siblingId, created_by: userId, title: "Sibling work", subject: "Math", scheduled_date: targetDate, scheduled_time: "09:00:00", estimated_minutes: 30, attention_mode: "independent" },
+    ]).select("id,student_id,title,scheduled_date");
+    if (work.error) throw work.error;
+    const existingThread = await admin.from("agent_threads").select("id").eq("family_id", familyId).is("conversation_id", null).in("status", ["active", "awaiting_parent", "replacing"]).limit(1).maybeSingle();
+    if (existingThread.error) throw existingThread.error;
+    const thread = existingThread.data ? { data: existingThread.data, error: null } : await admin.from("agent_threads").insert({ family_id: familyId, provider: "codex_app_server" }).select("id").single();
+    if (thread.error) throw thread.error;
+    const version = await admin.from("families").select("agent_context_version").eq("id", familyId).single();
+    if (version.error) throw version.error;
+    const turn = await admin.from("agent_turns").insert({
+      thread_id: thread.data.id, family_id: familyId, requested_by: userId, trigger: "parent_message", goal: "weekly_plan",
+      status: "running", idempotency_key: `capacity-turn:${crypto.randomUUID()}`, initial_snapshot_version: version.data.agent_context_version,
+      current_snapshot_version: version.data.agent_context_version, snapshot_hash: "c".repeat(64),
+    }).select("id").single();
+    if (turn.error) throw turn.error;
+
+    const key = `capacity:${crypto.randomUUID()}`;
+    const result = await organizeDaySchedule({ familyId, studentId: learnerId, scheduledDate: targetDate, actorId: userId, agentTurnId: turn.data.id, snapshotVersion: version.data.agent_context_version, idempotencyKey: key });
+    expect(result).toMatchObject({ outcome: "completed", beforeMinutes: 90, afterMinutes: 60, capacityMinutes: 60, capacityWarning: false, movedCount: 1, undoAvailable: true });
+    const learnerWork = await admin.from("assignments").select("id,scheduled_date,estimated_minutes").eq("family_id", familyId).eq("student_id", learnerId).neq("status", "skipped");
+    if (learnerWork.error) throw learnerWork.error;
+    expect(learnerWork.data.filter((item) => item.scheduled_date === targetDate).reduce((sum, item) => sum + (item.estimated_minutes ?? 0), 0)).toBe(60);
+    expect((await admin.from("assignments").select("scheduled_date").eq("family_id", familyId).eq("student_id", siblingId).single()).data?.scheduled_date).toBe(targetDate);
+    const duplicate = await organizeDaySchedule({ familyId, studentId: learnerId, scheduledDate: targetDate, actorId: userId, agentTurnId: turn.data.id, snapshotVersion: version.data.agent_context_version, idempotencyKey: key });
+    expect(duplicate).toMatchObject({ duplicate: true, undoAvailable: true });
+
+    const undone = await admin.rpc("undo_klio_adjustment", { p_proposal_id: (result as { proposalId: string }).proposalId, p_actor_id: userId });
+    expect(undone.data).toMatchObject({ status: "undone" });
+    const restored = await admin.from("assignments").select("scheduled_date").eq("family_id", familyId).eq("student_id", learnerId).eq("scheduled_date", targetDate);
+    expect(restored.data).toHaveLength(3);
+    await admin.from("agent_turns").update({ status: "completed", completed_at: new Date().toISOString() }).eq("id", turn.data.id);
   });
 });
 

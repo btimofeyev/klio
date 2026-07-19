@@ -116,11 +116,13 @@ export const workspaceToolSchemas = {
   }).strict(),
   present_action_card: z.object({
     kind: z.enum(["completed", "draft_ready", "proposal", "clarification", "undoable", "needs_detail", "no_op", "partial"]),
-    message: z.string().trim().min(1).max(1000), targetType: z.enum(["artifact", "assignment_review", "adjustment", "planning_proposal", "evidence", "goal", "curriculum", "week", "activity"]).nullable().optional(),
+    message: z.string().trim().min(1).max(8000), targetType: z.enum(["artifact", "assignment_review", "adjustment", "planning_proposal", "evidence", "goal", "curriculum", "week", "activity"]).nullable().optional(),
     targetId: databaseId.nullable().optional(),
   }).strict(),
   update_subject_summary_draft: draftSchema(), build_dashboard: draftSchema(), draft_weekly_plan: draftSchema(),
-  create_lesson: draftSchema(), create_practice_activity: practiceDraftSchema(), build_portfolio: draftSchema(), update_records_draft: draftSchema(),
+  create_lesson: draftSchema(), create_practice_activity: practiceDraftSchema().extend({
+    scheduleDate: z.iso.date().nullable().optional(), estimatedMinutes: z.number().int().min(5).max(180).optional(),
+  }).strict(), build_portfolio: draftSchema(), update_records_draft: draftSchema(),
 } satisfies Record<WorkspaceToolName, z.ZodType>;
 
 function draftSchema() {

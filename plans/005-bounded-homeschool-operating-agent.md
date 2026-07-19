@@ -74,3 +74,49 @@ Completed at the final migration state on 2026-07-14:
 - `supabase migration list --local` — local and applied migration versions matched through `20260714230600`
 
 The live OpenAI browser workflow remains opt-in through `RUN_LIVE_OPENAI_E2E=1` and was not run as part of deterministic local verification.
+
+## Agent-decided conversation — 2026-07-16
+
+- Removed the hardcoded greeting/thanks response table and its client-only synthetic turns. Every parent message now stays in Klio’s durable conversation so the model—not a regex—decides whether to answer briefly, inspect workspace context, or perform bounded follow-through.
+- Removed natural-language chat/practice/record intent classification from the universal composer. Plain text enters one adaptive Klio turn; only explicit attachment and lesson-state controls retain deterministic evidence handling.
+- General conversation receives the complete bounded Klio tool vocabulary. The capability token and tool gateway still enforce family scope, snapshot freshness, idempotency, autonomy policy, approval, and audit rules for every attempted action.
+- The focused conversation begins with one calm “Thinking” state. The operational work tray remains hidden unless Klio actually calls a workspace tool or reaches a concrete action step, so a greeting does not pretend that work was submitted or show a five-step Conductor receipt.
+- Explicit product entry points such as creating practice or planning the week retain their narrower goal-specific tool scopes.
+- Clarification state is now durable-tool-owned: model prose cannot move a turn into `awaiting_parent`. The conversation composer remains visible defensively when an older or malformed awaiting turn has no persisted clarification question.
+- Reconciled legacy stranded clarification turns and their threads, and now require an open persisted question before either the runtime or parent UI can present a blocking detail state. The universal handoff also keeps identical geometry before and after focus on desktop and mobile instead of expanding or scrolling its canvas frame.
+
+## Bounded multi-conversation focus — 2026-07-16
+
+- Klio presents a continuous stream inside each selected conversation, while the family can create and switch among multiple durable conversations. A handoff from the workspace starts a new conversation; only a follow-up sent inside an open conversation continues it.
+- Supabase keeps the durable parent-visible conversation index and messages. Family records—not conversation history—remain authoritative, and each turn still receives a fresh authorized workspace snapshot.
+- When a provider thread is replaced after a runtime update or resume failure, the runtime restores a family-scoped recent window of at most 20 messages and 16,000 characters. The current request is excluded from that window, and stored conversation remains supplemental rather than family-record authority.
+- The focused conversation hides the native scrollbar while retaining wheel, touch, and keyboard scrolling. Scroll-linked depth keeps current messages crisp and lets older exchanges soften and recede only as they approach the top edge, with a reduced-motion fallback.
+- A stream resize observer keeps the newest reply in view after layout changes, while manual review of older messages remains undisturbed until the conversation content changes.
+- Browser verification on the seeded Timofeyev family confirmed that recent conversations are selectable, only the selected conversation is loaded into the stream, the latest reply remains visible, the input stays reachable, and no scrollbar is exposed.
+
+## Authoritative capacity rebalancing — 2026-07-16
+
+- Added compact per-learner daily workload summaries to every agent snapshot so a truncated detailed-assignment window can no longer make an overloaded day look healthy.
+- `organize_day_schedule` now has two deterministic host paths: it removes time overlaps on a healthy day, or rebalances the complete authoritative learner-day when it exceeds capacity.
+- The capacity planner moves enough ordinary or supplemental work to future learning days, repairs existing curriculum-order violations, shifts dependent later lessons atomically, validates every affected destination, and refuses partial course shifts.
+- Model-authored weekly proposals are intercepted when they attempt to fix only part of an already-overloaded source day. The gateway delegates the whole day to the deterministic rebalancer instead of persisting a misleading proposal.
+- Every applied rebalance remains family-scoped, snapshot-bound, idempotent, audited, and server-undoable. Parent-facing results include measured before, after, and capacity minutes rather than model estimates.
+- Live browser verification on the seeded Timofeyev family processed one family-wide Friday request and applied three undoable changes: Jacob `380 → 195 / 240`, Maya `295 → 150 / 210`, and Noah `170 → 100 / 120`. The week surface updated from 25 to 13 Friday lessons, and all destination days stayed within the relevant learner capacity.
+- Final verification for this correction: lint passed; typecheck passed; 46 Vitest files / 223 tests passed; the production build passed; the shared browser showed the updated Friday schedule with no Next.js error overlay; Next.js and the durable worker were restarted together through `pnpm dev`.
+
+## Action-first activity history — 2026-07-18
+
+- Simplified Activity into two parent questions: what needs a decision now, and what Klio recently changed or completed. The empty attention state now says the family is caught up instead of showing an operational status panel.
+- Replaced internal labels such as work receipt and observation with parent language, humanized dates, learner-aware titles, and short schedule summaries. Complete reasons, supporting evidence, and receipt provenance remain available on expansion.
+- Limited the initial history to five readable events and placed older events behind one disclosure. Event titles render at 14px, context at 11px, and important status labels at 9px on both desktop and mobile.
+- Kept actions next to the explanation they affect: schedule rows expose the full server-backed Undo action, weekly summaries link to the week, and receipt actions remain available in expanded details.
+- Verified the real seeded Activity page in the shared desktop and mobile browser with no horizontal overflow. The focused review, downward-trend, and unfinished-work Playwright workflows passed; ESLint, full TypeScript, and the production build passed; Next.js and the durable worker were restarted together through `pnpm dev`.
+
+## Bounded Students and Records dashboards — 2026-07-18
+
+- Replaced the vertically stacked Students/settings page with a viewport-bound learner workspace: a compact roster selects one learner and the primary pane shows capacity, learning days, subjects, curriculum, weekly cadence, teaching context, records, and edit actions.
+- Moved Academic plan, Klio autonomy, and Account into explicit page-level views so the tools remain available without forcing every family setting into one long document.
+- Rebuilt Records as a calm three-pane desktop workspace with subject navigation, a chronological record, and evidence-backed progress visible together. Mobile uses explicit Files and Progress views while learner and subject choices remain immediately reachable.
+- Removed document scrolling and accidental card elevation from both surfaces. Only the selected roster, subject list, record history, or settings form may scroll internally when its data exceeds the viewport.
+- Added seeded desktop/mobile acceptance coverage for viewport height, horizontal overflow, learner isolation, Records view switching, and the preserved academic-planning and learner-setup flows.
+- Final verification: full ESLint passed; TypeScript passed; 71 Vitest files / 395 tests passed; the focused Students/Records, academic-planning, and learner-setup Playwright workflows passed; the production build passed; Next.js and the durable worker were restarted together through `pnpm dev`.

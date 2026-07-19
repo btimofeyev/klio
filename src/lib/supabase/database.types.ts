@@ -1460,6 +1460,7 @@ export type Database = {
       }
       assignments: {
         Row: {
+          attention_mode: string | null
           completed_at: string | null
           created_at: string
           created_by: string | null
@@ -1470,6 +1471,7 @@ export type Database = {
           family_id: string
           id: string
           instructions: string | null
+          parent_attention_minutes: number | null
           scheduled_date: string | null
           scheduled_time: string | null
           sequence_number: number | null
@@ -1484,6 +1486,7 @@ export type Database = {
           version: number
         }
         Insert: {
+          attention_mode?: string | null
           completed_at?: string | null
           created_at?: string
           created_by?: string | null
@@ -1494,6 +1497,7 @@ export type Database = {
           family_id: string
           id?: string
           instructions?: string | null
+          parent_attention_minutes?: number | null
           scheduled_date?: string | null
           scheduled_time?: string | null
           sequence_number?: number | null
@@ -1508,6 +1512,7 @@ export type Database = {
           version?: number
         }
         Update: {
+          attention_mode?: string | null
           completed_at?: string | null
           created_at?: string
           created_by?: string | null
@@ -1518,6 +1523,7 @@ export type Database = {
           family_id?: string
           id?: string
           instructions?: string | null
+          parent_attention_minutes?: number | null
           scheduled_date?: string | null
           scheduled_time?: string | null
           sequence_number?: number | null
@@ -1596,6 +1602,66 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "families"
             referencedColumns: ["id"]
+          },
+        ]
+      }
+      calendar_conflicts: {
+        Row: {
+          all_day: boolean
+          conflict_date: string
+          created_at: string
+          created_by: string
+          ends_at: string | null
+          family_id: string
+          id: string
+          note: string | null
+          starts_at: string | null
+          student_id: string | null
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          all_day?: boolean
+          conflict_date: string
+          created_at?: string
+          created_by: string
+          ends_at?: string | null
+          family_id: string
+          id?: string
+          note?: string | null
+          starts_at?: string | null
+          student_id?: string | null
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          all_day?: boolean
+          conflict_date?: string
+          created_at?: string
+          created_by?: string
+          ends_at?: string | null
+          family_id?: string
+          id?: string
+          note?: string | null
+          starts_at?: string | null
+          student_id?: string | null
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "calendar_conflicts_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "calendar_conflicts_student_id_family_id_fkey"
+            columns: ["student_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "students"
+            referencedColumns: ["id", "family_id"]
           },
         ]
       }
@@ -1750,6 +1816,7 @@ export type Database = {
       }
       curriculum_units: {
         Row: {
+          attention_mode: string
           created_at: string
           created_by: string
           curriculum_url: string | null
@@ -1757,6 +1824,7 @@ export type Database = {
           family_id: string
           id: string
           next_sequence_number: number
+          parent_attention_minutes: number | null
           schedule_rule: Json
           sequence_label: string
           status: string
@@ -1766,6 +1834,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          attention_mode?: string
           created_at?: string
           created_by: string
           curriculum_url?: string | null
@@ -1773,6 +1842,7 @@ export type Database = {
           family_id: string
           id?: string
           next_sequence_number?: number
+          parent_attention_minutes?: number | null
           schedule_rule?: Json
           sequence_label?: string
           status?: string
@@ -1782,6 +1852,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          attention_mode?: string
           created_at?: string
           created_by?: string
           curriculum_url?: string | null
@@ -1789,6 +1860,7 @@ export type Database = {
           family_id?: string
           id?: string
           next_sequence_number?: number
+          parent_attention_minutes?: number | null
           schedule_rule?: Json
           sequence_label?: string
           status?: string
@@ -3807,6 +3879,78 @@ export type Database = {
           },
         ]
       }
+      weekly_briefings: {
+        Row: {
+          action_refs: Json
+          created_at: string
+          dismissed_at: string | null
+          dismissed_by: string | null
+          evaluation_id: string
+          evidence_refs: Json
+          family_id: string
+          generated_at: string
+          headline: string
+          id: string
+          sections: Json
+          status: string
+          summary: string
+          updated_at: string
+          viewed_at: string | null
+          week_start: string
+        }
+        Insert: {
+          action_refs?: Json
+          created_at?: string
+          dismissed_at?: string | null
+          dismissed_by?: string | null
+          evaluation_id: string
+          evidence_refs?: Json
+          family_id: string
+          generated_at?: string
+          headline: string
+          id?: string
+          sections?: Json
+          status?: string
+          summary: string
+          updated_at?: string
+          viewed_at?: string | null
+          week_start: string
+        }
+        Update: {
+          action_refs?: Json
+          created_at?: string
+          dismissed_at?: string | null
+          dismissed_by?: string | null
+          evaluation_id?: string
+          evidence_refs?: Json
+          family_id?: string
+          generated_at?: string
+          headline?: string
+          id?: string
+          sections?: Json
+          status?: string
+          summary?: string
+          updated_at?: string
+          viewed_at?: string | null
+          week_start?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "weekly_briefings_evaluation_id_family_id_fkey"
+            columns: ["evaluation_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "proactive_evaluations"
+            referencedColumns: ["id", "family_id"]
+          },
+          {
+            foreignKeyName: "weekly_briefings_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       weekly_plan_items: {
         Row: {
           artifact_id: string | null
@@ -3949,6 +4093,24 @@ export type Database = {
         Args: { p_actor_id: string; p_proposal_id: string }
         Returns: Json
       }
+      claim_voice_transcription: {
+        Args: {
+          p_audio_seconds: number
+          p_lease_seconds?: number
+          p_lease_token: string
+          p_user_id: string
+        }
+        Returns: Json
+      }
+      curriculum_assignment_stats: {
+        Args: { p_family_id: string; p_student_id?: string }
+        Returns: {
+          active_count: number
+          assignment_count: number
+          completed_count: number
+          curriculum_unit_id: string
+        }[]
+      }
       finalize_assignment_review: {
         Args: {
           p_actor_id: string
@@ -3966,6 +4128,92 @@ export type Database = {
         }
         Returns: boolean
       }
+      list_curriculum_assignments_page: {
+        Args: {
+          p_after_id?: string
+          p_after_sequence?: number
+          p_curriculum_unit_id: string
+          p_family_id: string
+          p_limit?: number
+          p_student_id?: string
+        }
+        Returns: {
+          attention_mode: string | null
+          completed_at: string | null
+          created_at: string
+          created_by: string | null
+          created_by_type: string
+          curriculum_unit_id: string | null
+          due_at: string | null
+          estimated_minutes: number | null
+          family_id: string
+          id: string
+          instructions: string | null
+          parent_attention_minutes: number | null
+          scheduled_date: string | null
+          scheduled_time: string | null
+          sequence_number: number | null
+          skipped_at: string | null
+          source_kind: string
+          status: string
+          student_id: string
+          subject: string
+          submitted_at: string | null
+          title: string
+          updated_at: string
+          version: number
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "assignments"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      list_scheduled_assignments_page: {
+        Args: {
+          p_after_date?: string
+          p_after_id?: string
+          p_after_time?: string
+          p_family_id: string
+          p_from: string
+          p_limit?: number
+          p_student_id?: string
+          p_to: string
+        }
+        Returns: {
+          attention_mode: string | null
+          completed_at: string | null
+          created_at: string
+          created_by: string | null
+          created_by_type: string
+          curriculum_unit_id: string | null
+          due_at: string | null
+          estimated_minutes: number | null
+          family_id: string
+          id: string
+          instructions: string | null
+          parent_attention_minutes: number | null
+          scheduled_date: string | null
+          scheduled_time: string | null
+          sequence_number: number | null
+          skipped_at: string | null
+          source_kind: string
+          status: string
+          student_id: string
+          subject: string
+          submitted_at: string | null
+          title: string
+          updated_at: string
+          version: number
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "assignments"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       record_explicit_parent_score: {
         Args: {
           p_actor_id: string
@@ -3981,6 +4229,10 @@ export type Database = {
       }
       release_family_execution_lease: {
         Args: { p_family_id: string; p_owner_token: string }
+        Returns: boolean
+      }
+      release_voice_transcription: {
+        Args: { p_lease_token: string; p_user_id: string }
         Returns: boolean
       }
       undo_klio_adjustment: {

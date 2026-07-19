@@ -39,7 +39,7 @@ test("an ambiguous handoff pauses, answers inline, resumes once, and does not du
     await expect(page.getByLabel(question)).toBeVisible();
     await page.getByLabel(question).fill("Tomorrow morning at 9.");
     await page.getByRole("button", { name: "Send answer" }).click();
-    await expect(page.getByRole("dialog", { name: "Conversation with Klio" }).locator(".klio-conversation-footer").getByText(/Waiting to begin|Reading submitted work|Checking the handoff/, { exact: true })).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "Conversation with Klio" }).locator(".conversation-working")).toContainText("Thinking");
     await expect.poll(async () => (await admin.from("question_threads").select("resumed_by_turn_id").eq("id", questionThread.data.id).single()).data?.resumed_by_turn_id).not.toBeNull();
     const linked = await admin.from("question_threads").select("resumed_by_turn_id").eq("id", questionThread.data.id).single();
     const resumedTurnId = linked.data!.resumed_by_turn_id!;

@@ -2,7 +2,8 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { dateInFamilyTimezone, mergeRelevantAssignments, shiftIsoDate } from "./relevance";
+import { dateInFamilyTimezone, mergeRelevantAssignments, shiftIsoDate, summarizeDailyWorkloads } from "./relevance";
+import { calculateConcurrentIndependentMinutes, findParentAttentionConflicts, resolveAttentionRequirement } from "@/lib/schedule/parent-attention";
 
 export async function buildFamilyWorkspaceSnapshot(input: { familyId: string; evidenceIds?: string[]; studentId?: string | null; familyWide?: boolean }) {
   const admin = createAdminClient();
@@ -14,12 +15,13 @@ export async function buildFamilyWorkspaceSnapshot(input: { familyId: string; ev
   const windowStart = shiftIsoDate(today, -14);
   const windowEnd = shiftIsoDate(today, 42);
   const recentStart = shiftIsoDate(today, -30);
-  const assignmentSelect = "id, student_id, curriculum_unit_id, title, subject, instructions, sequence_number, status, scheduled_date, due_at, scheduled_time, estimated_minutes, source_kind, version, completed_at, submitted_at, updated_at";
+  const assignmentSelect = "id, student_id, curriculum_unit_id, title, subject, instructions, sequence_number, status, scheduled_date, due_at, scheduled_time, estimated_minutes, attention_mode, parent_attention_minutes, source_kind, version, completed_at, submitted_at, updated_at";
 
   const focusedStudentId = input.studentId ?? null;
   const scopedStudentId = input.familyWide ? null : focusedStudentId;
   const scopeStudent = <T extends { eq: (column: string, value: string) => T }>(query: T) => scopedStudentId ? query.eq("student_id", scopedStudentId) : query;
-  const [studentsResult, subjectsResult, evidenceResult, categoriesResult, remindersResult, observationsResult, artifactsResult, correctionsResult, learningCorrectionsResult, curriculumResult, overdueResult, currentResult, pendingAssignmentsResult, unscheduledResult, recentResult, submissionsResult, draftReviewsResult, reviewsResult, adjustmentsResult, planningProposalsResult, termsResult, termWeekdaysResult, dayOverridesResult, instructionalRecordsResult, goalsResult, pacingTargetsResult, checkpointsResult] = await Promise.all([
+  const conflictQuery = admin.from("calendar_conflicts").select("id,student_id,conflict_date,all_day,starts_at,ends_at,title,note,created_at,updated_at").eq("family_id", input.familyId).gte("conflict_date", windowStart).lte("conflict_date", windowEnd).order("conflict_date").limit(300);
+  const [studentsResult, subjectsResult, evidenceResult, categoriesResult, remindersResult, observationsResult, artifactsResult, correctionsResult, learningCorrectionsResult, curriculumResult, overdueResult, currentResult, scheduleLoadResult, pendingAssignmentsResult, unscheduledResult, recentResult, submissionsResult, draftReviewsResult, reviewsResult, adjustmentsResult, planningProposalsResult, termsResult, termWeekdaysResult, dayOverridesResult, instructionalRecordsResult, goalsResult, pacingTargetsResult, checkpointsResult, conflictsResult] = await Promise.all([
     (scopedStudentId
       ? admin.from("students").select("id, display_name, grade_band, learning_preferences, daily_capacity_minutes, schedule_preferences").eq("family_id", input.familyId).eq("active", true).eq("id", scopedStudentId)
       : admin.from("students").select("id, display_name, grade_band, learning_preferences, daily_capacity_minutes, schedule_preferences").eq("family_id", input.familyId).eq("active", true)
@@ -32,9 +34,10 @@ export async function buildFamilyWorkspaceSnapshot(input: { familyId: string; ev
     scopeStudent(admin.from("artifacts").select("id, student_id, type, title, summary, updated_at").eq("family_id", input.familyId).eq("status", "approved")).order("updated_at", { ascending: false }).limit(30),
     admin.from("organization_corrections").select("evidence_id, from_category_name, evidence_title, evidence_excerpt, cues, categories(name, slug)").eq("family_id", input.familyId).order("created_at", { ascending: false }).limit(30),
     scopeStudent(admin.from("parent_agent_corrections").select("id,student_id,domain,correction_kind,target_type,target_entity_id,original_value,corrected_value,note,created_at").eq("family_id", input.familyId)).order("created_at", { ascending: false }).limit(30),
-    scopeStudent(admin.from("curriculum_units").select("id, student_id, subject, title, sequence_label, next_sequence_number, default_minutes, schedule_rule, status").eq("family_id", input.familyId).in("status", ["active", "paused"])).order("subject").limit(60),
+    scopeStudent(admin.from("curriculum_units").select("id, student_id, subject, title, sequence_label, next_sequence_number, default_minutes, schedule_rule, status, attention_mode, parent_attention_minutes").eq("family_id", input.familyId).in("status", ["active", "paused"])).order("subject").limit(60),
     scopeStudent(admin.from("assignments").select(assignmentSelect).eq("family_id", input.familyId).not("status", "in", "(completed,skipped)").or(`scheduled_date.lt.${today},due_at.lt.${today}T00:00:00Z`)).order("scheduled_date").limit(80),
     scopeStudent(admin.from("assignments").select(assignmentSelect).eq("family_id", input.familyId).gte("scheduled_date", windowStart).lte("scheduled_date", windowEnd)).order("scheduled_date").limit(120),
+    scopeStudent(admin.from("assignments").select("id,student_id,curriculum_unit_id,scheduled_date,scheduled_time,estimated_minutes,attention_mode,parent_attention_minutes,status,source_kind").eq("family_id", input.familyId).gte("scheduled_date", windowStart).lte("scheduled_date", windowEnd).neq("status", "skipped")).order("scheduled_date").limit(1000),
     scopeStudent(admin.from("assignments").select(assignmentSelect).eq("family_id", input.familyId).in("status", ["submitted", "needs_review"])).order("submitted_at", { ascending: false }).limit(60),
     scopeStudent(admin.from("assignments").select(assignmentSelect).eq("family_id", input.familyId).is("scheduled_date", null).in("status", ["planned", "doing"])).order("updated_at", { ascending: false }).limit(40),
     scopeStudent(admin.from("assignments").select(assignmentSelect).eq("family_id", input.familyId).in("status", ["completed", "submitted", "needs_review"]).gte("updated_at", `${recentStart}T00:00:00Z`)).order("updated_at", { ascending: false }).limit(60),
@@ -50,8 +53,9 @@ export async function buildFamilyWorkspaceSnapshot(input: { familyId: string; ev
     scopeStudent(admin.from("learning_goals").select("id, student_id, term_id, title, subject, description, goal_kind, target_value, target_unit, target_date, weekly_effort_minutes, weekly_cadence, priority, constraints, status, version, updated_at").eq("family_id", input.familyId).in("status", ["draft", "active", "paused", "blocked"])).order("priority", { ascending: false }).limit(80),
     scopeStudent(admin.from("curriculum_pacing_targets").select("id, student_id, term_id, curriculum_unit_id, goal_id, starts_on, target_completion_date, start_sequence, target_sequence, expected_assignments, weekly_cadence, weekly_effort_minutes, priority, constraints, status, version, updated_at").eq("family_id", input.familyId).in("status", ["draft", "active", "paused"])).order("priority", { ascending: false }).limit(80),
     scopeStudent(admin.from("pacing_checkpoints").select("id, goal_id, student_id, pacing_target_id, as_of_date, expected_value, actual_value, target_value, remaining_value, state, feasible, projected_completion_date, overdue_count, planned_record_count, approved_evidence_count, capacity_minutes_remaining, basis, created_at").eq("family_id", input.familyId)).order("as_of_date", { ascending: false }).limit(160),
+    scopedStudentId ? conflictQuery.or(`student_id.is.null,student_id.eq.${scopedStudentId}`) : conflictQuery,
   ]);
-  const error = studentsResult.error ?? subjectsResult.error ?? evidenceResult.error ?? categoriesResult.error ?? remindersResult.error ?? observationsResult.error ?? artifactsResult.error ?? correctionsResult.error ?? learningCorrectionsResult.error ?? curriculumResult.error ?? overdueResult.error ?? currentResult.error ?? pendingAssignmentsResult.error ?? unscheduledResult.error ?? recentResult.error ?? submissionsResult.error ?? draftReviewsResult.error ?? reviewsResult.error ?? adjustmentsResult.error ?? planningProposalsResult.error ?? termsResult.error ?? termWeekdaysResult.error ?? dayOverridesResult.error ?? instructionalRecordsResult.error ?? goalsResult.error ?? pacingTargetsResult.error ?? checkpointsResult.error;
+  const error = studentsResult.error ?? subjectsResult.error ?? evidenceResult.error ?? categoriesResult.error ?? remindersResult.error ?? observationsResult.error ?? artifactsResult.error ?? correctionsResult.error ?? learningCorrectionsResult.error ?? curriculumResult.error ?? overdueResult.error ?? currentResult.error ?? scheduleLoadResult.error ?? pendingAssignmentsResult.error ?? unscheduledResult.error ?? recentResult.error ?? submissionsResult.error ?? draftReviewsResult.error ?? reviewsResult.error ?? adjustmentsResult.error ?? planningProposalsResult.error ?? termsResult.error ?? termWeekdaysResult.error ?? dayOverridesResult.error ?? instructionalRecordsResult.error ?? goalsResult.error ?? pacingTargetsResult.error ?? checkpointsResult.error ?? conflictsResult.error;
   if (error) throw error;
   if (evidenceIds.length !== evidenceResult.data?.length) throw new Error("SNAPSHOT_EVIDENCE_NOT_FOUND");
   if (focusedStudentId && !studentsResult.data?.some((student) => student.id === focusedStudentId)) throw new Error("SNAPSHOT_STUDENT_NOT_FOUND");
@@ -66,6 +70,20 @@ export async function buildFamilyWorkspaceSnapshot(input: { familyId: string; ev
     unscheduled: unscheduledResult.data ?? [],
     recentlyCompleted: recentResult.data ?? [],
   });
+  const curriculumById = new Map((curriculumResult.data ?? []).map((unit) => [unit.id, unit]));
+  const resolveAssignmentAttention = (assignment: { curriculum_unit_id: string | null; attention_mode: string | null; parent_attention_minutes: number | null; estimated_minutes: number | null }) => {
+    const unit = assignment.curriculum_unit_id ? curriculumById.get(assignment.curriculum_unit_id) : null;
+    return resolveAttentionRequirement({ assignmentMode: assignment.attention_mode, assignmentParentMinutes: assignment.parent_attention_minutes, curriculumMode: unit?.attention_mode, curriculumParentMinutes: unit?.parent_attention_minutes, lessonMinutes: assignment.estimated_minutes });
+  };
+  const currentAssignmentsWithAttention = relevantAssignments.assignments.map((assignment) => {
+    const attention = resolveAssignmentAttention(assignment);
+    return { ...assignment, resolved_attention_mode: attention.mode, resolved_parent_minutes: attention.parentMinutes, attention_inherited: attention.inherited, attention_source: attention.source };
+  });
+  const parentAttentionByDay = [...new Set((scheduleLoadResult.data ?? []).flatMap((item) => item.scheduled_date ? [item.scheduled_date] : []))].sort().map((date) => {
+    const day = (scheduleLoadResult.data ?? []).filter((item) => item.scheduled_date === date).map((item) => ({ id: item.id, studentId: item.student_id, scheduledStart: item.scheduled_time, requirement: resolveAssignmentAttention(item) }));
+    const conflicts = findParentAttentionConflicts(day);
+    return { date, totalParentMinutes: day.reduce((total, item) => total + item.requirement.parentMinutes, 0), concurrentIndependentMinutes: calculateConcurrentIndependentMinutes(day), conflicts };
+  });
   const snapshot = {
     snapshotVersion: familyResult.data.agent_context_version,
     generatedAt: new Date().toISOString(),
@@ -76,10 +94,13 @@ export async function buildFamilyWorkspaceSnapshot(input: { familyId: string; ev
     categories: categoriesResult.data ?? [], activeReminders: remindersResult.data ?? [],
     approvedObservations: observationsResult.data ?? [], approvedWork: artifactsResult.data ?? [],
     parentCorrections: { organization: correctionsResult.data ?? [], decisions: learningCorrectionsResult.data ?? [] },
-    curriculumUnits: curriculumResult.data ?? [], currentAssignments: relevantAssignments.assignments,
+    curriculumUnits: curriculumResult.data ?? [], currentAssignments: currentAssignmentsWithAttention,
+    dailyScheduleLoads: summarizeDailyWorkloads({ assignments: scheduleLoadResult.data ?? [], students: studentsResult.data ?? [] }),
+    parentAttentionByDay,
     assignmentRetrieval: relevantAssignments.metadata,
     pendingSubmissions: submissionsResult.data ?? [], draftAssignmentReviews: draftReviewsResult.data ?? [],
     approvedAssignmentResults: reviewsResult.data ?? [], scheduleAdjustments: adjustmentsResult.data ?? [], planningProposals: planningProposalsResult.data ?? [],
+    calendarConflicts: conflictsResult.data ?? [],
     academicTerms: (termsResult.data ?? []).map((term) => ({
       ...term,
       instructionalWeekdays: (termWeekdaysResult.data ?? []).filter((day) => day.term_id === term.id).map((day) => day.weekday).sort(),

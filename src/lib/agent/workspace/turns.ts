@@ -130,35 +130,23 @@ export function toolsForWorkspaceRequest(goal: WorkspaceGoal, request: string, i
     return ["organize_day_schedule", "read_family_context", "present_action_card", "ask_parent"];
   }
   if (goal !== "general") return toolsForWorkspaceGoal(goal);
-  return toolsForExplicitGeneralAction(request);
+  // General conversation is adaptive. Klio decides whether the message needs
+  // only a natural reply, a workspace read, or bounded follow-through. The
+  // capability and tool gateway remain the authority boundary for every tool.
+  return toolsForWorkspaceGoal("general");
 }
 
 export function interactionModeForRequest(input: { goal: WorkspaceGoal; request: string; assignmentGuidance?: boolean }): InteractionMode {
-  if (input.assignmentGuidance) return "answer";
-  if (input.goal !== "general") return "act";
-  const request = input.request.trim();
-  const directRequest = request.replace(/^(?:please\s+|kindly\s+)/i, "");
-  if (/\b(?:please|can|could|would)\s+you\s+(?:add|create|draft|file|mark|move|organize|plan|prepare|record|remind|remove|reschedule|save|schedule|set|update)\b/i.test(request)) return "act";
-  if (/^(?:add|create|draft|file|mark|move|organize|plan|prepare|record|remind|remove|reschedule|save|schedule|set|update)\b/i.test(directRequest)) return "act";
-  if (/\b(?:is|are|was|were)\s+(?:done|finished|complete)\b/i.test(request) && /\b(?:mark|record|save|update)\b/i.test(request)) return "act";
-  return "answer";
+  // General messages deliberately use the adaptive execution lane. The model
+  // may answer without a tool; if it chooses a tool, the gateway applies family
+  // scope, policy, idempotency, snapshot, and approval checks.
+  void input.request;
+  void input.assignmentGuidance;
+  return "act";
 }
 
-function toolsForExplicitGeneralAction(request: string): WorkspaceToolName[] {
-  const tools = new Set<WorkspaceToolName>(alwaysRead);
-  const add = (...names: WorkspaceToolName[]) => names.forEach((name) => tools.add(name));
-  if (/\bremind(?:er)?\b/i.test(request)) add("create_reminder");
-  if (/\b(?:complete|completed|finished|done)\b/i.test(request)) add("record_explicit_completion", "update_assignment_status");
-  if (/\b(?:score|grade|percent|percentage)\b/i.test(request)) add("record_explicit_parent_score");
-  if (/\b(?:move|reschedule|schedule|calendar|week|overlap|organize)\b/i.test(request)) add("move_schedule_work", "resize_schedule_work", "move_unfinished_work", "organize_day_schedule", "create_schedule_block");
-  if (/\bpractice\b/i.test(request)) add("create_supplemental_practice", "create_practice_activity", "remove_supplemental_practice");
-  if (/\blesson\b/i.test(request)) add("create_targeted_lesson", "create_lesson");
-  if (/\b(?:file|record|save|capture)\b/i.test(request)) add("file_capture", "update_records_draft");
-  if (/\b(?:assignment|work item)\b/i.test(request)) add("create_assignment");
-  if (/\bgoal\b/i.test(request)) add("propose_learner_goal");
-  if (/\bcurriculum\b/i.test(request)) add("propose_curriculum_change");
-  if (/\b(?:plan|planning)\b/i.test(request)) add("prepare_planning_changes", "draft_weekly_plan");
-  return [...tools];
+export function isActionConfirmationRequest(request: string) {
+  return /^(?:(?:yes|yep|yeah|okay|ok|sure)[,.!]?\s+)?(?:go\s+ahead|do\s+it|get\s+it\s+done|make\s+(?:it|that)\s+happen|apply\s+(?:it|that|those\s+changes)|proceed|sounds\s+good[,.!]?\s+(?:do\s+it|go\s+ahead))\s*[.!]?$/i.test(request.trim());
 }
 
 export async function recoverInterruptedWorkspaceTurns(now = new Date()) {

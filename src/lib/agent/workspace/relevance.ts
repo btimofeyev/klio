@@ -14,6 +14,37 @@ export type AssignmentCohorts<T extends RelevantAssignment> = {
   recentlyCompleted: T[];
 };
 
+export function summarizeDailyWorkloads(input: {
+  assignments: Array<{ student_id: string; scheduled_date: string | null; estimated_minutes: number | null; status: string; source_kind: string }>;
+  students: Array<{ id: string; daily_capacity_minutes: number }>;
+}) {
+  const capacityByStudent = new Map(input.students.map((student) => [student.id, student.daily_capacity_minutes]));
+  const groups = new Map<string, { studentId: string; scheduledDate: string; totalMinutes: number; curriculumMinutes: number; practiceMinutes: number; assignmentCount: number }>();
+  for (const assignment of input.assignments) {
+    if (!assignment.scheduled_date || assignment.status === "skipped") continue;
+    const key = `${assignment.student_id}:${assignment.scheduled_date}`;
+    const current = groups.get(key) ?? {
+      studentId: assignment.student_id, scheduledDate: assignment.scheduled_date,
+      totalMinutes: 0, curriculumMinutes: 0, practiceMinutes: 0, assignmentCount: 0,
+    };
+    const minutes = assignment.estimated_minutes ?? 0;
+    current.totalMinutes += minutes;
+    current.assignmentCount += 1;
+    if (assignment.source_kind === "practice") current.practiceMinutes += minutes;
+    else current.curriculumMinutes += minutes;
+    groups.set(key, current);
+  }
+  return [...groups.values()].map((workload) => {
+    const capacityMinutes = capacityByStudent.get(workload.studentId) ?? 0;
+    return {
+      ...workload,
+      capacityMinutes,
+      remainingMinutes: capacityMinutes - workload.totalMinutes,
+      overCapacity: workload.totalMinutes > capacityMinutes,
+    };
+  }).sort((a, b) => a.scheduledDate.localeCompare(b.scheduledDate) || a.studentId.localeCompare(b.studentId));
+}
+
 const priority = ["overdue", "pendingReview", "currentWindow", "unscheduled", "recentlyCompleted"] as const;
 
 export function mergeRelevantAssignments<T extends RelevantAssignment>(

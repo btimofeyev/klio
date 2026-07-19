@@ -72,12 +72,14 @@ test("an approved downward trend becomes evidence-linked, scheduled, undoable pr
     await expect(page.getByText(/78% · osmosis explanations/)).toBeVisible();
     await expect(page.getByText(/69% · osmosis explanations/)).toBeVisible();
 
-    await page.goto("/app/week");
+    const practiceAssignment = await admin.from("assignments").select("scheduled_date").eq("family_id", family.data!.id).eq("student_id", student.data!.id).eq("source_kind", "practice").single();
+    if (practiceAssignment.error || !practiceAssignment.data.scheduled_date) throw practiceAssignment.error ?? new Error("Scheduled practice not found");
+    await page.goto(`/app/week?date=${practiceAssignment.data.scheduled_date}`);
     await expect(page.locator(".teacher-week-item.supplemental").filter({ hasText: "Biology" })).toBeVisible();
     await page.goto(`/app/records?student=${student.data!.id}`);
     await expect(page.getByRole("heading", { name: "What Klio is watching" })).toBeVisible();
     await expect(page.getByText("3 supporting records")).toBeVisible();
-    await page.goto("/app/settings");
+    await page.goto("/app/settings?view=autonomy");
     await expect(page.getByRole("heading", { name: "How independently should Klio work?" })).toBeVisible();
     await expect(page.getByRole("button", { name: /Autopilot/ })).toHaveClass(/selected/);
 

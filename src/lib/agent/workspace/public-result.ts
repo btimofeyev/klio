@@ -3,6 +3,8 @@ import { postgresUuidSchema } from "@/lib/validation/postgres-uuid";
 import { workspaceToolNames } from "./contracts";
 import { workspaceToolLabel } from "./presentation";
 
+export const MAX_PARENT_RESULT_LENGTH = 8_000;
+
 export const publicResultKindSchema = z.enum([
   "completed", "draft_ready", "proposal", "clarification", "undoable", "needs_detail", "no_op", "partial",
 ]);
@@ -19,7 +21,7 @@ const actionSchema = z.object({
 export const publicResultSchema = z.object({
   schemaVersion: z.literal(1),
   kind: publicResultKindSchema,
-  message: z.string().trim().min(1).max(1000),
+  message: z.string().trim().min(1).max(MAX_PARENT_RESULT_LENGTH),
   understood: z.array(z.string().trim().min(1).max(300)).max(5),
   used: z.array(z.string().trim().min(1).max(300)).max(8),
   changed: z.array(z.string().trim().min(1).max(300)).max(8),
@@ -31,7 +33,7 @@ export type PublicResult = z.infer<typeof publicResultSchema>;
 
 export const modelTerminalSchema = z.object({
   kind: publicResultKindSchema,
-  message: z.string().trim().min(1).max(1000),
+  message: z.string().trim().min(1).max(MAX_PARENT_RESULT_LENGTH).describe("A parent-facing answer. Use concise GitHub-Flavored Markdown when structure improves readability."),
   understood: z.array(z.string().trim().min(1).max(300)).max(5).default([]),
   used: z.array(z.string().trim().min(1).max(300)).max(8).default([]),
   changed: z.array(z.string().trim().min(1).max(300)).max(8).default([]),
@@ -47,7 +49,7 @@ export function normalizePublicResult(value: unknown): PublicResult {
     changed: parsed.data.changed.map(parentSafePhrase),
     remaining: parsed.data.remaining.map(parentSafePhrase),
   };
-  const legacy = z.object({ message: z.string().trim().min(1).max(1000) }).passthrough().safeParse(value);
+  const legacy = z.object({ message: z.string().trim().min(1).max(MAX_PARENT_RESULT_LENGTH) }).passthrough().safeParse(value);
   return {
     schemaVersion: 1,
     kind: "completed",

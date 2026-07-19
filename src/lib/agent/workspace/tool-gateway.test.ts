@@ -120,7 +120,7 @@ describe("workspace tool gateway", () => {
 
   it("makes ordinary focused practice available automatically under the proactive policy", async () => {
     const result = await callWorkspaceTool({ authorization: authorization(), name: "create_practice_activity", arguments: {
-      studentId, title: "Regrouping practice", summary: "A short set based on the parent’s lesson update.", rationale: "The parent reported a specific struggle with regrouping.", idempotencyKey: "practice:automatic:regrouping",
+      studentId, title: "Regrouping practice", summary: "A short set based on the parent’s lesson update.", rationale: "The parent reported a specific struggle with regrouping.", scheduleDate: "2026-07-20", estimatedMinutes: 30, idempotencyKey: "practice:automatic:regrouping",
       content: { practice: { version: 2, subject: "Mathematics", skill_key: "addition.regrouping", level_band: "k-2", instructions: "Solve each problem and explain one regrouping step.", mastery_percent: 80, activities: [
         { id: "sum-1", type: "short_answer", prompt: "Solve 28 + 17.", accepted_answers: ["45"], hints: ["Regroup 15 ones."], explanation: "8 + 7 is 15, so regroup one ten and keep 5 ones." },
         { id: "sum-2", type: "short_answer", prompt: "Solve 46 + 38.", accepted_answers: ["84"], hints: ["Add the ones first."], explanation: "6 + 8 is 14; regroup one ten, then add the tens." },
@@ -130,11 +130,14 @@ describe("workspace tool gateway", () => {
         { id: "explain-2", type: "written_response", prompt: "Explain the regrouping step in 48 + 36, then give the sum.", success_criteria: ["States that 8 + 6 is 14", "Regroups one ten", "Gives 84"], hints: ["Start with the ones, then add every ten."], explanation: "The 14 ones become one ten and four ones; adding that ten gives eight tens and four ones, or 84.", max_length: 400 },
       ] } },
     } });
-    expect(result).toMatchObject({ outcome: "automatic_action", approved: true, approvalRequestId: null });
+    expect(result).toMatchObject({ outcome: "automatic_action", approved: true, approvalRequestId: null, scheduleStatus: "applied", scheduledDate: "2026-07-20", undoAvailable: true });
     const artifactId = (result as { artifactId: string }).artifactId;
     expect((await admin.from("artifacts").select("status").eq("id", artifactId).single()).data).toEqual({ status: "approved" });
     expect((await admin.from("approval_requests").select("id", { count: "exact", head: true }).eq("entity_id", artifactId)).count).toBe(0);
     expect((await admin.from("klio_insights").select("kind,action_ref").eq("family_id", familyId).eq("action_ref->>artifactId", artifactId).single()).data).toMatchObject({ kind: "practice_ready" });
+    const scheduled = await admin.from("assignments").select("id,source_kind,status,scheduled_date,estimated_minutes").eq("family_id", familyId).eq("id", (result as { assignmentId: string }).assignmentId).single();
+    expect(scheduled.data).toMatchObject({ source_kind: "practice", status: "planned", scheduled_date: "2026-07-20", estimated_minutes: 30 });
+    expect((await admin.from("weekly_plan_items").select("artifact_id,assignment_id").eq("family_id", familyId).eq("assignment_id", scheduled.data!.id).single()).data).toMatchObject({ artifact_id: artifactId });
   });
 
   it("removes only supplemental practice through the undoable policy path", async () => {

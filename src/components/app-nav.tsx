@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bell, BookOpenText, CalendarDays, Home, Settings, UsersRound } from "lucide-react";
+import { Bell, BookOpenText, Home, LogOut, Settings, UsersRound } from "lucide-react";
 import { KlioWordmark } from "@/components/klio-wordmark";
 import { signOutAction } from "@/app/login/actions";
 import type { StudentDTO } from "@/lib/data/workspace";
@@ -20,12 +20,11 @@ export function AppNav({ familyName, attentionCount }: NavProps) {
         <Link className={pathname === "/app" ? "active" : ""} href="/app"><Home size={19} strokeWidth={1.7} /><span>Home</span></Link>
         <Link className={pathname === "/app/activity" ? "active" : ""} href="/app/activity"><Bell size={19} strokeWidth={1.7} /><span>Attention</span>{attentionCount > 0 ? <b>{attentionCount}</b> : null}</Link>
         <Link className={pathname.startsWith("/app/settings/learners") || pathname === "/app/settings" ? "active" : ""} href="/app/settings"><UsersRound size={19} strokeWidth={1.7} /><span>Students</span></Link>
-        <Link className={pathname === "/app/week" || pathname === "/app/assignments" ? "active" : ""} href="/app/week"><CalendarDays size={19} strokeWidth={1.7} /><span>Calendar</span></Link>
         <Link className={pathname === "/app/records" || pathname === "/app/review" ? "active" : ""} href="/app/records"><BookOpenText size={19} strokeWidth={1.7} /><span>Records</span></Link>
       </nav>
 
       <Link className={pathname === "/app/settings" ? "nav-account active" : "nav-account"} href="/app/settings" aria-label={`${familyName} settings`}><span>{familyName.charAt(0)}</span><Settings size={15} /></Link>
-      <form action={signOutAction}><button className="nav-signout">Sign out</button></form>
+      <form action={signOutAction}><button className="nav-signout" type="submit" aria-label="Sign out" title="Sign out"><LogOut size={15} strokeWidth={1.7} /></button></form>
     </aside>
   );
 }
@@ -36,7 +35,6 @@ export function MobileNav({ familyName, attentionCount }: NavProps) {
     { href: "/app", label: "Home", icon: Home, active: pathname === "/app" },
     { href: "/app/activity", label: "Attention", icon: Bell, active: pathname === "/app/activity", count: attentionCount },
     { href: "/app/settings", label: "Students", icon: UsersRound, active: pathname.startsWith("/app/settings") },
-    { href: "/app/week", label: "Calendar", icon: CalendarDays, active: pathname === "/app/week" || pathname === "/app/assignments" },
     { href: "/app/records", label: "Records", icon: BookOpenText, active: pathname === "/app/records" || pathname === "/app/review" },
   ];
   return (

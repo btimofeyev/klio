@@ -443,6 +443,47 @@
   min-height: 76px;
 }
 
+.assignment-page-actions {
+  padding: 18px 0 2px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.assignment-page-actions p {
+  margin: 0;
+  color: #6f786f;
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+.assignment-page-actions p[role="alert"] {
+  color: #8a533f;
+}
+
+.assignment-page-actions button {
+  min-height: 34px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #fff;
+  background: #4b674f;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 8px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.assignment-page-actions button:disabled,
+.curriculum-unit-select:disabled {
+  cursor: wait;
+  opacity: .58;
+}
+
 .review-queue,
 .adjustments-list {
   width: min(900px, 100%);
@@ -669,8 +710,27 @@
 .family-subject-suggestions button small { color: #708073; font-size: 7px; }
 .learner-setup-form .selected-subjects,
 .learner-setup-form .subjects-empty { margin-left: 0; }
-.learner-setup-form .selected-subjects article { grid-template-columns: 34px 145px minmax(0, 1fr) 80px auto; }
+.learner-setup-form .selected-subjects article { grid-template-columns: 34px 135px minmax(0, 1fr) 76px minmax(170px, 220px) auto; }
+.subject-attention { display: grid; gap: 5px; align-self: center; }
+.subject-attention > label { display: grid; gap: 4px; color: #69746c; font-size: 8px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
+.subject-attention select, .subject-attention input { min-height: 32px; padding: 0 8px; color: #3f4b42; background: #fffefa; border: 1px solid rgba(62, 75, 61, .17); border-radius: 5px; font: inherit; font-size: 10px; }
+.subject-attention small { color: #7a837b; font-size: 8px; line-height: 1.35; }
+.subject-attention .subject-parent-minutes { grid-template-columns: 1fr 58px; align-items: center; }
+.subject-attention .subject-parent-minutes input { width: 58px; }
 .learner-setup-form .rhythm-fields { margin-left: 0; }
+.teaching-hours-editor { margin-top: 22px; padding-top: 19px; border-top: 1px dashed rgba(78, 93, 78, .2); }
+.teaching-hours-intro { display: grid; grid-template-columns: minmax(180px, .65fr) minmax(260px, 1fr); gap: 24px; align-items: start; }
+.teaching-hours-intro strong { color: #3f5043; font-size: 12px; }
+.teaching-hours-intro p { margin: 4px 0 0; color: #737d74; font-size: 10px; line-height: 1.5; }
+.teaching-hours-rows { margin-top: 15px; border-top: 1px solid rgba(66, 78, 65, .12); }
+.teaching-hours-row { min-height: 59px; padding: 9px 0; display: grid; grid-template-columns: 92px 86px 112px 112px minmax(130px, 1fr); align-items: center; gap: 12px; border-bottom: 1px solid rgba(66, 78, 65, .1); }
+.teaching-hours-row > strong { color: #3d493f; font-size: 11px; }
+.teaching-hours-row label { display: grid; gap: 3px; color: #737c73; font-size: 8px; font-weight: 750; letter-spacing: .04em; text-transform: uppercase; }
+.teaching-hours-row input[type="time"] { width: 100%; min-height: 34px; padding: 0 8px; color: #3b463d; background: #fffefa; border: 1px solid rgba(62, 75, 61, .17); border-radius: 5px; font: inherit; font-size: 10px; }
+.teaching-hours-row .teaching-flexible { min-height: 34px; display: flex; align-items: center; gap: 7px; color: #536258; font-size: 9px; letter-spacing: 0; text-transform: none; }
+.teaching-flexible input { accent-color: #59705d; }
+.teaching-flexible-copy, .teaching-hours-row > small { grid-column: 3 / -1; margin: 0; color: #7b837b; font-size: 9px; line-height: 1.4; }
+.teaching-hours-row > small { grid-column: 5; color: #657268; }
 .learner-setup-form > footer { margin-top: 25px; padding-top: 18px; display: flex; align-items: center; justify-content: space-between; gap: 20px; border-top: 1px solid var(--line); }
 .learner-setup-form > footer p { margin: 0; color: #7a817a; font-size: 10px; }
 .learner-setup-form > footer strong { color: #3b453c; }
@@ -762,10 +822,56 @@
   .family-subject-suggestions { grid-template-columns: 1fr; }
   .family-subject-suggestions > div:first-child span { max-width: none; }
   .learner-setup-form .selected-subjects article { grid-template-columns: 28px minmax(0, 1fr) 72px auto; }
+  .learner-setup-form .selected-subjects article > input, .learner-setup-form .selected-subjects article .subject-attention { grid-column: 2 / -1; width: 100%; }
   .learner-setup-form > footer { align-items: stretch; flex-direction: column; }
   .learner-setup-form > footer button { width: 100%; }
+  .teaching-hours-intro { grid-template-columns: 1fr; gap: 8px; }
+  .teaching-hours-row { padding: 12px 0; grid-template-columns: 1fr auto; gap: 8px 12px; }
+  .teaching-hours-row .teaching-flexible { justify-self: end; }
+  .teaching-hours-row > label:not(.teaching-flexible) { grid-row: 2; }
+  .teaching-hours-row > label:not(.teaching-flexible):nth-of-type(2) { grid-column: 1; }
+  .teaching-hours-row > label:not(.teaching-flexible):nth-of-type(3) { grid-column: 2; }
+  .teaching-flexible-copy, .teaching-hours-row > small { grid-column: 1 / -1; }
   .new-learner-form > footer { align-items: stretch; flex-direction: column; }
   .new-learner-form > footer button { width: 100%; }
+}
+
+.parent-support-label { width: fit-content; display: inline-flex; align-items: center; min-height: 19px; padding: 0 6px; color: #56645a; background: rgba(231, 235, 227, .78); border: 1px solid rgba(70, 84, 72, .13); border-radius: 999px; font-size: 8px; font-style: normal; font-weight: 800; line-height: 1; white-space: nowrap; }
+.parent-support-label.support-unspecified { color: #7a7468; background: #f2eee3; border-style: dashed; }
+.parent-support-label.support-independent { color: #5e6e65; background: #edf1eb; }
+.parent-support-label.support-flexible { color: #6c604c; background: #f3eee1; }
+.day-duration .parent-support-label { margin-top: 4px; }
+.teacher-week-item .parent-support-label { margin-top: 3px; }
+.parent-attention-summary { display: block; margin-top: 3px; color: #667269; font-size: 9px; font-weight: 700; }
+.parent-attention-collision { margin: 0; padding: 8px 12px; color: #78543e; background: #f5e9de; border-bottom: 1px solid rgba(120, 84, 62, .14); font-size: 10px; font-weight: 750; }
+.teacher-week-parent-total { margin: 4px 0 0; color: #68746c; font-size: 8px; font-weight: 750; }
+.teacher-week-parent-total.collision { padding: 4px 6px; color: #78543e; background: #f5e9de; border-radius: 4px; }
+
+.parent-support-control { margin-top: 14px; padding-top: 13px; display: grid; gap: 10px; border-top: 1px dashed rgba(65, 78, 66, .2); }
+.parent-support-heading { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
+.parent-support-heading > div { display: grid; gap: 3px; }
+.parent-support-heading strong { color: #3f4b42; font-size: 10px; }
+.parent-support-heading small { color: #788179; font-size: 8px; line-height: 1.4; }
+.parent-support-heading .parent-support-timing { color: #5f6d63; font-weight: 750; }
+.parent-support-fields { display: grid; grid-template-columns: minmax(0, 1fr) 92px auto; align-items: end; gap: 8px; }
+.parent-support-fields label { display: grid; gap: 4px; color: #6d776f; font-size: 8px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+.parent-support-fields select, .parent-support-fields input { min-height: 34px; padding: 0 8px; color: #3d493f; background: #fffefa; border: 1px solid rgba(62, 75, 61, .2); border-radius: 5px; font: inherit; font-size: 10px; }
+.parent-support-fields button, .parent-support-warning button { min-height: 34px; padding: 0 10px; color: #f7f5ed; background: #53655a; border: 0; border-radius: 5px; cursor: pointer; font: inherit; font-size: 9px; font-weight: 800; }
+.parent-support-fields button:active, .parent-support-warning button:active { transform: translateY(1px); }
+.parent-support-fields button:disabled { cursor: default; opacity: .55; }
+.parent-support-success, .parent-support-error { margin: 0; font-size: 9px; line-height: 1.4; }
+.parent-support-success { color: #52675a; }
+.parent-support-error { color: #865740; }
+.parent-support-warning { padding: 10px; color: #6f4f3e; background: #f5e9de; border: 1px solid rgba(126, 87, 62, .16); border-radius: 6px; }
+.parent-support-warning strong { font-size: 10px; }
+.parent-support-warning p { margin: 3px 0 8px; font-size: 9px; }
+.parent-support-warning > div { display: flex; flex-wrap: wrap; gap: 6px; }
+.parent-support-warning button { min-height: 29px; color: #6b503f; background: #fffaf3; border: 1px solid rgba(113, 80, 58, .18); }
+
+@media (max-width: 700px) {
+  .parent-support-fields { grid-template-columns: 1fr 86px; }
+  .parent-support-fields button { grid-column: 1 / -1; width: 100%; }
+  .parent-support-warning > div { display: grid; }
 }
 
 /* Spatial week objects own elevation; the schedule inside is one uninterrupted paper. */
@@ -938,4 +1044,1100 @@
     gap: 6px;
   }
   .spatial-day-schedule .teacher-day-sheet .day-row-actions button { min-height: 30px; font-size: 10px; }
+}
+
+/* Calendar constraints are quiet interruptions in the teaching paper, never lesson cards. */
+.calendar-view-toggle {
+  display: inline-flex;
+  padding: 2px;
+  background: #eef0e9;
+  border: 1px solid rgba(58, 66, 55, .13);
+  border-radius: 7px;
+}
+
+.calendar-view-toggle button {
+  min-height: 28px;
+  padding: 0 10px;
+  color: #697269;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.calendar-view-toggle button[aria-pressed="true"] {
+  color: #344439;
+  background: #fffefa;
+  box-shadow: 0 1px 3px rgba(55, 52, 44, .12);
+}
+
+.teacher-week-day-header {
+  position: relative;
+  display: grid;
+}
+
+.teacher-week-add-conflict {
+  min-height: 27px;
+  margin: -5px 1px 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  color: #617066;
+  background: transparent;
+  border: 1px dashed rgba(71, 91, 75, .24);
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 750;
+}
+
+.teacher-week-add-conflict:hover { background: rgba(229, 235, 225, .58); }
+
+.teacher-week-conflicts {
+  display: grid;
+  gap: 5px;
+  padding: 7px 0 2px !important;
+}
+
+.teacher-week-conflicts button {
+  position: relative;
+  min-height: 42px;
+  padding: 7px 8px 7px 11px;
+  display: grid;
+  gap: 2px;
+  overflow: hidden;
+  color: #4b574e;
+  background-color: #f2f1e9;
+  background-image: repeating-linear-gradient(-45deg, transparent 0 6px, rgba(75, 89, 77, .045) 6px 8px);
+  border: 1px solid rgba(71, 84, 72, .2);
+  border-left: 3px solid #819084;
+  border-radius: 4px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.teacher-week-conflicts button.all-day { border-left-color: #5d7161; background-color: #e9ece4; }
+.teacher-week-conflicts span { overflow: hidden; font-size: 10px; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
+.teacher-week-conflicts small { color: #737b73; font-size: 8px; line-height: 1.3; }
+
+.teacher-week-capacity {
+  margin: 5px 0 0;
+  padding: 5px 7px;
+  color: #5c695e;
+  background: #eef1e9;
+  border-radius: 4px;
+  font-size: 8px;
+  font-weight: 750;
+  line-height: 1.3;
+}
+
+.teacher-week-capacity.over { color: #775843; background: #f4e8db; }
+.teacher-week-sheet > section.has-all-day-conflict { background-color: rgba(232, 235, 226, .52); }
+.teacher-week-sheet > section.is-over-capacity { box-shadow: inset 0 3px #b88968; }
+
+.spatial-month-schedule { width: 100%; }
+.spatial-month-schedule .calendar-month { border-radius: 0 0 11px 11px; }
+.calendar-month { min-width: 0; overflow: hidden; background: #fffefa; }
+.calendar-month-weekdays { min-height: 34px; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); align-items: center; color: #6d776f; background: #f8f7f1; border-bottom: 1px solid rgba(58, 66, 55, .12); }
+.calendar-month-weekdays span { padding-left: 11px; font-size: 9px; font-weight: 850; letter-spacing: .1em; text-transform: uppercase; }
+.calendar-month-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.calendar-month-grid > section { position: relative; min-width: 0; min-height: 142px; padding: 8px; border-right: 1px solid rgba(58, 66, 55, .1); border-bottom: 1px solid rgba(58, 66, 55, .1); }
+.calendar-month-grid > section:nth-child(7n) { border-right: 0; }
+.calendar-month-grid > section.outside-month { background: #faf9f5; opacity: .62; }
+.calendar-month-grid > section.today::after { position: absolute; top: 7px; left: 7px; width: 25px; height: 25px; content: ""; border: 1px solid #617964; border-radius: 50%; pointer-events: none; }
+.calendar-month-grid > section.selected { box-shadow: inset 0 0 0 2px rgba(82, 108, 87, .45); }
+.calendar-month-grid > section.all-day-blocked { background-color: #eceee7; background-image: repeating-linear-gradient(-45deg, transparent 0 8px, rgba(72, 86, 73, .04) 8px 10px); }
+.calendar-month-grid > section.over-capacity { box-shadow: inset 0 -3px #b88968; }
+.calendar-month-grid > section > header { display: flex; align-items: center; justify-content: space-between; }
+.month-date { min-width: 27px; min-height: 27px; display: flex; align-items: center; gap: 7px; color: #39433b; background: transparent; border: 0; cursor: pointer; }
+.month-date span { display: none; }
+.month-date strong { font-size: 12px; font-weight: 750; }
+.month-add-conflict { width: 27px; height: 27px; display: grid; place-items: center; color: #657269; background: transparent; border: 1px solid rgba(72, 87, 74, .2); border-radius: 5px; cursor: pointer; }
+.month-add-conflict:hover { background: #edf1e9; }
+.month-day-summary { margin-top: 6px; display: grid; align-content: start; gap: 5px; }
+.month-day-summary > span { color: #5e6961; font-size: 9px; line-height: 1.3; }
+.month-day-summary > span b { color: #39443c; }
+.month-day-summary .month-open { color: #92978f; }
+.month-day-summary button { min-width: 0; padding: 4px 5px; display: flex; align-items: center; gap: 5px; overflow: hidden; color: #505c53; background: #eef0e9; border: 1px solid rgba(70, 84, 72, .14); border-radius: 4px; cursor: pointer; font-size: 8px; font-weight: 750; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.month-day-summary button i { width: 3px; height: 14px; flex: 0 0 auto; background: #7d8d80; border-radius: 2px; }
+.month-day-summary small { color: #727c74; font-size: 8px; }
+.month-day-summary em { color: #725a46; font-size: 8px; font-style: normal; font-weight: 800; }
+.month-open-week { margin-top: 7px; padding: 0; display: inline-flex; align-items: center; color: #4c6852; background: transparent; border: 0; cursor: pointer; font-size: 8px; font-weight: 800; }
+
+.calendar-conflict-dialog {
+  width: min(540px, calc(100% - 28px));
+  max-height: calc(100dvh - 28px);
+  padding: 0;
+  overflow: auto;
+  color: #343d35;
+  background: #fffefa;
+  border: 1px solid rgba(58, 66, 55, .2);
+  border-radius: 12px;
+  box-shadow: 0 28px 80px rgba(42, 46, 40, .24);
+}
+
+.calendar-conflict-dialog::backdrop { background: rgba(35, 40, 35, .42); backdrop-filter: blur(2px); }
+.calendar-conflict-dialog > form > header { padding: 23px 24px 17px; display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; background: #f7f5ed; border-bottom: 1px solid rgba(58, 66, 55, .13); }
+.calendar-conflict-dialog header span { color: #617166; font-size: 8px; font-weight: 850; letter-spacing: .13em; text-transform: uppercase; }
+.calendar-conflict-dialog h2 { margin: 4px 0 5px; font-size: 22px; font-weight: 670; letter-spacing: -.035em; }
+.calendar-conflict-dialog header p { margin: 0; color: #6f786f; font-size: 10px; line-height: 1.45; }
+.calendar-conflict-dialog header > button { width: 31px; height: 31px; display: grid; flex: 0 0 auto; place-items: center; color: #59675d; background: transparent; border: 1px solid rgba(58, 66, 55, .18); border-radius: 7px; cursor: pointer; }
+.calendar-conflict-fields { padding: 19px 24px 5px; display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.calendar-conflict-fields > label:first-child, .calendar-conflict-fields > fieldset, .calendar-conflict-fields > label:last-child { grid-column: 1 / -1; }
+.calendar-conflict-fields label { display: grid; gap: 6px; color: #4b584f; font-size: 10px; font-weight: 750; }
+.calendar-conflict-fields label > span, .calendar-conflict-fields legend { color: #68746b; font-size: 8px; font-weight: 850; letter-spacing: .08em; text-transform: uppercase; }
+.calendar-conflict-fields label small { font-weight: 600; letter-spacing: 0; text-transform: none; }
+.calendar-conflict-fields input:not([type="radio"]), .calendar-conflict-fields select, .calendar-conflict-fields textarea { width: 100%; min-height: 39px; padding: 8px 10px; color: #344038; background: #fff; border: 1px solid rgba(58, 66, 55, .21); border-radius: 7px; font: inherit; font-size: 12px; }
+.calendar-conflict-fields textarea { resize: vertical; }
+.calendar-conflict-fields fieldset { min-width: 0; padding: 0; border: 0; }
+.conflict-time-presets { margin-top: 7px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
+.conflict-time-presets label { position: relative; min-height: 35px; display: grid; place-items: center; cursor: pointer; }
+.conflict-time-presets input { position: absolute; opacity: 0; }
+.conflict-time-presets span { width: 100%; height: 35px; display: grid; place-items: center; color: #5d685f !important; background: #f2f2ec; border: 1px solid transparent; border-radius: 6px; font-size: 9px !important; letter-spacing: 0 !important; text-transform: none !important; }
+.conflict-time-presets input:checked + span { color: #3f5544 !important; background: #e5ece2; border-color: #708174; }
+.conflict-time-presets input:focus-visible + span { outline: 2px solid #4d6852; outline-offset: 2px; }
+.conflict-time-fields { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.calendar-conflict-live { min-height: 28px; padding: 0 24px; }
+.calendar-conflict-live p { margin: 0; color: #8a4f44; font-size: 10px; font-weight: 750; }
+.calendar-conflict-dialog footer { min-height: 62px; padding: 12px 24px 16px; display: flex; align-items: center; justify-content: space-between; gap: 10px; border-top: 1px solid rgba(58, 66, 55, .11); }
+.calendar-conflict-dialog footer > div { display: flex; align-items: center; gap: 7px; }
+.calendar-conflict-dialog footer button { min-height: 35px; padding: 0 12px; color: #4d5d51; background: transparent; border: 1px solid rgba(58, 66, 55, .2); border-radius: 7px; cursor: pointer; font-size: 10px; font-weight: 800; }
+.calendar-conflict-dialog footer > div > button:last-child { color: #fff; background: #536d57; border-color: #536d57; }
+.calendar-conflict-dialog footer .conflict-delete { display: inline-flex; align-items: center; gap: 5px; color: #874f45; border-color: rgba(135, 79, 69, .28); }
+.calendar-conflict-dialog .conflict-delete-confirm { padding: 6px; flex-wrap: wrap; color: #704c44; background: #f6e9e5; border-radius: 7px; font-size: 9px; font-weight: 750; }
+.calendar-conflict-dialog .conflict-delete-confirm button { min-height: 28px; padding-inline: 8px; }
+
+.conflict-affected-notice {
+  position: fixed;
+  z-index: 45;
+  right: 20px;
+  bottom: 20px;
+  width: min(520px, calc(100% - 40px));
+  min-height: 58px;
+  padding: 10px 10px 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #3d493f;
+  background: #fffdf6;
+  border: 1px solid rgba(65, 83, 69, .22);
+  border-radius: 9px;
+  box-shadow: 0 15px 42px rgba(49, 52, 45, .16);
+}
+
+.conflict-affected-notice > div { min-width: 0; margin-right: auto; display: grid; gap: 2px; }
+.conflict-affected-notice strong { font-size: 11px; }
+.conflict-affected-notice span { color: #6c756d; font-size: 9px; }
+.conflict-affected-notice > button { min-height: 33px; padding: 0 10px; flex: 0 0 auto; color: #fff; background: #526b56; border: 1px solid #526b56; border-radius: 6px; cursor: pointer; font-size: 9px; font-weight: 800; }
+.conflict-affected-notice > button:last-child { width: 30px; padding: 0; color: #667268; background: transparent; border-color: transparent; }
+
+@media (max-width: 720px) {
+  .calendar-view-toggle button { padding-inline: 7px; }
+  .spatial-week-schedule .teacher-week-sheet {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+  }
+  .spatial-week-schedule .teacher-week-sheet > section {
+    width: 100%;
+    padding: 0 10px 12px;
+    align-self: start;
+    border-right: 0;
+    border-bottom: 1px solid rgba(58, 66, 55, .12);
+  }
+  .spatial-week-schedule .teacher-week-sheet > section:last-child { border-bottom: 0; }
+  .spatial-week-schedule .teacher-week-sheet.family-view .teacher-week-learner-lane,
+  .spatial-week-schedule .teacher-week-sheet:not(.family-view) .teacher-week-day-body,
+  .spatial-week-schedule .teacher-week-completed > div {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .spatial-week-schedule .teacher-week-learner-lane > small,
+  .spatial-week-schedule .teacher-week-learner-lane > .teacher-week-completed,
+  .spatial-week-schedule .teacher-week-sheet:not(.family-view) .teacher-week-completed {
+    grid-column: 1 / -1;
+  }
+  .calendar-month-weekdays { display: none; }
+  .calendar-month-grid { display: grid; grid-template-columns: 1fr; }
+  .calendar-month-grid > section { min-height: 104px; padding: 10px 12px; border-right: 0; }
+  .calendar-month-grid > section.outside-month { display: none; }
+  .calendar-month-grid > section > header { justify-content: flex-start; gap: 8px; }
+  .month-date { margin-right: auto; }
+  .month-date span { display: inline; color: #69756d; font-size: 9px; font-weight: 850; letter-spacing: .09em; text-transform: uppercase; }
+  .calendar-month-grid > section.today::after { top: 9px; left: 11px; }
+  .month-day-summary { grid-template-columns: minmax(100px, .7fr) minmax(130px, 1fr); }
+  .month-day-summary em, .month-day-summary small { align-self: center; }
+  .calendar-conflict-fields { grid-template-columns: 1fr; }
+  .calendar-conflict-fields > * { grid-column: 1 !important; }
+  .calendar-conflict-dialog > form > header, .calendar-conflict-fields, .calendar-conflict-dialog footer { padding-inline: 17px; }
+  .calendar-conflict-dialog footer { align-items: stretch; flex-direction: column-reverse; }
+  .calendar-conflict-dialog footer > div { justify-content: flex-end; }
+  .calendar-conflict-dialog footer > span { display: none; }
+  .conflict-time-presets { grid-template-columns: 1fr 1fr; }
+  .conflict-affected-notice { right: 10px; bottom: 74px; width: calc(100% - 20px); align-items: stretch; flex-wrap: wrap; }
+  .conflict-affected-notice > div { width: calc(100% - 36px); }
+  .conflict-affected-notice > button:nth-of-type(1) { flex: 1; }
+  .conflict-affected-notice > button:last-child { position: absolute; top: 8px; right: 7px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .teacher-week-add-conflict, .month-add-conflict, .calendar-conflict-dialog button { transition: none; }
+}
+
+/* Quiet teacher desk — selected visual direction. */
+.spatial-workspace main[data-spatial-object]:has(.spatial-day-schedule) {
+  height: 100%;
+  max-height: none;
+  align-self: stretch;
+}
+
+.spatial-day-toolbar {
+  width: 100%;
+  min-height: 55px;
+  padding: 0 0 13px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 28px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid rgba(48, 55, 47, .14);
+  border-radius: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.spatial-day-toolbar .teacher-canvas-nav {
+  padding: 0;
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) 40px;
+  gap: 11px;
+  background: transparent;
+}
+
+.spatial-day-toolbar .teacher-canvas-nav h1 {
+  min-width: 185px;
+  margin: 0;
+  align-self: center;
+  color: #2f352f;
+  font-size: 17px;
+  font-weight: 720;
+  letter-spacing: -.025em;
+  line-height: 1.2;
+  text-align: center;
+}
+
+.spatial-day-toolbar .teacher-canvas-nav button {
+  width: 40px;
+  height: 40px;
+  color: #3f4840;
+  border-radius: 50%;
+}
+
+.spatial-day-toolbar .teacher-canvas-nav button:hover { background: rgba(82, 100, 84, .075); }
+.spatial-day-toolbar .teacher-toolbar-actions { display: flex; align-items: center; gap: 12px; }
+.spatial-day-toolbar .teacher-toolbar-actions label::before {
+  width: 1px;
+  height: 18px;
+  content: "";
+  background: rgba(48, 55, 47, .15);
+}
+.spatial-day-toolbar .teacher-toolbar-actions > label { order: 3; }
+.spatial-day-toolbar .teacher-toolbar-actions > button,
+.spatial-day-toolbar .teacher-toolbar-actions > a {
+  min-height: 40px;
+  padding: 0 8px;
+  color: #3f4840;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 650;
+}
+.spatial-day-toolbar .teacher-toolbar-actions > button:hover,
+.spatial-day-toolbar .teacher-toolbar-actions > a:hover { background: rgba(82, 100, 84, .07); }
+.spatial-day-toolbar .teacher-toolbar-actions > button:disabled { opacity: .42; cursor: default; }
+.spatial-day-toolbar .teacher-toolbar-actions label { display: flex; align-items: center; gap: 10px; }
+.spatial-day-toolbar .teacher-toolbar-actions label > span { display: none; }
+.spatial-day-toolbar .teacher-toolbar-actions select {
+  min-width: 82px;
+  min-height: 40px;
+  padding: 0 24px 0 6px;
+  color: #353d36;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.spatial-calendar-toolbar .calendar-view-toggle {
+  order: 1;
+  padding: 0;
+  gap: 2px;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+.spatial-calendar-toolbar .calendar-view-toggle button,
+.spatial-calendar-toolbar .calendar-view-toggle a {
+  min-height: 40px;
+  padding: 0 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #697269;
+  border-radius: 5px;
+  font-size: 10px;
+  font-weight: 650;
+}
+.spatial-calendar-toolbar .calendar-view-toggle button[aria-pressed="true"] {
+  color: #314238;
+  background: rgba(82, 100, 84, .075);
+  box-shadow: none;
+}
+.spatial-calendar-toolbar .teacher-plan-next {
+  order: 2;
+  min-height: 40px;
+  padding: 0 7px;
+  color: #3f4840;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  font-size: 10px;
+  font-weight: 650;
+}
+.spatial-calendar-toolbar .teacher-plan-next:hover:not(:disabled) { background: rgba(82, 100, 84, .07); }
+.spatial-calendar-toolbar .calendar-action-placeholder { visibility: hidden; }
+.spatial-calendar-toolbar .teacher-toolbar-actions > label { order: 3; }
+
+.spatial-day-schedule .teacher-day-sheet {
+  overflow: visible;
+  background: transparent;
+}
+.spatial-day-schedule .teacher-day-sheet > header {
+  min-height: 58px;
+  padding: 12px 0 10px;
+  display: flex;
+  align-items: center;
+  background: transparent;
+  border-bottom: 1px solid rgba(48, 55, 47, .14);
+}
+.spatial-day-schedule .teacher-day-sheet > header > div { width: 100%; align-items: center; }
+.spatial-day-schedule .teacher-day-sheet > header span {
+  color: #303630;
+  font-size: 19px;
+  font-weight: 560;
+  letter-spacing: -.025em;
+}
+.spatial-day-schedule .teacher-day-sheet > header strong { color: #697169; font-size: 10px; font-weight: 550; }
+.spatial-day-schedule .teacher-day-sheet > header i,
+.spatial-day-schedule .day-order-hint { display: none; }
+.spatial-day-schedule .teacher-day-list { padding: 0; }
+
+.spatial-day-schedule .teacher-day-sheet .day-assignment,
+.spatial-day-schedule .teacher-day-sheet .day-assignment.completed:not(.focused) {
+  min-height: 74px;
+  padding: 8px 6px 8px 0;
+  grid-template-columns: 76px 38px minmax(0, 1fr) 62px 54px 40px;
+  gap: 8px;
+  background: transparent !important;
+  border-bottom: 1px solid rgba(48, 55, 47, .13);
+  border-radius: 0;
+}
+.spatial-day-schedule .teacher-day-sheet .day-assignment:hover,
+.spatial-day-schedule .teacher-day-sheet .day-assignment.selected { background: rgba(84, 101, 85, .025) !important; }
+.spatial-day-schedule .teacher-day-sheet .day-assignment.selected::before {
+  top: 0;
+  bottom: 0;
+  left: 76px;
+  width: 2px;
+  background: #5d785f;
+}
+.spatial-day-schedule .teacher-day-sheet .day-assignment > time { color: #505a52; font-size: 11px; font-weight: 580; }
+.spatial-day-schedule .teacher-day-sheet .day-subject-mark,
+.spatial-day-schedule .teacher-day-sheet .day-assignment.completed:not(.focused) .day-subject-mark {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  color: #3f4b42;
+  background: transparent;
+  border-radius: 0;
+  font-size: 9px;
+}
+.spatial-day-schedule .teacher-day-sheet .day-subject-mark::after {
+  position: absolute;
+  right: -6px;
+  width: 4px;
+  height: 4px;
+  content: "";
+  background: #56705a;
+  border-radius: 50%;
+}
+.spatial-day-schedule .teacher-day-sheet .day-assignment > div:not(.day-row-actions) { gap: 2px; }
+.spatial-day-schedule .teacher-day-sheet .day-assignment small,
+.spatial-day-schedule .teacher-day-sheet .day-assignment.completed:not(.focused) small {
+  color: #58695c;
+  font-size: 8px;
+  font-weight: 760;
+  letter-spacing: .08em;
+}
+.spatial-day-schedule .teacher-day-sheet .day-assignment strong,
+.spatial-day-schedule .teacher-day-sheet .day-assignment.completed:not(.focused) strong {
+  color: #303630;
+  font-size: 14px;
+  font-weight: 680;
+}
+.spatial-day-schedule .teacher-day-sheet .day-assignment p {
+  color: #697169;
+  font-size: 10px;
+  line-height: 1.35;
+}
+.spatial-day-schedule .teacher-day-sheet .day-duration,
+.spatial-day-schedule .teacher-day-sheet .day-assignment.completed:not(.focused) .day-duration { display: grid; gap: 4px; color: #626b64; font-size: 9px; }
+.spatial-day-schedule .teacher-day-sheet .day-state { display: none; grid-column: 5; }
+.spatial-day-schedule .day-drag-grip { display: none; }
+.spatial-day-schedule .teacher-day-sheet .day-row-actions { grid-column: 3 / 6; padding: 1px 0 5px; }
+.spatial-day-schedule .teacher-day-sheet .day-row-actions button {
+  min-height: 30px;
+  padding: 0 9px;
+  color: #4a5b4e;
+  background: transparent;
+  border: 1px solid rgba(62, 76, 64, .18);
+  border-radius: 4px;
+  font-size: 9px;
+}
+.spatial-day-schedule .day-row-menu {
+  position: relative;
+  z-index: 3;
+  grid-column: 6;
+  justify-self: end;
+}
+.spatial-day-schedule .day-complete-action {
+  min-width: 50px;
+  min-height: 40px;
+  padding: 0 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  color: #526756;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 9px;
+  font-weight: 720;
+}
+.spatial-day-schedule .day-complete-action:hover:not(:disabled) { background: #edf1e9; border-color: rgba(71, 91, 74, .16); }
+.spatial-day-schedule .day-complete-action:active:not(:disabled) { transform: translateY(1px); }
+.spatial-day-schedule .day-complete-action:focus-visible { outline: 2px solid #4f7055; outline-offset: 2px; }
+.spatial-day-schedule .day-complete-action:disabled { cursor: default; opacity: .45; }
+.spatial-day-schedule .day-row-menu > summary {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  color: #505a52;
+  background: transparent;
+  border-radius: 5px;
+  cursor: pointer;
+  list-style: none;
+}
+.spatial-day-schedule .day-row-menu > summary::-webkit-details-marker { display: none; }
+.spatial-day-schedule .day-row-menu > summary:hover,
+.spatial-day-schedule .day-row-menu[open] > summary { background: rgba(82, 100, 84, .075); }
+.spatial-day-schedule .day-row-menu > summary:active { transform: translateY(1px); }
+.spatial-day-schedule .day-row-menu > summary:focus-visible { outline: 2px solid #4f7055; outline-offset: 2px; }
+.spatial-day-schedule .day-row-menu > div {
+  position: absolute;
+  z-index: 8;
+  top: calc(100% + 4px);
+  right: 0;
+  width: 156px;
+  padding: 4px;
+  display: grid;
+  color: #344038;
+  background: #fffefa;
+  border: 1px solid rgba(57, 65, 55, .16);
+  border-radius: 7px;
+  box-shadow: 0 14px 34px rgba(55, 49, 40, .14);
+}
+.spatial-day-schedule .day-row-menu button {
+  min-height: 40px;
+  padding: 0 10px;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 680;
+  text-align: left;
+}
+.spatial-day-schedule .day-row-menu button:hover:not(:disabled),
+.spatial-day-schedule .day-row-menu button:focus-visible { background: #f0f2eb; outline: 0; }
+.spatial-day-schedule .day-row-menu button:active:not(:disabled) { transform: translateY(1px); }
+.spatial-day-schedule .day-row-menu button:disabled { cursor: default; opacity: .48; }
+
+.spatial-day-schedule .teacher-day-sheet .day-assignment.completed:not(.focused) {
+  min-height: 50px;
+  padding: 5px 6px 5px 0;
+  grid-template-columns: 58px 26px minmax(0, 1fr) 52px 40px;
+  gap: 7px;
+  background: rgba(226, 235, 226, .3) !important;
+}
+.spatial-day-schedule .teacher-day-sheet .day-assignment.completed:not(.focused) .day-duration { display: none; }
+.spatial-day-schedule .teacher-day-sheet .day-assignment.completed:not(.focused) .day-state { display: inline-flex; grid-column: 4; font-size: 9px; }
+.spatial-day-schedule .teacher-day-sheet .day-assignment.completed:not(.focused) .day-row-menu { grid-column: 5; }
+.spatial-day-schedule .parent-attention-collision {
+  margin: 9px 0;
+  padding: 10px 12px;
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: center;
+  gap: 2px 8px;
+  color: #755845;
+  background: #f2e8df;
+  border: 0;
+  border-left: 2px solid #a47b60;
+  border-radius: 0;
+}
+.spatial-day-schedule .parent-attention-collision > svg {
+  grid-row: 1 / 4;
+  align-self: start;
+  margin-top: 2px;
+  color: #8b654d;
+}
+.spatial-day-schedule .parent-attention-collision > span {
+  color: #85634f;
+  font-size: 8px;
+  font-weight: 780;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+}
+.spatial-day-schedule .parent-attention-collision > strong {
+  color: #55453a;
+  font-size: 10px;
+  font-weight: 760;
+  line-height: 1.35;
+}
+.spatial-day-schedule .parent-attention-collision > small {
+  color: #75665c;
+  font-size: 9px;
+  line-height: 1.35;
+}
+.spatial-day-schedule .day-assignment.attention-conflict {
+  background: rgba(164, 123, 96, .045) !important;
+  box-shadow: inset 2px 0 #a47b60;
+}
+.spatial-day-schedule .day-assignment.attention-conflict:hover,
+.spatial-day-schedule .day-assignment.attention-conflict.selected {
+  background: rgba(164, 123, 96, .075) !important;
+}
+.spatial-day-schedule .day-attention-conflict {
+  width: fit-content;
+  margin-top: 2px;
+  padding: 3px 6px;
+  color: #775843;
+  background: #f2e8df;
+  border-radius: 4px;
+  font-size: 8px;
+  font-weight: 760;
+  line-height: 1.2;
+}
+
+/* One compact composer; capability starters appear only after engagement. */
+.spatial-assistant-surface .week-capture { position: relative; }
+.spatial-assistant-surface .compact-agent-discovery {
+  min-height: 58px;
+  padding: 8px 9px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  overflow: hidden;
+  color: #30372f;
+  background: rgba(255, 254, 250, .98);
+  border: 1px solid rgba(57, 65, 55, .14);
+  border-radius: 14px;
+  box-shadow: 0 14px 36px rgba(55, 49, 40, .11);
+  backdrop-filter: blur(14px);
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(7px);
+  transition: opacity 150ms ease, transform 170ms cubic-bezier(.16, 1, .3, 1);
+}
+.spatial-assistant-surface .compact-agent-discovery > header {
+  min-height: 40px;
+  padding: 0 3px;
+  display: flex;
+  align-items: center;
+  border: 0;
+}
+.spatial-assistant-surface .compact-agent-discovery > header span {
+  color: #66766a;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.spatial-assistant-surface .compact-agent-starter-list {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+.spatial-assistant-surface .compact-agent-starter-list::-webkit-scrollbar { display: none; }
+.spatial-assistant-surface .compact-agent-starter-list > button {
+  min-width: max-content;
+  min-height: 40px;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #3f4c41;
+  background: #f4f4ee;
+  border: 1px solid rgba(57, 65, 55, .12);
+  border-radius: 999px;
+  cursor: pointer;
+  text-align: left;
+  transition: color 140ms ease, background 140ms ease, border-color 140ms ease, transform 140ms ease;
+}
+.spatial-assistant-surface .compact-agent-starter-list > button svg {
+  flex: 0 0 auto;
+  color: #58715c;
+}
+.spatial-assistant-surface .compact-agent-starter-list > button span {
+  font-size: 9px;
+  font-weight: 720;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.spatial-assistant-surface .compact-agent-starter-list > button:hover:not(:disabled) {
+  color: #2f4935;
+  background: #eceedf;
+  border-color: rgba(70, 96, 76, .24);
+}
+.spatial-assistant-surface .compact-agent-starter-list > button:active:not(:disabled) { transform: translateY(1px); }
+.spatial-assistant-surface .compact-agent-starter-list > button:disabled { cursor: not-allowed; opacity: .42; }
+.spatial-assistant-surface .compact-agent-discovery-footer {
+  min-height: 40px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  border: 0;
+}
+.spatial-assistant-surface .compact-agent-library-trigger {
+  min-height: 40px;
+  margin-left: auto;
+  padding: 0 9px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+  color: #4f6753;
+  background: transparent;
+  border: 0;
+  border-radius: 9px;
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 760;
+  white-space: nowrap;
+}
+.spatial-assistant-surface .compact-agent-library-trigger:hover:not(:disabled) { background: #f3f4ee; }
+.spatial-assistant-surface .compact-agent-library-trigger:active:not(:disabled) { transform: translateY(1px); }
+.spatial-assistant-surface .week-capture:focus-within .compact-agent-discovery {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+.spatial-assistant-surface .week-capture:has(.quiet-tools button[aria-expanded="true"]) .compact-agent-discovery {
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(7px);
+}
+.spatial-assistant-surface .week-capture:has(.quiet-capture > textarea:not(:placeholder-shown)) .compact-agent-discovery,
+.spatial-assistant-surface .week-capture:has(.quiet-agent-turn) .compact-agent-discovery {
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(7px);
+}
+.spatial-assistant-surface .quiet-capture:not(.assignment-context-mode) {
+  position: relative;
+  min-height: 64px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto;
+  align-items: center;
+  background: #fffefa;
+  border: 1px solid rgba(48, 55, 47, .18);
+  border-radius: 14px;
+  box-shadow: 0 10px 28px rgba(55, 49, 40, .075);
+  backdrop-filter: none;
+}
+.spatial-assistant-surface .quiet-capture:not(.assignment-context-mode):focus-within {
+  border-color: rgba(70, 93, 74, .38);
+  box-shadow: 0 14px 34px rgba(55, 49, 40, .09), 0 0 0 2px rgba(81, 107, 83, .05);
+  transform: none;
+}
+.spatial-assistant-surface .quiet-capture:not(.assignment-context-mode) > textarea {
+  grid-column: 1;
+  grid-row: 1;
+  width: 100%;
+  height: 62px;
+  min-height: 62px;
+  padding: 20px 12px 16px 64px;
+  resize: none;
+  color: #303630;
+  font-size: 14px;
+  line-height: 1.4;
+  field-sizing: content;
+}
+.spatial-assistant-surface .quiet-capture:not(.assignment-context-mode)::before {
+  display: none;
+}
+.spatial-assistant-surface .quiet-capture:not(.assignment-context-mode) > footer {
+  grid-column: 2;
+  grid-row: 1;
+  min-height: 62px;
+  padding: 5px 8px 5px 0;
+  gap: 3px;
+  border: 0;
+}
+.spatial-assistant-surface .quiet-capture:not(.assignment-context-mode) .quiet-tools { gap: 1px; }
+.spatial-assistant-surface .quiet-capture:not(.assignment-context-mode) .quiet-tools button:nth-child(2),
+.spatial-assistant-surface .quiet-capture:not(.assignment-context-mode) .quiet-tools button:nth-child(5) { display: none; }
+.spatial-assistant-surface .quiet-capture:not(.assignment-context-mode) .quiet-tools button {
+  width: 40px;
+  min-height: 40px;
+  color: #556057;
+  background: transparent;
+  border-radius: 8px;
+}
+.spatial-assistant-surface .quiet-capture:not(.assignment-context-mode) .quiet-tools button:hover { background: #f0f2eb; }
+.spatial-assistant-surface .quiet-capture:not(.assignment-context-mode) .quiet-tools button:nth-child(1) {
+  position: absolute;
+  z-index: 2;
+  top: 11px;
+  left: 12px;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  color: #4f6353;
+  background: #f1f3ed;
+  border: 1px solid rgba(70, 90, 73, .14);
+  border-radius: 9px;
+}
+.spatial-assistant-surface .quiet-capture:not(.assignment-context-mode) .quiet-tools button:nth-child(1):hover,
+.spatial-assistant-surface .quiet-capture:not(.assignment-context-mode) .quiet-tools button:nth-child(1)[aria-expanded="true"] {
+  color: #344b39;
+  background: #e8ede5;
+  border-color: rgba(70, 96, 76, .24);
+}
+.spatial-assistant-surface .quiet-capture:not(.assignment-context-mode) .capture-for { margin-left: 3px; }
+.spatial-assistant-surface .quiet-capture:not(.assignment-context-mode) .capture-for > span { display: none; }
+.spatial-assistant-surface .quiet-capture:not(.assignment-context-mode) .capture-for select {
+  min-width: 72px;
+  min-height: 40px;
+  padding-left: 9px;
+  background: #f6f5ef;
+  border-color: rgba(57, 65, 55, .1);
+  border-radius: 8px;
+  font-size: 9px;
+}
+.spatial-assistant-surface .quiet-capture:not(.assignment-context-mode) .quiet-save {
+  width: 40px;
+  height: 40px;
+  margin-left: 2px;
+  color: #fff;
+  background: #70846f;
+  border-radius: 10px;
+}
+.spatial-assistant-surface .quiet-capture:not(.assignment-context-mode) > footer:has(.voice-transcription-disclosure) {
+  flex-wrap: nowrap;
+}
+.spatial-assistant-surface .quiet-capture:not(.assignment-context-mode) .voice-transcription-disclosure {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+.spatial-assistant-surface .quiet-capture:not(.assignment-context-mode) .quiet-attachments { grid-column: 1 / -1; grid-row: 2; }
+.spatial-assistant-surface .quiet-capture:not(.assignment-context-mode) .quiet-link { grid-column: 1 / -1; grid-row: 3; }
+.spatial-assistant-surface .quiet-capture:not(.assignment-context-mode) > .klio-minimized,
+.spatial-assistant-surface .quiet-capture:not(.assignment-context-mode) > .quiet-agent-turn { grid-column: 1 / -1; }
+
+/* Once a parent starts writing, the dock becomes a composed conversation
+   field: draft above, tools below, with no competing starter or spell strip. */
+.spatial-assistant-surface .quiet-capture:not(.assignment-context-mode):has(> textarea:not(:placeholder-shown)) {
+  min-height: 104px;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto auto auto auto;
+  align-items: stretch;
+}
+.spatial-assistant-surface .quiet-capture:not(.assignment-context-mode):has(> textarea:not(:placeholder-shown)) > textarea {
+  grid-column: 1;
+  grid-row: 1;
+  height: auto;
+  min-height: 52px;
+  max-height: 138px;
+  padding: 15px 17px 7px;
+  overflow-y: auto;
+  line-height: 1.48;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(81, 95, 83, .34) transparent;
+}
+.spatial-assistant-surface .quiet-capture:not(.assignment-context-mode):has(> textarea:not(:placeholder-shown)) > .quiet-attachments {
+  grid-column: 1;
+  grid-row: 2;
+}
+.spatial-assistant-surface .quiet-capture:not(.assignment-context-mode):has(> textarea:not(:placeholder-shown)) > .quiet-link {
+  grid-column: 1;
+  grid-row: 3;
+}
+.spatial-assistant-surface .quiet-capture:not(.assignment-context-mode):has(> textarea:not(:placeholder-shown)) > footer {
+  grid-column: 1;
+  grid-row: 4;
+  width: 100%;
+  min-height: 50px;
+  padding: 2px 8px 8px 10px;
+  align-self: end;
+  border: 0;
+}
+.spatial-assistant-surface .quiet-capture:not(.assignment-context-mode):has(> textarea:not(:placeholder-shown)) .quiet-tools button:nth-child(1) {
+  position: static;
+  width: 40px;
+  height: 40px;
+}
+.spatial-assistant-surface .quiet-capture:not(.assignment-context-mode):has(> textarea:not(:placeholder-shown)) .quiet-tools {
+  width: auto;
+  flex: 1 1 auto;
+}
+.spatial-assistant-surface .quiet-capture:not(.assignment-context-mode):has(> textarea:not(:placeholder-shown)) .quiet-tools button:nth-child(3) { margin-left: auto; }
+.spatial-assistant-surface .quiet-capture:not(.assignment-context-mode):has(> textarea:not(:placeholder-shown)) .capture-for { margin-left: 3px; }
+.spatial-assistant-surface .quiet-capture:not(.assignment-context-mode) > .klio-spelling-hint { display: none; }
+.spatial-assistant-surface .quiet-capture:not(.assignment-context-mode):has(> textarea:not(:placeholder-shown)) > .klio-minimized,
+.spatial-assistant-surface .quiet-capture:not(.assignment-context-mode):has(> textarea:not(:placeholder-shown)) > .quiet-agent-turn {
+  grid-column: 1;
+  grid-row: 5;
+}
+
+@media (max-width: 760px) {
+  .spatial-day-toolbar { min-height: 51px; padding-bottom: 8px; }
+  .spatial-day-toolbar .teacher-canvas-nav { grid-template-columns: 40px minmax(0, 1fr) 40px; gap: 3px; }
+  .spatial-day-toolbar .teacher-canvas-nav h1 { min-width: 0; font-size: 14px; }
+  .spatial-day-toolbar .teacher-canvas-nav button { width: 40px; height: 40px; }
+  .spatial-day-toolbar .teacher-toolbar-actions > a svg { display: none; }
+  .spatial-day-toolbar .teacher-toolbar-actions > a { min-height: 40px; padding-inline: 6px; }
+  .spatial-day-toolbar .teacher-toolbar-actions label { gap: 4px; }
+  .spatial-day-toolbar .teacher-toolbar-actions select { min-width: 65px; width: 65px; }
+  .spatial-day-schedule .teacher-day-sheet > header { min-height: 48px; padding-block: 7px; }
+  .spatial-day-schedule .teacher-day-sheet > header span { font-size: 17px; }
+  .spatial-day-schedule .teacher-day-sheet .day-assignment,
+  .spatial-day-schedule .teacher-day-sheet .day-assignment.completed:not(.focused) {
+    min-height: 66px;
+    padding-block: 6px;
+    grid-template-columns: 50px 25px minmax(0, 1fr) 42px 40px 40px;
+    gap: 4px;
+  }
+  .spatial-day-schedule .teacher-day-sheet .day-assignment.selected::before { left: 50px; }
+  .spatial-day-schedule .teacher-day-sheet .day-assignment p,
+  .spatial-day-schedule .teacher-day-sheet .day-assignment small { display: none; }
+  .spatial-day-schedule .teacher-day-sheet .day-assignment strong { font-size: 12px; }
+  .spatial-day-schedule .teacher-day-sheet .day-duration { font-size: 8px; }
+  .spatial-day-schedule .day-complete-action { min-width: 40px; width: 40px; padding: 0; }
+  .spatial-day-schedule .day-complete-action span { display: none; }
+  .spatial-day-schedule .day-row-menu { grid-column: 6; grid-row: 1; }
+  .spatial-day-schedule .teacher-day-sheet .day-assignment.completed:not(.focused) { grid-template-columns: 45px 24px minmax(0, 1fr) 44px 40px; }
+  .spatial-day-schedule .teacher-day-sheet .day-assignment.completed:not(.focused) .day-row-menu { grid-column: 5; }
+  .spatial-day-schedule .teacher-day-sheet .day-row-actions { grid-column: 3 / 5; }
+  .spatial-assistant-surface .quiet-capture:not(.assignment-context-mode) {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: 58px 52px auto auto auto;
+  }
+  .spatial-assistant-surface .quiet-capture:not(.assignment-context-mode) > textarea {
+    grid-column: 1;
+    grid-row: 1;
+    height: 58px;
+    min-height: 58px;
+    padding-left: 60px;
+    font-size: 13px;
+  }
+  .spatial-assistant-surface .quiet-capture:not(.assignment-context-mode):has(> textarea:not(:placeholder-shown)) > textarea { padding: 13px 14px 6px; }
+  .spatial-assistant-surface .quiet-capture:not(.assignment-context-mode)::before { left: 17px; width: 15px; height: 15px; }
+  .spatial-assistant-surface .quiet-capture:not(.assignment-context-mode) > footer {
+    grid-column: 1;
+    grid-row: 2;
+    height: 62px;
+    min-height: 62px;
+    padding: 5px 7px 5px 8px;
+    display: flex;
+    align-items: center;
+    flex-wrap: nowrap;
+    border-top: 1px solid rgba(48, 55, 47, .1);
+  }
+  .spatial-assistant-surface .quiet-capture:not(.assignment-context-mode):has(> textarea:not(:placeholder-shown)) > footer {
+    height: auto;
+    min-height: 50px;
+    padding: 2px 7px 7px 8px;
+  }
+  .spatial-assistant-surface .quiet-capture:not(.assignment-context-mode) .quiet-tools {
+    width: auto;
+    display: flex;
+    grid-template-columns: none;
+    border-bottom: 0;
+  }
+  .spatial-assistant-surface .quiet-capture:not(.assignment-context-mode) .quiet-tools button:nth-child(3) { display: flex; }
+  .spatial-assistant-surface .quiet-capture:not(.assignment-context-mode) .composer-interpretation { display: none; }
+  .spatial-assistant-surface .quiet-capture:not(.assignment-context-mode) .capture-for {
+    display: flex;
+    min-width: 68px;
+  }
+  .spatial-assistant-surface .compact-agent-discovery {
+    max-height: min(340px, calc(100dvh - 260px));
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 5px 7px;
+    overflow-y: auto;
+  }
+  .spatial-assistant-surface .compact-agent-discovery > header {
+    grid-column: 1 / -1;
+    min-height: 20px;
+    padding-inline: 4px;
+  }
+}
+
+@media (max-width: 420px) {
+  .spatial-assistant-surface .compact-agent-discovery > header { min-height: 28px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spatial-assistant-surface .compact-agent-discovery { transition: none; }
+}
+
+/* The wider calendar surfaces use the same quiet paper ledger as the day view. */
+.spatial-week-schedule .teacher-week-item,
+.spatial-week-schedule .teacher-week-item.subject-blue,
+.spatial-week-schedule .teacher-week-item.subject-green,
+.spatial-week-schedule .teacher-week-item.subject-gold,
+.spatial-week-schedule .teacher-week-item.subject-lilac,
+.spatial-week-schedule .teacher-week-item.subject-rose,
+.spatial-week-schedule .teacher-week-item.supplemental {
+  min-height: 52px;
+  padding: 8px 4px 8px 8px;
+  color: #303630;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid rgba(58, 66, 55, .1);
+  border-radius: 0;
+  box-shadow: none;
+  transition: background-color 140ms ease;
+}
+
+.spatial-week-schedule .teacher-week-item:hover,
+.spatial-week-schedule .teacher-week-item:focus-visible {
+  background: rgba(83, 101, 86, .055);
+  box-shadow: none;
+  transform: none;
+}
+
+.spatial-week-schedule .teacher-week-item:active { transform: translateY(1px); }
+
+.spatial-week-schedule .teacher-week-item > span {
+  color: #536459;
+  font-size: 9px;
+  font-weight: 780;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.spatial-week-schedule .teacher-week-item > strong {
+  color: #303630;
+  font-size: 11px;
+  font-weight: 680;
+  display: -webkit-box;
+  overflow: hidden;
+  line-height: 1.3;
+  text-overflow: clip;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.spatial-week-schedule .teacher-week-item > small { color: #697169; }
+
+.spatial-week-schedule .teacher-week-item.supplemental::before {
+  width: 2px;
+  background: #8a805d;
+  border-radius: 0;
+}
+
+.spatial-week-schedule .teacher-week-sheet > section.selected {
+  background: rgba(83, 101, 86, .035);
+}
+
+.teacher-week-completed {
+  margin-top: 2px;
+  border-top: 1px solid rgba(58, 66, 55, .1);
+}
+.teacher-week-completed > summary {
+  min-height: 40px;
+  padding: 0 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #68756c;
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 760;
+  list-style: none;
+}
+.teacher-week-completed > summary::-webkit-details-marker { display: none; }
+.teacher-week-completed > summary::after {
+  margin-left: auto;
+  content: "+";
+  color: #7a847c;
+  font-size: 13px;
+  font-weight: 500;
+}
+.teacher-week-completed[open] > summary::after { content: "−"; }
+.teacher-week-completed > summary:hover { color: #405446; }
+.teacher-week-completed > summary:focus-visible { outline: 2px solid #4f7055; outline-offset: 2px; }
+.teacher-week-completed > div { display: grid; gap: 5px; padding-bottom: 7px; }
+
+.spatial-month-schedule .month-day-summary button {
+  padding: 5px 4px;
+  background: transparent;
+  border: 0;
+  border-left: 2px solid rgba(82, 103, 86, .52);
+  border-radius: 0;
+}
+
+.spatial-month-schedule .month-day-summary button:hover,
+.spatial-month-schedule .month-day-summary button:focus-visible {
+  background: rgba(83, 101, 86, .05);
+}
+
+.spatial-month-schedule .month-day-summary button i { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .spatial-week-schedule .teacher-week-item { transition: none; }
 }

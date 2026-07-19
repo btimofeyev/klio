@@ -29,6 +29,7 @@ export async function POST(request: Request) {
     const rate = checkRateLimit(`evidence:${parent.id}`, 30, 60_000);
     if (!rate.allowed) return NextResponse.json({ error: "Too many captures. Try again shortly." }, { status: 429, headers: { "retry-after": String(rate.retryAfter) } });
     const form = await request.formData();
+    const conversationAttachment = form.get("conversationAttachment") === "true";
     const parsed = inputSchema.safeParse({
       familyId: form.get("familyId"), studentId: form.get("studentId"), assignmentId: typeof form.get("assignmentId") === "string" && form.get("assignmentId") ? form.get("assignmentId") : undefined,
       text: typeof form.get("text") === "string" ? form.get("text") : undefined,
@@ -101,6 +102,11 @@ export async function POST(request: Request) {
       action: "evidence.captured", entityType: "evidence_item", entityId: ids[0],
       metadata: { item_count: ids.length, has_file: Boolean(files.length), has_text: Boolean(text), selected_student_id: parsed.data.studentId, resolved_student_id: effectiveStudentId, assignment_id: linkedAssignment.data?.id ?? null },
     });
+    if (conversationAttachment) {
+      const ready = await supabase.from("evidence_items").update({ capture_route: "learning", processing_status: "ready" }).eq("family_id", parsed.data.familyId).in("id", ids);
+      if (ready.error) throw ready.error;
+      return NextResponse.json({ id: ids[0], ids, status: "ready", studentId: effectiveStudentId, assignmentId: linkedAssignment.data?.id ?? null }, { status: 201 });
+    }
     if (linkedAssignment.data) {
       const admin = createAdminClient();
       const slug = slugify(linkedAssignment.data.subject);

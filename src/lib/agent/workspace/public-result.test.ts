@@ -20,6 +20,17 @@ describe("workspace public results", () => {
     });
   });
 
+  it("keeps complete structured parent answers beyond the old one-thousand-character limit", () => {
+    const message = `## What the records show\n\n${"Grounded learning context. ".repeat(90)}`;
+    const result = buildHostPublicResult({
+      terminal: { kind: "completed", message, understood: [], used: [], changed: [], remaining: [] },
+      toolResults: [],
+      waitingForClarification: false,
+    });
+    expect(message.length).toBeGreaterThan(1_000);
+    expect(result.message).toBe(message.trim());
+  });
+
   it("rejects non-internal destinations", () => {
     const value = normalizePublicResult({ schemaVersion: 1, kind: "completed", message: "Done", understood: [], used: [], changed: [], remaining: [], actions: [{ verb: "open", label: "Bad", targetType: "artifact", targetId: id, href: "https://example.com" }] });
     expect(value.actions).toEqual([]);

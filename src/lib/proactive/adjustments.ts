@@ -1,13 +1,16 @@
 import "server-only";
 
 import { createAdminClient } from "@/lib/supabase/admin";
-import { buildMoveForwardProposalForAssignments } from "@/lib/assignments/planning";
+import { buildCapacityRebalanceProposal, buildMoveForwardProposalForAssignments, type AdjustmentActionDraft } from "@/lib/assignments/planning";
 import { learnerWeekdays, scheduleDates } from "@/lib/assignments/dates";
 import { dateInTimezone } from "@/lib/schedule/dates";
+import { loadAvailabilityByDate } from "@/lib/schedule/availability-data";
 import { policyDecision, policyForPreset, sanitizePolicy, type AutonomyPreset } from "@/lib/autonomy/policy";
 import { writeAuditEvent } from "@/lib/audit/write-audit-event";
 import { enqueueProactiveEvaluation } from "./queue";
 import type { Json } from "@/lib/supabase/database.types";
+import { arrangeFamilyDay } from "@/lib/schedule/arrange-family-day";
+import { findParentAttentionConflicts, resolveAttentionRequirement } from "@/lib/schedule/parent-attention";
 
 export async function recordExplicitCompletion(input: { familyId: string; assignmentId: string; actorId: string; idempotencyKey: string }) {
   const admin = createAdminClient();
@@ -46,49 +49,127 @@ export async function organizeDaySchedule(input: {
     undoAvailable: existing.data.status === "applied" && existing.data.undo_status === "available", duplicate: true,
   };
 
-  const [family, student, assignments] = await Promise.all([
-    admin.from("families").select("agent_context_version").eq("id", input.familyId).single(),
-    admin.from("students").select("id,display_name,daily_capacity_minutes").eq("family_id", input.familyId).eq("id", input.studentId).single(),
-    admin.from("assignments").select("id,title,subject,status,scheduled_date,scheduled_time,estimated_minutes,sequence_number,version,created_at")
-      .eq("family_id", input.familyId).eq("student_id", input.studentId).eq("scheduled_date", input.scheduledDate).neq("status", "skipped"),
+  const [family, student] = await Promise.all([
+    admin.from("families").select("agent_context_version,available_days").eq("id", input.familyId).single(),
+    admin.from("students").select("id,display_name,daily_capacity_minutes,schedule_preferences").eq("family_id", input.familyId).eq("id", input.studentId).single(),
   ]);
-  const error = family.error ?? student.error ?? assignments.error;
+  const error = family.error ?? student.error;
   if (error) throw error;
-  if (!family.data || !student.data || !assignments.data) throw new Error("DAY_SCHEDULE_CONTEXT_NOT_FOUND");
+  if (!family.data || !student.data) throw new Error("DAY_SCHEDULE_CONTEXT_NOT_FOUND");
   if (family.data.agent_context_version !== input.snapshotVersion) throw new Error("SNAPSHOT_STALE");
 
-  const completed = assignments.data.filter((item) => item.status === "completed");
-  const remaining = assignments.data.filter((item) => item.status !== "completed").sort(compareScheduledWork);
-  if (remaining.length < 2) return { outcome: "no_op", summary: remaining.length ? "The remaining lesson already has a clear place in the day." : "There is no remaining work to organize today.", changedCount: 0, undoAvailable: false };
+  const learningDays = scheduleDates(input.scheduledDate, learnerWeekdays(student.data.schedule_preferences, family.data.available_days), 30);
+  const assignments = await admin.from("assignments")
+    .select("id,title,subject,status,source_kind,curriculum_unit_id,scheduled_date,scheduled_time,estimated_minutes,sequence_number,version,created_at,attention_mode,parent_attention_minutes")
+    .eq("family_id", input.familyId).eq("student_id", input.studentId)
+    .gte("scheduled_date", input.scheduledDate).lte("scheduled_date", learningDays.at(-1)!)
+    .neq("status", "skipped").order("scheduled_date").order("scheduled_time", { nullsFirst: false }).limit(500);
+  if (assignments.error) throw assignments.error;
+  const availabilityByDate = await loadAvailabilityByDate({ supabase: admin, familyId: input.familyId, studentId: input.studentId, dailyCapacityMinutes: student.data.daily_capacity_minutes, schedulePreferences: student.data.schedule_preferences, familyLearningDays: family.data.available_days, dates: learningDays });
+  const dayAssignments = assignments.data.filter((item) => item.scheduled_date === input.scheduledDate);
+  const dayMinutes = dayAssignments.reduce((sum, item) => sum + (item.estimated_minutes ?? 0), 0);
+  const effectiveCapacity = availabilityByDate[input.scheduledDate]?.availableMinutes ?? student.data.daily_capacity_minutes;
 
-  const explicitStart = input.startTime ? parseScheduleMinutes(input.startTime) : null;
-  const earliestRemaining = remaining.map((item) => parseScheduleMinutes(item.scheduled_time)).filter((value): value is number => value !== null).sort((a, b) => a - b)[0];
-  const completedThrough = completed.reduce((latest, item) => {
-    const start = parseScheduleMinutes(item.scheduled_time);
-    return start === null ? latest : Math.max(latest, start + (item.estimated_minutes ?? 30) + 10);
-  }, 0);
-  let cursor = Math.max(explicitStart ?? earliestRemaining ?? 8 * 60 + 30, completedThrough);
-  const scheduleStart = cursor;
+  if (dayMinutes > effectiveCapacity) {
+    let balanced = buildCapacityRebalanceProposal({ targetDate: input.scheduledDate, assignments: assignments.data.map(toPlanning), learningDays, dailyCapacityMinutes: student.data.daily_capacity_minutes, availabilityByDate });
+    for (let attempt = 0; balanced?.actions.length && attempt < learningDays.length; attempt += 1) {
+      const conflictDates = await parentConflictDatesAfterActions(admin, input.familyId, balanced.actions);
+      if (!conflictDates.length) break;
+      for (const date of conflictDates) if (availabilityByDate[date]) availabilityByDate[date] = { ...availabilityByDate[date], availableMinutes: 0 };
+      balanced = buildCapacityRebalanceProposal({ targetDate: input.scheduledDate, assignments: assignments.data.map(toPlanning), learningDays, dailyCapacityMinutes: student.data.daily_capacity_minutes, availabilityByDate });
+    }
+    if (!balanced?.actions.length) throw new Error("NO_CAPACITY_TO_REBALANCE_DAY");
+    const dayName = displayWeekday(input.scheduledDate);
+    const summary = `Moved ${balanced.movedFromTarget} ${dayName} lesson${balanced.movedFromTarget === 1 ? "" : "s"}${balanced.shiftedForSequence ? ` and shifted ${balanced.shiftedForSequence} later course lesson${balanced.shiftedForSequence === 1 ? "" : "s"} to preserve order` : ""}. ${student.data.display_name}’s ${dayName} changed from ${balanced.beforeMinutes} to ${balanced.afterMinutes} minutes, within the ${effectiveCapacity}-minute available limit.`;
+    const decision = {
+      action: "maintain_curriculum_sequence", level: "automatic_with_undo", appliesAutomatically: true,
+      undoRequired: true, parentConfirmationRequired: false, interaction: "none", denied: false,
+      handler: "rebalance_day_capacity", parentExplicitInstruction: true,
+    };
+    const proposal = await admin.from("adjustment_proposals").insert({
+      family_id: input.familyId, student_id: input.studentId, agent_turn_id: input.agentTurnId,
+      week_start: input.scheduledDate,
+      reason: `${dayName} had ${balanced.beforeMinutes} minutes scheduled against ${student.data.display_name}’s ${effectiveCapacity}-minute available teaching time.`,
+      summary, snapshot_version: input.snapshotVersion, idempotency_key: input.idempotencyKey,
+      trigger_event: { eventKind: "parent_schedule_rebalance", scheduledDate: input.scheduledDate, beforeMinutes: balanced.beforeMinutes, afterMinutes: balanced.afterMinutes },
+      policy_decision: decision,
+    }).select("id,status,summary").single();
+    if (proposal.error) throw proposal.error;
+    const inserted = await admin.from("adjustment_actions").insert(balanced.actions.map((action, position) => ({
+      family_id: input.familyId, proposal_id: proposal.data.id, assignment_id: action.assignmentId,
+      action_type: action.actionType, before_state: action.beforeState as Json, after_state: action.afterState as Json, position,
+    })));
+    if (inserted.error) throw inserted.error;
+    const applied = await admin.rpc("apply_klio_adjustment", { p_proposal_id: proposal.data.id, p_actor_id: input.actorId });
+    if (applied.error) throw applied.error;
+    if (rpcStatus(applied.data) !== "applied") throw new Error("ADJUSTMENT_SNAPSHOT_STALE");
+    const movedIds = balanced.actions.filter((action) => action.beforeState.scheduledDate === input.scheduledDate).flatMap((action) => action.assignmentId ? [action.assignmentId] : []);
+    const insight = await admin.from("klio_insights").upsert({
+      family_id: input.familyId, student_id: input.studentId, kind: "adjusted",
+      title: `I rebalanced ${dayName}`, summary,
+      reason: `${student.data.display_name}’s full learner-day was above capacity; Klio recalculated the authoritative schedule before applying the change.`,
+      priority: 92, evidence_refs: movedIds.map((id) => ({ type: "assignment", id })),
+      action_ref: { type: "schedule_adjustment", proposalId: proposal.data.id, undoAvailable: true },
+      dedupe_key: `day_capacity_rebalanced:${proposal.data.id}`,
+    }, { onConflict: "family_id,dedupe_key" });
+    if (insight.error) throw insight.error;
+    await enqueueProactiveEvaluation({
+      familyId: input.familyId, studentId: input.studentId, requestedBy: input.actorId,
+      eventKind: "schedule_adjusted", entityType: "adjustment_proposal", entityId: proposal.data.id,
+      idempotencyKey: `rebalanced-day:${input.idempotencyKey}`,
+    });
+    return {
+      outcome: "completed", proposalId: proposal.data.id, summary,
+      changedCount: balanced.actions.length, movedCount: balanced.movedFromTarget,
+      beforeMinutes: balanced.beforeMinutes, afterMinutes: balanced.afterMinutes,
+      capacityMinutes: effectiveCapacity, capacityWarning: false, undoAvailable: true,
+    };
+  }
+
+  const remaining = dayAssignments.filter((item) => item.status !== "completed").sort(compareScheduledWork);
+  if (!remaining.length) return { outcome: "no_op", summary: "There is no remaining work to organize today.", changedCount: 0, undoAvailable: false };
+  const [familyDay, attentionUnits, dayStudents] = await Promise.all([
+    admin.from("assignments").select("id,student_id,curriculum_unit_id,title,status,scheduled_time,estimated_minutes,sequence_number,version,attention_mode,parent_attention_minutes").eq("family_id", input.familyId).eq("scheduled_date", input.scheduledDate).neq("status", "skipped"),
+    admin.from("curriculum_units").select("id,attention_mode,parent_attention_minutes").eq("family_id", input.familyId),
+    admin.from("students").select("id,daily_capacity_minutes,schedule_preferences").eq("family_id", input.familyId).eq("active", true),
+  ]);
+  if (familyDay.error ?? attentionUnits.error ?? dayStudents.error) throw familyDay.error ?? attentionUnits.error ?? dayStudents.error;
+  const unitById = new Map(attentionUnits.data.map((unit) => [unit.id, unit]));
+  const studentsById = new Map(dayStudents.data.map((item) => [item.id, item]));
+  const involvedStudentIds = [...new Set(familyDay.data.map((item) => item.student_id))];
+  const familyAvailability = Object.fromEntries(await Promise.all(involvedStudentIds.map(async (studentId) => {
+    const learner = studentsById.get(studentId);
+    if (!learner) return [studentId, { availableMinutes: 0, allDayBlocked: true }] as const;
+    const availability = await loadAvailabilityByDate({ supabase: admin, familyId: input.familyId, studentId, dailyCapacityMinutes: learner.daily_capacity_minutes, schedulePreferences: learner.schedule_preferences, familyLearningDays: family.data.available_days, dates: [input.scheduledDate] });
+    return [studentId, availability[input.scheduledDate]] as const;
+  })));
+  const scheduleInput = familyDay.data.flatMap((item) => {
+    const belongsToTarget = item.student_id === input.studentId;
+    const movable = belongsToTarget && item.status !== "completed";
+    if (!movable && !item.scheduled_time) return [];
+    const unit = item.curriculum_unit_id ? unitById.get(item.curriculum_unit_id) : null;
+    return [{ id: item.id, studentId: item.student_id, curriculumUnitId: item.curriculum_unit_id, sequenceNumber: item.sequence_number, scheduledTime: item.scheduled_time, fixed: !movable, preserveExistingTime: Boolean(item.scheduled_time), requirement: resolveAttentionRequirement({ assignmentMode: item.attention_mode, assignmentParentMinutes: item.parent_attention_minutes, curriculumMode: unit?.attention_mode, curriculumParentMinutes: unit?.parent_attention_minutes, lessonMinutes: item.estimated_minutes }) }];
+  });
+  const arranged = arrangeFamilyDay({ date: input.scheduledDate, assignments: scheduleInput, availability: familyAvailability, dayStart: input.startTime ?? earliestScheduledTime(remaining) ?? "08:30" });
+  if (!arranged.ok) throw new Error(arranged.reason === "insufficient_parent_time" || arranged.reason === "fixed_time_collision" ? "NO_PARENT_TIME_TO_ORGANIZE_DAY" : "NO_AVAILABLE_TIME_TO_ORGANIZE_DAY");
+  const placements = new Map(arranged.placements.map((placement) => [placement.assignmentId, placement]));
   const overlapCount = countScheduleOverlaps(remaining);
   const actions = remaining.flatMap((item) => {
-    const nextTime = formatScheduleTime(cursor);
-    cursor += (item.estimated_minutes ?? 30) + 10;
+    const placement = placements.get(item.id);
+    if (!placement) return [];
     const currentTime = normalizeScheduleTime(item.scheduled_time);
-    if (currentTime === nextTime) return [];
-    return [{
-      assignmentId: item.id,
-      beforeState: { scheduledDate: input.scheduledDate, scheduledTime: currentTime, version: item.version },
-      afterState: { scheduledDate: input.scheduledDate, scheduledTime: nextTime, version: item.version + 1 },
-      title: item.title,
-    }];
+    const placementTime = normalizeScheduleTime(placement.scheduledTime)!;
+    if (currentTime === placementTime) return [];
+    return [{ assignmentId: item.id, beforeState: { scheduledDate: input.scheduledDate, scheduledTime: currentTime, version: item.version }, afterState: { scheduledDate: input.scheduledDate, scheduledTime: placementTime, version: item.version + 1 }, title: item.title }];
   });
   if (!actions.length) return { outcome: "no_op", summary: `${student.data.display_name}’s remaining work is already in a clear, non-overlapping order.`, changedCount: 0, undoAvailable: false };
 
-  const firstTime = formatScheduleTime(scheduleStart);
-  const endTime = formatScheduleTime(cursor - 10);
-  const capacityMinutes = assignments.data.reduce((sum, item) => sum + (item.estimated_minutes ?? 0), 0);
-  const capacityWarning = capacityMinutes > student.data.daily_capacity_minutes;
-  const summary = `Organized ${student.data.display_name}’s ${remaining.length} remaining lesson${remaining.length === 1 ? "" : "s"} from ${displayScheduleTime(firstTime)} to ${displayScheduleTime(endTime)}${overlapCount ? ` and removed ${overlapCount} overlapping start${overlapCount === 1 ? "" : "s"}` : ""}.`;
+  const targetPlacements = arranged.placements.filter((placement) => remaining.some((item) => item.id === placement.assignmentId));
+  const firstTime = formatScheduleTime(Math.min(...targetPlacements.map((placement) => placement.start)));
+  const endTime = formatScheduleTime(Math.max(...targetPlacements.map((placement) => placement.end)));
+  const capacityMinutes = dayAssignments.reduce((sum, item) => sum + (item.estimated_minutes ?? 0), 0);
+  const capacityWarning = capacityMinutes > effectiveCapacity;
+  const summary = `Organized ${student.data.display_name}’s ${remaining.length} remaining lesson${remaining.length === 1 ? "" : "s"} from ${displayScheduleTime(firstTime)} to ${displayScheduleTime(endTime)} without overlapping another learner’s parent-led time${overlapCount ? `, and removed ${overlapCount} overlapping start${overlapCount === 1 ? "" : "s"}` : ""}.`;
   const decision = {
     action: "maintain_curriculum_sequence",
     level: "automatic_with_undo",
@@ -185,12 +266,14 @@ export async function moveUnfinishedWork(input: { familyId: string; studentId: s
   const range = await admin.from("assignments").select("id,title,subject,scheduled_date,estimated_minutes,status,curriculum_unit_id,sequence_number")
     .eq("family_id", input.familyId).eq("student_id", input.studentId).gte("scheduled_date", sourceDate).lte("scheduled_date", days.at(-1)!);
   if (range.error) throw range.error;
-  const actions = buildMoveForwardProposalForAssignments({
-    assignmentIds: uniqueIds,
-    assignments: range.data.map(toPlanning),
-    learningDays: days,
-    dailyCapacityMinutes: student.data.daily_capacity_minutes,
-  });
+  const availabilityByDate = await loadAvailabilityByDate({ supabase: admin, familyId: input.familyId, studentId: input.studentId, dailyCapacityMinutes: student.data.daily_capacity_minutes, schedulePreferences: student.data.schedule_preferences, familyLearningDays: family.data.available_days, dates: days });
+  let actions = buildMoveForwardProposalForAssignments({ assignmentIds: uniqueIds, assignments: range.data.map(toPlanning), learningDays: days, dailyCapacityMinutes: student.data.daily_capacity_minutes, availabilityByDate });
+  for (let attempt = 0; actions.length && attempt < days.length; attempt += 1) {
+    const conflictDates = await parentConflictDatesAfterActions(admin, input.familyId, actions);
+    if (!conflictDates.length) break;
+    for (const date of conflictDates) if (availabilityByDate[date]) availabilityByDate[date] = { ...availabilityByDate[date], availableMinutes: 0 };
+    actions = buildMoveForwardProposalForAssignments({ assignmentIds: uniqueIds, assignments: range.data.map(toPlanning), learningDays: days, dailyCapacityMinutes: student.data.daily_capacity_minutes, availabilityByDate });
+  }
   if (!actions.length || uniqueIds.some((id) => !actions.some((action) => action.assignmentId === id))) throw new Error("NO_CAPACITY_FOR_UNFINISHED_WORK");
   const laterCount = actions.filter((item) => item.assignmentId && !uniqueIds.includes(item.assignmentId)).length;
   const first = sources.data.find((item) => item.id === uniqueIds[0])!;
@@ -233,10 +316,45 @@ export async function moveUnfinishedWork(input: { familyId: string; studentId: s
   return { proposal: { ...proposal.data, status: applied ? "applied" : "proposed", undo_status: applied && decision.undoRequired ? "available" : "not_available" }, insight: insight.data, duplicate: false, applied };
 }
 
-function toPlanning(item: { id: string; title: string; subject: string; scheduled_date: string | null; estimated_minutes: number | null; status: string; curriculum_unit_id: string | null; sequence_number: number | null }) {
-  return { id: item.id, title: item.title, subject: item.subject, scheduledDate: item.scheduled_date, estimatedMinutes: item.estimated_minutes, status: item.status as "planned" | "doing" | "submitted" | "completed" | "skipped" | "needs_review", curriculumUnitId: item.curriculum_unit_id, sequenceNumber: item.sequence_number };
+function toPlanning(item: { id: string; title: string; subject: string; scheduled_date: string | null; estimated_minutes: number | null; status: string; curriculum_unit_id?: string | null; sequence_number?: number | null; source_kind?: string | null; scheduled_time?: string | null }) {
+  return { id: item.id, title: item.title, subject: item.subject, scheduledDate: item.scheduled_date, estimatedMinutes: item.estimated_minutes, status: item.status as "planned" | "doing" | "submitted" | "completed" | "skipped" | "needs_review", curriculumUnitId: item.curriculum_unit_id, sequenceNumber: item.sequence_number, sourceKind: item.source_kind, scheduledTime: item.scheduled_time };
+}
+
+async function parentConflictDatesAfterActions(admin: ReturnType<typeof createAdminClient>, familyId: string, actions: AdjustmentActionDraft[]) {
+  const movedIds = actions.flatMap((action) => action.assignmentId ? [action.assignmentId] : []);
+  const afterDates = [...new Set(actions.flatMap((action) => typeof action.afterState.scheduledDate === "string" ? [action.afterState.scheduledDate] : []))];
+  if (!movedIds.length || !afterDates.length) return [];
+  const [scheduled, moved, units] = await Promise.all([
+    admin.from("assignments").select("id,student_id,curriculum_unit_id,scheduled_date,scheduled_time,estimated_minutes,attention_mode,parent_attention_minutes,status").eq("family_id", familyId).in("scheduled_date", afterDates).neq("status", "skipped"),
+    admin.from("assignments").select("id,student_id,curriculum_unit_id,scheduled_date,scheduled_time,estimated_minutes,attention_mode,parent_attention_minutes,status").eq("family_id", familyId).in("id", movedIds),
+    admin.from("curriculum_units").select("id,attention_mode,parent_attention_minutes").eq("family_id", familyId),
+  ]);
+  if (scheduled.error ?? moved.error ?? units.error) throw scheduled.error ?? moved.error ?? units.error;
+  const byId = new Map([...scheduled.data, ...moved.data].map((item) => [item.id, item]));
+  const changes = new Map(actions.flatMap((action) => action.assignmentId ? [[action.assignmentId, action.afterState]] : []));
+  const unitById = new Map(units.data.map((unit) => [unit.id, unit]));
+  const simulated = [...byId.values()].map((item) => {
+    const change = changes.get(item.id);
+    return {
+      ...item,
+      scheduled_date: typeof change?.scheduledDate === "string" ? change.scheduledDate : item.scheduled_date,
+      scheduled_time: typeof change?.scheduledTime === "string" ? change.scheduledTime : item.scheduled_time,
+    };
+  });
+  return afterDates.filter((date) => {
+    const day = simulated.filter((item) => item.scheduled_date === date);
+    const conflicts = findParentAttentionConflicts(day.map((item) => {
+      const unit = item.curriculum_unit_id ? unitById.get(item.curriculum_unit_id) : null;
+      return { id: item.id, studentId: item.student_id, scheduledStart: item.scheduled_time, requirement: resolveAttentionRequirement({ assignmentMode: item.attention_mode, assignmentParentMinutes: item.parent_attention_minutes, curriculumMode: unit?.attention_mode, curriculumParentMinutes: unit?.parent_attention_minutes, lessonMinutes: item.estimated_minutes }) };
+    }));
+    return conflicts.some((conflict) => movedIds.includes(conflict.firstId) || movedIds.includes(conflict.secondId));
+  });
 }
 function rpcStatus(value: unknown) { return value && typeof value === "object" && !Array.isArray(value) && typeof (value as Record<string, unknown>).status === "string" ? (value as Record<string, unknown>).status : null; }
+
+function displayWeekday(date: string) {
+  return new Intl.DateTimeFormat("en-US", { weekday: "long", timeZone: "UTC" }).format(new Date(`${date}T12:00:00Z`));
+}
 
 function compareScheduledWork(a: { scheduled_time: string | null; sequence_number: number | null; created_at: string }, b: { scheduled_time: string | null; sequence_number: number | null; created_at: string }) {
   const aTime = parseScheduleMinutes(a.scheduled_time) ?? Number.MAX_SAFE_INTEGER;
@@ -256,6 +374,10 @@ function countScheduleOverlaps(items: Array<{ scheduled_time: string | null; est
     occupiedThrough = Math.max(occupiedThrough, item.end);
   }
   return overlaps;
+}
+
+function earliestScheduledTime(items: Array<{ scheduled_time: string | null }>) {
+  return items.map((item) => normalizeScheduleTime(item.scheduled_time)).filter((value): value is string => Boolean(value)).sort()[0] ?? null;
 }
 
 function parseScheduleMinutes(value: string | null | undefined) {

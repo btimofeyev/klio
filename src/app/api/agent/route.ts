@@ -18,7 +18,7 @@ export const maxDuration = 300;
 const schema = z.object({
   familyId: postgresUuidSchema, studentId: postgresUuidSchema.nullable().optional(), evidenceIds: z.array(postgresUuidSchema).max(20).default([]),
   intent: z.enum(["general", "organize", "understand", "update_records", "next_step", "weekly_plan", "lesson", "summary", "practice", "portfolio"]),
-  request: z.string().trim().min(3).max(4000), requestId: z.uuid(), contextDate: z.iso.date().optional(), assignmentId: postgresUuidSchema.optional(), conversationId: postgresUuidSchema.optional(),
+  request: z.string().trim().min(1).max(4000), requestId: z.uuid(), contextDate: z.iso.date().optional(), assignmentId: postgresUuidSchema.optional(), conversationId: postgresUuidSchema.optional(),
 });
 
 export async function POST(request: Request) {
@@ -82,6 +82,7 @@ function intentGoal(intent: z.infer<typeof schema>["intent"]): WorkspaceGoal {
 }
 
 function requestPresentation(intent: z.infer<typeof schema>["intent"], request: string, assignment: { title: string; subject: string } | null | undefined, interactionMode: "answer" | "act") {
+  if (intent === "practice") return { taskName: "Creating practice", expectedOutput: "Practice ready in the learner’s workspace" };
   if (assignment) return { taskName: `Answering how to teach ${assignment.title}`, subject: assignment.subject, expectedOutput: "A concrete teaching approach grounded in this lesson" };
   if (interactionMode === "answer") return { taskName: "Answering your question", expectedOutput: "A clear answer grounded in your family workspace" };
   if (intent === "weekly_plan" && /\b(?:organiz|overlap|rebalance|timed\s+(?:plan|schedule))\w*/i.test(request)) {

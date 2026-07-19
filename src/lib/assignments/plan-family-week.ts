@@ -4,6 +4,9 @@ import { writeAuditEvent } from "@/lib/audit/write-audit-event";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { dateInTimezone } from "@/lib/schedule/dates";
+import { effectiveAvailability, type CalendarConflict } from "@/lib/schedule/availability";
+import { arrangeFamilyDay, type FamilyDayAvailability } from "@/lib/schedule/arrange-family-day";
+import { resolveAttentionRequirement } from "@/lib/schedule/parent-attention";
 
 type ServerSupabase = Awaited<ReturnType<typeof createClient>>;
 
@@ -60,7 +63,7 @@ export async function planFamilyWeek(input: {
   const [family, students, units] = await Promise.all([
     input.supabase.from("families").select("id,available_days,timezone").eq("id", input.familyId).maybeSingle(),
     input.supabase.from("students").select("id,display_name,daily_capacity_minutes,schedule_preferences").eq("family_id", input.familyId).eq("active", true).order("created_at"),
-    input.supabase.from("curriculum_units").select("id,student_id,subject,title,sequence_label,next_sequence_number,default_minutes,schedule_rule,curriculum_url").eq("family_id", input.familyId).eq("status", "active").order("subject"),
+    input.supabase.from("curriculum_units").select("id,student_id,subject,title,sequence_label,next_sequence_number,default_minutes,schedule_rule,curriculum_url,attention_mode,parent_attention_minutes").eq("family_id", input.familyId).eq("status", "active").order("subject"),
   ]);
   if (!family.data) throw new FamilyWeekPlanError("You do not have access to this family.", "FAMILY_NOT_FOUND", 403);
   if (students.error) throw students.error;
@@ -74,14 +77,22 @@ export async function planFamilyWeek(input: {
     currentOrNextLearningWeek(anchorDate, learnerWeekdays(student.schedule_preferences, familyDays)),
   ]));
   const allDates = [...learnerDates.values()].flat().sort();
-  const existing = await input.supabase.from("assignments")
-    .select("student_id,curriculum_unit_id,scheduled_date,estimated_minutes,status")
-    .eq("family_id", input.familyId)
-    .gte("scheduled_date", allDates[0]).lte("scheduled_date", allDates.at(-1)!);
-  if (existing.error) throw existing.error;
+  const [existing, conflictRows] = await Promise.all([
+    input.supabase.from("assignments")
+      .select("id,student_id,curriculum_unit_id,scheduled_date,scheduled_time,estimated_minutes,status,attention_mode,parent_attention_minutes")
+      .eq("family_id", input.familyId)
+      .gte("scheduled_date", allDates[0]).lte("scheduled_date", allDates.at(-1)!),
+    input.supabase.from("calendar_conflicts")
+      .select("id,student_id,conflict_date,all_day,starts_at,ends_at,title,note")
+      .eq("family_id", input.familyId)
+      .gte("conflict_date", allDates[0]).lte("conflict_date", allDates.at(-1)!),
+  ]);
+  if (existing.error ?? conflictRows.error) throw existing.error ?? conflictRows.error;
+  const conflicts: CalendarConflict[] = conflictRows.data.map((item) => ({ id: item.id, studentId: item.student_id, conflictDate: item.conflict_date, allDay: item.all_day, startsAt: item.starts_at, endsAt: item.ends_at, title: item.title, note: item.note }));
 
   const needsSetup: Array<{ studentId: string; displayName: string }> = [];
   const learnerPlans: LearnerPlan[] = [];
+  const availabilityByStudentDate = new Map<string, Record<string, FamilyDayAvailability>>();
   for (const student of students.data) {
     const studentUnits = units.data.filter((unit) => unit.student_id === student.id);
     if (!studentUnits.length) {
@@ -90,6 +101,11 @@ export async function planFamilyWeek(input: {
     }
     const dates = learnerDates.get(student.id)!;
     const studentExisting = existing.data.filter((item) => item.student_id === student.id && item.scheduled_date && dates.includes(item.scheduled_date));
+    const availabilityByDate = Object.fromEntries(dates.map((date) => {
+      const availability = effectiveAvailability({ date, studentId: student.id, dailyCapacityMinutes: student.daily_capacity_minutes, schedulePreferences: student.schedule_preferences, familyLearningDays: familyDays, conflicts });
+      return [date, { availableMinutes: availability.availableMinutes, blockedIntervals: availability.blockedIntervals, teachingWindow: availability.teachingWindow }];
+    }));
+    availabilityByStudentDate.set(student.id, availabilityByDate);
     const plan = buildFirstWeekAssignments({
       units: studentUnits.map((unit) => ({
         id: unit.id,
@@ -101,10 +117,13 @@ export async function planFamilyWeek(input: {
         weeklyFrequency: scheduleFrequency(unit.schedule_rule),
         curriculumUrl: unit.curriculum_url,
         scheduledTime: scheduleTime(unit.schedule_rule),
+        attentionMode: unit.attention_mode as "unspecified" | "parent_led" | "independent" | "flexible",
+        parentAttentionMinutes: unit.parent_attention_minutes,
       })),
       dates,
       existing: studentExisting.map((item) => ({ curriculumUnitId: item.curriculum_unit_id, scheduledDate: item.scheduled_date, estimatedMinutes: item.estimated_minutes, status: item.status })),
       dailyCapacityMinutes: student.daily_capacity_minutes,
+      availabilityByDate,
     });
     const expectedCount = studentUnits.reduce((sum, unit) => {
       const existingCount = studentExisting.filter((item) => item.curriculum_unit_id === unit.id && item.status !== "skipped").length;
@@ -137,7 +156,39 @@ export async function planFamilyWeek(input: {
     );
   }
 
+  const unitById = new Map(units.data.map((unit) => [unit.id, unit]));
   const plannedItems = learnerPlans.flatMap((learnerPlan) => learnerPlan.plan.map((item) => ({ ...item, studentId: learnerPlan.studentId })));
+  const plannedDates = [...new Set(plannedItems.map((item) => item.scheduledDate))].sort();
+  for (const student of students.data) {
+    const current = availabilityByStudentDate.get(student.id) ?? {};
+    for (const date of plannedDates) if (!current[date]) {
+      const availability = effectiveAvailability({ date, studentId: student.id, dailyCapacityMinutes: student.daily_capacity_minutes, schedulePreferences: student.schedule_preferences, familyLearningDays: familyDays, conflicts });
+      current[date] = { availableMinutes: availability.availableMinutes, blockedIntervals: availability.blockedIntervals, teachingWindow: availability.teachingWindow, allDayBlocked: availability.allDayBlocked };
+    }
+    availabilityByStudentDate.set(student.id, current);
+  }
+  const scheduledTimeByKey = new Map<string, string>();
+  for (const date of plannedDates) {
+    const newItems = plannedItems.filter((item) => item.scheduledDate === date);
+    const existingItems = existing.data.filter((item) => item.scheduled_date === date && item.status !== "skipped" && item.status !== "completed" && (item.estimated_minutes ?? 0) > 0);
+    const assignments = [
+      ...existingItems.map((item) => {
+        const unit = item.curriculum_unit_id ? unitById.get(item.curriculum_unit_id) : null;
+        return { id: item.id, studentId: item.student_id, curriculumUnitId: item.curriculum_unit_id, scheduledTime: item.scheduled_time, fixed: Boolean(item.scheduled_time), preserveExistingTime: Boolean(item.scheduled_time), requirement: resolveAttentionRequirement({ assignmentMode: item.attention_mode, assignmentParentMinutes: item.parent_attention_minutes, curriculumMode: unit?.attention_mode, curriculumParentMinutes: unit?.parent_attention_minutes, lessonMinutes: item.estimated_minutes }) };
+      }),
+      ...newItems.map((item) => {
+        const unit = unitById.get(item.curriculumUnitId)!;
+        return { id: planningKey(item), studentId: item.studentId, curriculumUnitId: item.curriculumUnitId, sequenceNumber: item.sequenceNumber, scheduledTime: item.scheduledTime, fixed: Boolean(item.scheduledTime), requirement: resolveAttentionRequirement({ curriculumMode: unit.attention_mode, curriculumParentMinutes: unit.parent_attention_minutes, lessonMinutes: item.estimatedMinutes }) };
+      }),
+    ];
+    const dayAvailability = Object.fromEntries([...new Set(assignments.map((item) => item.studentId))].map((studentId) => [studentId, availabilityByStudentDate.get(studentId)?.[date] ?? { availableMinutes: 0, allDayBlocked: true }]));
+    const arranged = arrangeFamilyDay({ date, assignments, availability: dayAvailability });
+    if (!arranged.ok) {
+      throw new FamilyWeekPlanError(parentAttentionFailureMessage(arranged.reason), "PARENT_ATTENTION_UNAVAILABLE", 409, { date, reason: arranged.reason, conflicts: arranged.conflictDetails });
+    }
+    for (const placement of arranged.placements) if (newItems.some((item) => planningKey(item) === placement.assignmentId)) scheduledTimeByKey.set(placement.assignmentId, placement.scheduledTime);
+  }
+  for (const item of plannedItems) item.scheduledTime = scheduledTimeByKey.get(planningKey(item)) ?? item.scheduledTime;
   let insertedAssignments: Array<{ id: string; student_id: string; curriculum_unit_id: string | null; title: string; subject: string; scheduled_date: string | null; scheduled_time: string | null; estimated_minutes: number | null }> = [];
   if (plannedItems.length) {
     const assignments = await input.supabase.from("assignments").insert(plannedItems.map((item) => ({
@@ -219,6 +270,16 @@ export async function planFamilyWeek(input: {
     totalAssignmentCount: summaries.reduce((sum, item) => sum + item.totalAssignmentCount, 0),
     subjectCount: summaries.reduce((sum, item) => sum + item.subjectCount, 0),
   };
+}
+
+function planningKey(item: { studentId: string; curriculumUnitId: string; title: string }) { return `${item.studentId}:${item.curriculumUnitId}:${item.title}`; }
+
+function parentAttentionFailureMessage(reason: string | null) {
+  if (reason === "insufficient_parent_time") return "The requested direct teaching time does not fit the family’s available teaching hours.";
+  if (reason === "fixed_time_collision") return "Existing fixed lessons need the parent at the same time. Klio left the week unchanged.";
+  if (reason === "blocked_by_conflicts") return "Calendar conflicts leave too little safe teaching time for the requested week.";
+  if (reason === "curriculum_sequence") return "The week cannot be arranged without putting curriculum out of order.";
+  return "The requested lessons do not fit the learners’ available teaching time.";
 }
 
 function currentOrNextLearningWeek(anchorDate: string, weekdays: number[]) {

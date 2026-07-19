@@ -42,6 +42,15 @@ test("Klio builds a balanced first week from onboarding curriculum", async ({ pa
     await expect(page.locator(".teacher-week-item").first()).toBeVisible();
     await expect(page.locator("[data-spatial-id='schedule']")).toBeVisible();
     await expect(page.getByRole("navigation", { name: /workspace tabs/ })).toHaveCount(0);
+    await page.setViewportSize({ width: 958, height: 1210 });
+    const [quietWorkspace, quietSchedule] = await Promise.all([
+      page.locator(".spatial-workspace").boundingBox(),
+      page.locator("[data-spatial-id='schedule']").boundingBox(),
+    ]);
+    expect(quietWorkspace).not.toBeNull();
+    expect(quietSchedule).not.toBeNull();
+    expect(quietSchedule!.width).toBeGreaterThan(quietWorkspace!.width * .8);
+    expect(Math.abs(quietSchedule!.x + quietSchedule!.width / 2 - (quietWorkspace!.x + quietWorkspace!.width / 2))).toBeLessThanOrEqual(1);
 
     const family = await admin.from("families").select("id").eq("created_by", userId!).single();
     const artCurriculum = await admin.from("curriculum_units").select("subject,title,status").eq("family_id", family.data!.id).eq("subject", "Art").single();
@@ -51,6 +60,8 @@ test("Klio builds a balanced first week from onboarding curriculum", async ({ pa
     expect(new Set(assignments.data?.map((item) => item.curriculum_unit_id)).size).toBe(6);
     expect(assignments.data?.every((item) => item.estimated_minutes === 30)).toBe(true);
     const firstWeekAssignmentIds = new Set(assignments.data?.map((item) => item.id));
+    const firstWeekAnchor = assignments.data?.map((item) => item.scheduled_date).filter((date): date is string => Boolean(date)).sort()[0];
+    if (!firstWeekAnchor) throw new Error("The first planned week has no scheduled date.");
 
     await page.goto("/app/assignments");
     await page.getByRole("button", { name: "Algebra I" }).click();
@@ -60,7 +71,7 @@ test("Klio builds a balanced first week from onboarding curriculum", async ({ pa
     const rhythm = await admin.from("student_subjects").select("weekly_frequency").eq("family_id", family.data!.id).eq("name", "Math").single();
     expect(rhythm.data?.weekly_frequency).toBe(3);
 
-    await page.goto("/app/week");
+    await page.goto(`/app/week?date=${firstWeekAnchor}`);
     await page.getByRole("button", { name: "Plan next week" }).click();
     await expect(page.getByText(/Klio planned Mira’s week: 6 subjects across \d+ lessons\. Lesson lengths were adjusted to fit each learner’s available time\./)).toBeVisible();
     const nextAssignments = await admin.from("assignments").select("id,subject").eq("family_id", family.data!.id);
@@ -72,8 +83,16 @@ test("Klio builds a balanced first week from onboarding curriculum", async ({ pa
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/app");
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
-    await expect(page.getByText("Mira’s work")).toBeVisible();
-    await expect(page.getByLabel("Hand something to Klio")).toBeVisible();
+    await expect(page.getByText("Mira’s day")).toBeVisible();
+    const mobileHandoff = page.getByRole("textbox", { name: "Hand something to Klio" });
+    await expect(mobileHandoff).toBeVisible();
+    const handoffBeforeFocus = await page.locator(".spatial-assistant-surface").boundingBox();
+    await mobileHandoff.focus();
+    const handoffAfterFocus = await page.locator(".spatial-assistant-surface").boundingBox();
+    expect(handoffBeforeFocus).not.toBeNull();
+    expect(handoffAfterFocus).not.toBeNull();
+    expect(Math.abs(handoffAfterFocus!.y - handoffBeforeFocus!.y)).toBeLessThanOrEqual(1);
+    expect(Math.abs(handoffAfterFocus!.height - handoffBeforeFocus!.height)).toBeLessThanOrEqual(1);
   } finally {
     if (userId) {
       await admin.from("families").delete().eq("created_by", userId);

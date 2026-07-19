@@ -37,8 +37,8 @@ test("one open handoff coordinates completion and unfinished work", async ({ pag
     if (inserted.error) throw inserted.error;
 
     await page.goto(`/app?date=${today}`);
-    await page.getByLabel("Hand something to Klio").fill("Jacob finished History but struggled with the essay questions. We also did not get to Biology today.");
-    await page.getByRole("button", { name: "Save to Klio" }).click();
+    await page.getByRole("textbox", { name: "Hand something to Klio" }).fill("Jacob finished History but struggled with the essay questions. We also did not get to Biology today.");
+    await page.getByRole("button", { name: "Send to Klio" }).click();
     await expect(page.getByText("On Klio’s desk", { exact: true })).toBeVisible();
     await expect(page.getByText(/Waiting to start|Reading submitted work|Updating the week/, { exact: true })).toBeVisible();
     await expect(page.getByText("Finished", { exact: true })).toBeVisible({ timeout: 150_000 });

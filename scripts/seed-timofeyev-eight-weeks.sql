@@ -204,6 +204,13 @@ set default_minutes = d.minutes,
       when 4 then jsonb_build_array('Monday','Tuesday','Thursday','Friday')
       when 3 then jsonb_build_array('Monday','Wednesday','Friday')
       else jsonb_build_array('Tuesday','Thursday') end),
+    attention_mode = case
+      when d.student_name in ('Jacob','Maya') then 'independent'
+      when d.subject_name in ('Science','Language Arts') then 'flexible'
+      else 'parent_led' end,
+    parent_attention_minutes = case
+      when d.student_name = 'Noah' and d.subject_name in ('Science','Language Arts') then 10
+      else null end,
     status = 'active', updated_at = now()
 from _seed_subjects d
 join public.students s on lower(s.display_name) = lower(d.student_name)
@@ -212,14 +219,21 @@ where cu.family_id = c.family_id and cu.student_id = s.id
   and lower(cu.subject) = lower(d.subject_name) and lower(cu.title) = lower(d.course_name);
 
 insert into public.curriculum_units
-  (id, family_id, student_id, created_by, subject, title, sequence_label, next_sequence_number, default_minutes, schedule_rule, status)
+  (id, family_id, student_id, created_by, subject, title, sequence_label, next_sequence_number, default_minutes, schedule_rule,
+   attention_mode, parent_attention_minutes, status)
 select md5(c.family_id::text || ':curriculum:' || lower(d.student_name) || ':' || lower(d.subject_name))::uuid,
   c.family_id, s.id, c.parent_id, d.subject_name, d.course_name, 'Lesson', d.frequency * (:completed_weeks + 1) + 1, d.minutes,
   jsonb_build_object('days', case d.frequency
     when 5 then jsonb_build_array('Monday','Tuesday','Wednesday','Thursday','Friday')
     when 4 then jsonb_build_array('Monday','Tuesday','Thursday','Friday')
     when 3 then jsonb_build_array('Monday','Wednesday','Friday')
-    else jsonb_build_array('Tuesday','Thursday') end), 'active'
+    else jsonb_build_array('Tuesday','Thursday') end),
+  case
+    when d.student_name in ('Jacob','Maya') then 'independent'
+    when d.subject_name in ('Science','Language Arts') then 'flexible'
+    else 'parent_led' end,
+  case when d.student_name = 'Noah' and d.subject_name in ('Science','Language Arts') then 10 else null end,
+  'active'
 from _seed_subjects d
 join _seed_context c on true
 join public.students s on s.family_id = c.family_id and lower(s.display_name) = lower(d.student_name)

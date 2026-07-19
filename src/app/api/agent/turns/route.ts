@@ -4,6 +4,7 @@ import { requireParentApi } from "@/lib/auth/require-parent";
 import { createClient } from "@/lib/supabase/server";
 import { agentEventLabel } from "@/lib/agent/workspace/presentation";
 import { normalizePublicResult } from "@/lib/agent/workspace/public-result";
+import { parentFacingTurnStatus } from "@/lib/agent/workspace/turn-status";
 
 const querySchema = z.object({ familyId: z.uuid(), conversationId: z.uuid().optional() });
 
@@ -21,6 +22,14 @@ export async function GET(request: Request) {
     if (error) throw error;
     const questions = await supabase.from("question_threads").select("id,status,awaiting_turn_id,question_messages!question_messages_thread_id_fkey(id,role,content,created_at)").eq("family_id", parsed.data.familyId).limit(30);
     if (questions.error) throw questions.error;
+    const recentConversations = await supabase
+      .from("agent_conversations")
+      .select("id,title,student_id,updated_at")
+      .eq("family_id", parsed.data.familyId)
+      .eq("status", "active")
+      .order("updated_at", { ascending: false })
+      .limit(12);
+    if (recentConversations.error) throw recentConversations.error;
     let conversationQuery = supabase.from("agent_conversations").select("id,title,status,student_id,updated_at").eq("family_id", parsed.data.familyId).eq("status", "active");
     if (parsed.data.conversationId) conversationQuery = conversationQuery.eq("id", parsed.data.conversationId);
     const conversation = await conversationQuery.order("updated_at", { ascending: false }).limit(1).maybeSingle();
@@ -29,18 +38,24 @@ export async function GET(request: Request) {
       ? await supabase.from("agent_conversation_messages").select("id,role,content,agent_turn_id,created_at").eq("family_id", parsed.data.familyId).eq("conversation_id", conversation.data.id).order("created_at", { ascending: false }).limit(80)
       : { data: [], error: null };
     if (messages.error) throw messages.error;
-    return NextResponse.json({ conversation: conversation.data ? {
+    return NextResponse.json({ conversations: recentConversations.data.map((item) => ({
+      id: item.id,
+      title: item.title,
+      studentId: item.student_id,
+      updatedAt: item.updated_at,
+    })), conversation: conversation.data ? {
       id: conversation.data.id,
       title: conversation.data.title,
       studentId: conversation.data.student_id,
       messages: [...messages.data].reverse().map((message) => ({ id: message.id, role: message.role, content: message.content, turnId: message.agent_turn_id, createdAt: message.created_at })),
     } : null, turns: data.map((turn) => {
       const summary = turn.snapshot_summary as { request?: string | null } | null;
+      const clarification = clarificationForTurn(questions.data, turn.id);
       return {
-        id: turn.id, status: turn.status, outcome: turn.outcome, goal: turn.goal,
+        id: turn.id, status: parentFacingTurnStatus(turn.status, Boolean(clarification)), outcome: turn.outcome, goal: turn.goal,
         request: summary?.request ?? fallbackRequest(turn.goal), sourceEvidenceId: turn.source_evidence_id,
         result: turn.public_result ? normalizePublicResult(turn.public_result) : null,
-        clarification: clarificationForTurn(questions.data, turn.id),
+        clarification,
         errorCode: turn.error_code, createdAt: turn.created_at, completedAt: turn.completed_at,
         conversationId: turn.conversation_id, interactionMode: turn.interaction_mode, streamedMessage: turn.streamed_message,
         taskName: turn.task_name ?? "Handling a family handoff", studentId: turn.student_id, subject: turn.subject,

@@ -3,12 +3,15 @@
 import { useState } from "react";
 import { COMMON_SUBJECTS } from "@/lib/onboarding/subjects";
 import { createClientUuid } from "@/lib/client/uuid";
+import type { AttentionMode } from "@/lib/schedule/parent-attention";
 
 export type SubjectSetupValue = {
   id: string;
   name: string;
   courseName: string;
   weeklyFrequency: number;
+  attentionMode: AttentionMode;
+  parentAttentionMinutes: number | null;
 };
 
 export type FamilySubjectSuggestion = {
@@ -37,7 +40,7 @@ export function SubjectSetupFields({
 
   function addSubject(name: string, weeklyFrequency = 5) {
     const id = createClientUuid();
-    onChange([...subjects, { id, name, courseName: "", weeklyFrequency }]);
+    onChange([...subjects, { id, name, courseName: "", weeklyFrequency, attentionMode: "unspecified", parentAttentionMinutes: null }]);
   }
 
   function chooseSubject(value: string) {
@@ -58,7 +61,7 @@ export function SubjectSetupFields({
   }
 
   return <>
-    <input type="hidden" name="subjectSetup" value={JSON.stringify(subjects.map(({ name, courseName, weeklyFrequency }) => ({ name, courseName, weeklyFrequency })))} />
+    <input type="hidden" name="subjectSetup" value={JSON.stringify(subjects.map(({ name, courseName, weeklyFrequency, attentionMode, parentAttentionMinutes }) => ({ name, courseName, weeklyFrequency, attentionMode, parentAttentionMinutes })))} />
     {availableFamilySubjects.length ? <div className="family-subject-suggestions">
       <div><strong>Already in your family</strong><span>One click adds the subject—not the other learner’s curriculum.</span></div>
       <div>{availableFamilySubjects.map((suggestion) => <button type="button" onClick={() => addSubject(suggestion.name, suggestion.weeklyFrequency)} aria-label={`Add ${suggestion.name}, used by ${suggestion.usedBy.join(" and ")}`} key={suggestion.name}><span>{suggestion.name}</span><small>{suggestion.usedBy.join(", ")}</small></button>)}</div>
@@ -85,8 +88,16 @@ export function SubjectSetupFields({
         <div><strong>{subject.name}</strong><label htmlFor={`${idPrefix}-course-${subject.id}`}>Course or curriculum <span>(optional)</span></label></div>
         <input id={`${idPrefix}-course-${subject.id}`} aria-label={`${subject.name} course or curriculum`} value={subject.courseName} onChange={(event) => update(subject.id, { courseName: event.target.value })} placeholder={subject.name === "Math" ? "e.g. Math With Confidence 1" : `Optional — Klio can use ${subject.name}`} maxLength={120} />
         <label className="subject-frequency" htmlFor={`${idPrefix}-frequency-${subject.id}`}><span>Times / week</span><select id={`${idPrefix}-frequency-${subject.id}`} aria-label={`${subject.name} times per week`} value={subject.weeklyFrequency} onChange={(event) => update(subject.id, { weeklyFrequency: Number(event.target.value) })}>{[1,2,3,4,5,6,7].map((frequency) => <option value={frequency} key={frequency}>{frequency}×</option>)}</select></label>
+        <div className="subject-attention"><label htmlFor={`${idPrefix}-attention-${subject.id}`}><span>Parent support</span><select id={`${idPrefix}-attention-${subject.id}`} aria-label={`${subject.name} parent support`} value={subject.attentionMode} onChange={(event) => { const attentionMode = event.target.value as AttentionMode; update(subject.id, { attentionMode, parentAttentionMinutes: attentionMode === "flexible" ? subject.parentAttentionMinutes ?? 10 : null }); }}><option value="unspecified">Not decided</option><option value="parent_led">Needs me</option><option value="independent">Independent</option><option value="flexible">Start together</option></select></label>{subject.attentionMode === "flexible" ? <><label className="subject-parent-minutes" htmlFor={`${idPrefix}-attention-minutes-${subject.id}`}><span>Minutes together</span><input id={`${idPrefix}-attention-minutes-${subject.id}`} type="number" min="1" max="40" value={subject.parentAttentionMinutes ?? 10} onChange={(event) => update(subject.id, { parentAttentionMinutes: Number(event.target.value) })} required /></label><small>You help them begin, then they continue independently.</small></> : <small>{attentionDescription(subject.attentionMode)}</small>}</div>
         <button type="button" onClick={() => onChange(subjects.filter((item) => item.id !== subject.id))} aria-label={`Remove ${subject.name}`}>Remove</button>
       </article>)}
     </div> : <div className="subjects-empty"><span>Nothing added yet</span><p>This learner’s active subjects will appear here.</p></div>}
   </>;
+}
+
+function attentionDescription(mode: AttentionMode) {
+  if (mode === "parent_led") return "You plan to teach this lesson directly.";
+  if (mode === "independent") return "This learner can work while you help someone else.";
+  if (mode === "flexible") return "You help them begin, then they continue independently.";
+  return "Klio will schedule this conservatively until you choose.";
 }

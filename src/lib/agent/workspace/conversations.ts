@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createAdminClient } from "@/lib/supabase/admin";
+import { formatConversationRecoveryContext } from "./conversation-history";
 
 export async function ensureAgentConversation(input: {
   familyId: string;
@@ -71,6 +72,25 @@ export async function appendTurnAssistantMessage(input: {
     agentTurnId: input.turnId,
     idempotencyKey: `turn:${input.turnId}:assistant`,
   });
+}
+
+export async function readConversationRecoveryContext(input: {
+  conversationId: string | null;
+  familyId: string;
+  excludeTurnId: string;
+}) {
+  if (!input.conversationId) return "";
+  const admin = createAdminClient();
+  const result = await admin.from("agent_conversation_messages")
+    .select("role,content,agent_turn_id")
+    .eq("family_id", input.familyId)
+    .eq("conversation_id", input.conversationId)
+    .order("created_at", { ascending: false })
+    .limit(40);
+  if (result.error) throw result.error;
+  return formatConversationRecoveryContext(
+    [...result.data].reverse().filter((message) => message.agent_turn_id !== input.excludeTurnId),
+  );
 }
 
 function conversationTitle(request: string) {

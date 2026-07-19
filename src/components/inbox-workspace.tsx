@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -8,17 +8,29 @@ import { AnimatePresence, motion } from "motion/react";
 import {
   ArrowRight, ArrowUp, BookOpen, CalendarDays, Camera, Check, ChevronRight, Circle,
   FileCheck2, FileText, Image as ImageIcon, LayoutDashboard, Link2, LoaderCircle,
-  Mic, Paperclip, Pencil, RotateCcw, Sparkles, SpellCheck2, Square, Volume2, X,
+  MessagesSquare, Mic, Paperclip, Pencil, Plus, RotateCcw, Sparkles, SpellCheck2, Square, Volume2, X,
 } from "lucide-react";
 import type { AgentConversationDTO, AgentTurnDTO, ArtifactDTO, CategoryDTO, EvidenceDTO, ReminderDTO, StudentDTO } from "@/lib/data/workspace";
 import { DEFAULT_CAPTURE_INTENT } from "@/lib/agent/intents";
 import { deriveDailyBrief, type DailyBriefAction } from "@/lib/product/daily-brief";
+import {
+  assistantStarterGroups,
+  assistantStarterShortLabel,
+  resolveAssistantStarterCatalog,
+  resolveTopAssistantStarters,
+  type AssistantIntent,
+  type AssistantStarterId,
+  type ResolvedAssistantStarter,
+} from "@/lib/product/assistant-starters";
 import { createClientUuid } from "@/lib/client/uuid";
 import { deriveReceiptState } from "@/lib/agent/workspace/receipt-state";
-import { isAssignmentGuidanceRequest } from "@/lib/agent/workspace/request-routing";
+import { explicitlyMentionedStudentId, isAssignmentGuidanceRequest } from "@/lib/agent/workspace/request-routing";
 import { normalizePracticeSpec } from "@/lib/practice/spec";
 import { estimatedPracticeMinutes } from "@/lib/practice/presentation";
 import { createClient as createSupabaseClient } from "@/lib/supabase/client";
+import { MAX_DICTATION_SECONDS, appendDictationText, dictationFileName, dictationValidationError, formatDictationDuration } from "@/lib/voice/dictation";
+import { completedConversationScrollTarget } from "@/lib/product/conversation-scroll";
+import { AssistantRichMessage } from "./assistant-rich-message";
 
 export type InboxWorkspaceProps = {
   familyId: string;
@@ -37,32 +49,56 @@ export type InboxWorkspaceProps = {
   onAssignmentContextClear?: () => void;
   onPracticeOpen?: (artifactId: string) => void;
   onFocusModeChange?: (focused: boolean) => void;
+  onAgentTurnChange?: (turn: AgentTurnDTO | null) => void;
+  assistantPrefill?: { key: number; request: string } | null;
   compact?: boolean;
   dashboard?: boolean;
 };
 
 type CaptureSubmission = { id: string; items: EvidenceDTO[] };
-type AgentJob = { intent: "general" | "organize" | "next_step" | "summary" | "weekly_plan" | "lesson" | "practice" | "portfolio"; label: string; prompt: string; icon: typeof LayoutDashboard; evidenceIds?: string[]; expectedOutput?: string; subject?: string };
+type AgentJob = { intent: AssistantIntent; label: string; prompt: string; icon: typeof LayoutDashboard; evidenceIds?: string[]; expectedOutput?: string; subject?: string };
 type AgentTurnSummary = AgentTurnDTO;
 type ConversationMessage = { role: "parent" | "klio"; content: string; turnId?: string | null };
+type ConversationSummary = { id: string; title: string; studentId: string | null; updatedAt: string };
 type ConversationContext = { studentId: string | null; assignmentId?: string; subject?: string; taskName: string };
+type VoicePhase = "idle" | "requesting" | "recording" | "transcribing" | "done" | "error";
+type ConversationComposer = {
+  text: string; files: File[]; studentId: string; recording: boolean; voicePhase: VoicePhase; voiceSeconds: number; voiceMessage: string;
+  onTextChange: (value: string) => void; onStudentChange: (studentId: string) => void;
+  onPhoto: () => void; onFile: () => void; onVoice: () => void; onScore: () => void;
+  onRemoveFile: (index: number) => void; onPaste: (event: React.ClipboardEvent<HTMLTextAreaElement>) => void;
+};
 type SpellingIssue = { word: string; suggestions: string[] };
 type SpellingMenu = SpellingIssue & { start: number; end: number; x: number; y: number };
+
+const CAPABILITY_LIBRARY_ID = "klio-capability-library";
 
 const genericAgentJobs: AgentJob[] = [
   { intent: "next_step", label: "Suggest next steps", prompt: "Suggest three practical next steps for the selected learner. Base them on current assignments and recent approved work, keep each focused, and flag anything uncertain.", icon: Sparkles },
   { intent: "weekly_plan", label: "Plan the rest of this week", prompt: "Draft the rest of this week for the selected learner using current assignments, unfinished work, approved results, and reminders. Preserve the existing curriculum order and flag any conflicts or decisions.", icon: CalendarDays },
   { intent: "summary", label: "Review recent learning", prompt: "Prepare a parent-reviewable summary of the selected learner’s recent learning. Separate what the records clearly show from what remains uncertain, cite the strongest sources, and do not infer mastery.", icon: FileText },
 ];
+const subscribeToClientMount = () => () => {};
 
-export function InboxWorkspace({ familyId, students, categories, initialEvidence, initialReminders, initialArtifacts, pendingApprovals, initialAgentTurn, initialAgentConversation = null, initialStudentId, workspaceDate, assignmentContext = null, onAssignmentDrop, onAssignmentContextClear, onPracticeOpen, onFocusModeChange, compact = false, dashboard = false }: InboxWorkspaceProps) {
+export function InboxWorkspace({ familyId, students, categories, initialEvidence, initialReminders, initialArtifacts, pendingApprovals, initialAgentTurn, initialAgentConversation = null, initialStudentId, workspaceDate, assignmentContext = null, onAssignmentDrop, onAssignmentContextClear, onPracticeOpen, onFocusModeChange, onAgentTurnChange, assistantPrefill = null, compact = false, dashboard = false }: InboxWorkspaceProps) {
   const router = useRouter();
   const imageInput = useRef<HTMLInputElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const captureInput = useRef<HTMLTextAreaElement>(null);
   const captureShell = useRef<HTMLElement>(null);
+  const conversationButton = useRef<HTMLButtonElement>(null);
+  const conversationPicker = useRef<HTMLElement>(null);
+  const capabilityLibraryButton = useRef<HTMLButtonElement>(null);
+  const capabilityLibraryPanel = useRef<HTMLElement>(null);
+  const appliedAssistantPrefillKey = useRef<number | null>(null);
   const recorder = useRef<MediaRecorder | null>(null);
   const chunks = useRef<Blob[]>([]);
+  const recordingStream = useRef<MediaStream | null>(null);
+  const recordingTimer = useRef<number | null>(null);
+  const recordingDeadline = useRef<number | null>(null);
+  const voiceResetTimer = useRef<number | null>(null);
+  const transcriptionRequest = useRef<AbortController | null>(null);
+  const mounted = useRef(true);
   const recordDraft = useRef("");
   const askDraft = useRef("");
   const [text, setText] = useState("");
@@ -70,7 +106,9 @@ export function InboxWorkspace({ familyId, students, categories, initialEvidence
   const [linkOpen, setLinkOpen] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
   const [studentId, setStudentId] = useState(() => initialStudentId !== undefined ? initialStudentId : students.length === 1 ? students[0]?.id ?? "" : "");
-  const [recording, setRecording] = useState(false);
+  const [voicePhase, setVoicePhase] = useState<VoicePhase>("idle");
+  const [voiceSeconds, setVoiceSeconds] = useState(0);
+  const [voiceMessage, setVoiceMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [reminders, setReminders] = useState(initialReminders);
@@ -88,13 +126,44 @@ export function InboxWorkspace({ familyId, students, categories, initialEvidence
   const [agentJob, setAgentJob] = useState<AgentJob | null>(null);
   const [agentTurn, setAgentTurn] = useState<AgentTurnSummary | null>(initialAgentTurn);
   const [conversationId, setConversationId] = useState<string | null>(() => initialAgentTurn?.conversationId && initialAgentTurn.conversationId === initialAgentConversation?.id ? initialAgentConversation.id : null);
+  const [conversationViewVersion, setConversationViewVersion] = useState(0);
   const [conversationHistory, setConversationHistory] = useState<ConversationMessage[]>(() => initialAgentTurn?.conversationId && initialAgentTurn.conversationId === initialAgentConversation?.id
     ? initialAgentConversation.messages.filter((message) => message.turnId !== initialAgentTurn.id).map((message) => ({ role: message.role === "user" ? "parent" : "klio", content: message.content, turnId: message.turnId }))
     : []);
   const [conversationContext, setConversationContext] = useState<ConversationContext | null>(null);
+  const [conversationPickerOpen, setConversationPickerOpen] = useState(false);
+  const [recentConversations, setRecentConversations] = useState<ConversationSummary[]>([]);
+  const [conversationPickerLoading, setConversationPickerLoading] = useState(false);
+  const [conversationPickerError, setConversationPickerError] = useState<string | null>(null);
+  const [conversationPickerPosition, setConversationPickerPosition] = useState({ left: 12, bottom: 72 });
+  const [capabilityLibraryOpen, setCapabilityLibraryOpen] = useState(false);
+  const [capabilityLibraryPosition, setCapabilityLibraryPosition] = useState({ left: 12, bottom: 160, width: 620, maxHeight: 560 });
   const [spellingIssues, setSpellingIssues] = useState<SpellingIssue[]>([]);
   const [ignoredSpellings, setIgnoredSpellings] = useState<string[]>([]);
   const [spellingMenu, setSpellingMenu] = useState<SpellingMenu | null>(null);
+  const recording = voicePhase === "recording";
+  const voicePending = voicePhase === "requesting" || voicePhase === "transcribing";
+  const voiceBusy = voicePending || recording;
+
+  useEffect(() => {
+    onAgentTurnChange?.(agentTurn);
+  }, [agentTurn, onAgentTurnChange]);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      if (recordingTimer.current !== null) window.clearInterval(recordingTimer.current);
+      if (recordingDeadline.current !== null) window.clearTimeout(recordingDeadline.current);
+      if (voiceResetTimer.current !== null) window.clearTimeout(voiceResetTimer.current);
+      transcriptionRequest.current?.abort();
+      if (recorder.current && recorder.current.state !== "inactive") {
+        recorder.current.onstop = null;
+        recorder.current.stop();
+      }
+      recordingStream.current?.getTracks().forEach((track) => track.stop());
+    };
+  }, []);
 
   useEffect(() => {
     if (!agentTurn?.id) return;
@@ -164,8 +233,58 @@ export function InboxWorkspace({ familyId, students, categories, initialEvidence
     };
   }, [spellingMenu]);
 
-  const captureStudentId = assignmentContext?.studentId ?? studentId;
+  useEffect(() => {
+    if (!conversationPickerOpen) return;
+    const closeIfOutside = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (target && (conversationPicker.current?.contains(target) || conversationButton.current?.contains(target))) return;
+      setConversationPickerOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setConversationPickerOpen(false);
+        conversationButton.current?.focus({ preventScroll: true });
+      }
+    };
+    const closeForViewportChange = () => setConversationPickerOpen(false);
+    window.addEventListener("pointerdown", closeIfOutside);
+    window.addEventListener("keydown", closeOnEscape);
+    window.addEventListener("resize", closeForViewportChange);
+    return () => {
+      window.removeEventListener("pointerdown", closeIfOutside);
+      window.removeEventListener("keydown", closeOnEscape);
+      window.removeEventListener("resize", closeForViewportChange);
+    };
+  }, [conversationPickerOpen]);
+
+  useEffect(() => {
+    if (!capabilityLibraryOpen) return;
+    const closeIfOutside = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (target && (capabilityLibraryPanel.current?.contains(target) || capabilityLibraryButton.current?.contains(target))) return;
+      setCapabilityLibraryOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setCapabilityLibraryOpen(false);
+      capabilityLibraryButton.current?.focus({ preventScroll: true });
+    };
+    const closeForViewportChange = () => setCapabilityLibraryOpen(false);
+    const focusFrame = requestAnimationFrame(() => capabilityLibraryPanel.current?.querySelector<HTMLButtonElement>(".assistant-capability-close")?.focus({ preventScroll: true }));
+    window.addEventListener("pointerdown", closeIfOutside);
+    window.addEventListener("keydown", closeOnEscape);
+    window.addEventListener("resize", closeForViewportChange);
+    return () => {
+      cancelAnimationFrame(focusFrame);
+      window.removeEventListener("pointerdown", closeIfOutside);
+      window.removeEventListener("keydown", closeOnEscape);
+      window.removeEventListener("resize", closeForViewportChange);
+    };
+  }, [capabilityLibraryOpen]);
+
   const captureText = text.trim();
+  const mentionedStudentId = explicitlyMentionedStudentId(captureText, students);
+  const captureStudentId = assignmentContext?.studentId ?? mentionedStudentId ?? studentId;
   const hasCapture = Boolean(captureText || linkUrl.trim() || files.length);
   const studentNames = new Map(students.map((student) => [student.id, student.displayName]));
   const recentEvidence = initialEvidence.filter((item) => item.captureRoute !== "reminder" && ["ready", "needs_review"].includes(item.status)).slice(0, 12);
@@ -183,24 +302,55 @@ export function InboxWorkspace({ familyId, students, categories, initialEvidence
     reminders,
     learnerName: studentNames.get(studentId) ?? "this learner",
   });
+  const starterStudentId = assignmentContext?.studentId ?? studentId;
+  const starterContext = {
+    learnerName: starterStudentId ? studentNames.get(starterStudentId) ?? null : null,
+    assignmentTitle: assignmentContext?.title ?? null,
+    subject: assignmentContext?.subject ?? null,
+    workspaceDate: workspaceDate ?? null,
+  };
+  const topAssistantStarters = resolveTopAssistantStarters(starterContext);
+  const assistantStarters = resolveAssistantStarterCatalog(starterContext);
+  const activeAgentTask = Boolean(agentTurn && ["queued", "running", "awaiting_parent"].includes(agentTurn.status));
+  const starterBlockReason = files.length || linkOpen || linkUrl.trim() || voiceBusy
+    ? "Finish or clear the current capture before starting a Klio job."
+    : activeAgentTask || busy
+      ? "Finish the current Klio conversation before starting another goal."
+      : null;
   const dailyBrief = deriveDailyBrief({ students, evidence: initialEvidence, artifacts: initialArtifacts, reminders, pendingApprovals, studentId });
-  const targetName = assignmentContext
-    ? studentNames.get(assignmentContext.studentId)
-    : studentId
-      ? studentNames.get(studentId)
-      : agentJob ? "your family" : null;
-  const assignmentQuestion = Boolean(!agentJob && assignmentContext && !files.length && !linkUrl.trim() && isAssignmentGuidanceRequest(captureText));
   const assignmentScheduleChange = Boolean(!agentJob && assignmentContext && isIncompleteUpdate(captureText));
-  const sendInterpretation = !targetName
-    ? "Choose a learner before saving"
+  // Plain language always belongs to Klio. The agent decides whether it is a
+  // conversation, a question, or a request for workspace follow-through.
+  // Attachments and explicit lesson-state controls retain their deterministic
+  // evidence paths because the parent has already supplied the record target.
+  const inferredKlioRequest = Boolean(
+    !agentJob
+    && !assignmentScheduleChange
+    && !files.length
+    && !linkUrl.trim()
+    && captureText,
+  );
+  const targetName = captureStudentId
+    ? studentNames.get(captureStudentId)
+    : agentJob || inferredKlioRequest ? "your family" : null;
+  const sendInterpretation = !hasCapture
+    ? captureStudentId
+      ? `Ready for ${studentNames.get(captureStudentId)}`
+      : "Ask a family question or choose a learner for records"
+    : !targetName
+      ? "Choose a learner before saving this record"
     : agentJob
       ? `Ask Klio to help ${targetName}`
-      : assignmentQuestion
-        ? `Ask Klio about ${targetName}’s ${assignmentContext?.subject} lesson`
+    : inferredKlioRequest
+        ? assignmentContext && isAssignmentGuidanceRequest(captureText)
+          ? `Ask Klio about ${targetName}’s ${assignmentContext.subject} lesson`
+          : `Ask Klio using ${targetName === "your family" ? "family" : targetName} records`
         : assignmentScheduleChange
           ? `Save ${targetName}’s update and ask Klio to change this week`
-      : `Save as ${targetName}’s ${assignmentContext?.subject ?? "learning"} record`;
-  const canSubmit = Boolean(targetName) && !busy && (agentJob ? text.trim().length >= 3 : hasCapture);
+          : files.length || linkUrl.trim()
+            ? `Save for ${targetName} and let Klio handle it`
+            : `Save as ${targetName}’s ${assignmentContext?.subject ?? "learning"} record`;
+  const canSubmit = !busy && !voiceBusy && (agentJob || inferredKlioRequest ? text.trim().length > 0 : Boolean(targetName) && hasCapture);
 
   function selectCaptureStudent(nextStudentId: string) {
     setStudentId(nextStudentId);
@@ -208,15 +358,65 @@ export function InboxWorkspace({ familyId, students, categories, initialEvidence
   }
 
   function selectAgentJob(job: AgentJob) {
-    if (files.length || linkUrl.trim()) { setMessage("Finish or clear the current capture before starting a Klio job."); return; }
+    if (starterBlockReason) { setMessage(starterBlockReason); return; }
     if (!agentJob) recordDraft.current = text;
-    setAgentJob(job); setText(job.prompt); setMessage(null); setAgentTurn(null); onFocusModeChange?.(true);
-    requestAnimationFrame(() => captureInput.current?.focus());
+    setAgentJob(job); setText(job.prompt); setMessage(null); onFocusModeChange?.(true);
+    captureInput.current?.focus({ preventScroll: true });
   }
+
+  useEffect(() => {
+    if (!assistantPrefill || appliedAssistantPrefillKey.current === assistantPrefill.key) return;
+    appliedAssistantPrefillKey.current = assistantPrefill.key;
+    let focusTimer: number | undefined;
+    const applyTimer = window.setTimeout(() => {
+      if (starterBlockReason) { setMessage(starterBlockReason); return; }
+      if (!agentJob) recordDraft.current = text;
+      setAgentJob({ intent: "general", label: "Weekly briefing", prompt: assistantPrefill.request, icon: Sparkles });
+      setText(assistantPrefill.request);
+      setMessage(null);
+      onFocusModeChange?.(true);
+      focusTimer = window.setTimeout(() => captureInput.current?.focus({ preventScroll: true }), 0);
+    }, 0);
+    return () => { window.clearTimeout(applyTimer); if (focusTimer !== undefined) window.clearTimeout(focusTimer); };
+    // A new key is an explicit external handoff. Composer state is deliberately
+    // captured at that moment so Save record can restore the original draft.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assistantPrefill?.key]);
 
   function startCustomAgentJob() {
     if (agentJob) return;
     selectAgentJob({ intent: "general", label: "Ask Klio", prompt: askDraft.current, icon: Sparkles });
+  }
+
+  function selectAssistantStarter(starter: ResolvedAssistantStarter) {
+    if (starter.disabled || starterBlockReason) return;
+    setCapabilityLibraryOpen(false);
+    selectAgentJob({
+      intent: starter.intent,
+      label: starter.label,
+      prompt: starter.prompt,
+      icon: assistantStarterIcon(starter.id),
+      subject: assignmentContext?.subject,
+    });
+  }
+
+  function openCapabilityLibrary() {
+    if (starterBlockReason) { setMessage(starterBlockReason); return; }
+    const bounds = captureShell.current?.getBoundingClientRect();
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const width = Math.min(680, viewportWidth - 16, bounds?.width ?? 680);
+    const left = viewportWidth <= 620
+      ? 8
+      : Math.max(12, Math.min((bounds?.left ?? 12) + ((bounds?.width ?? width) - width) / 2, viewportWidth - width - 12));
+    const anchorTop = bounds?.top ?? Math.max(200, viewportHeight - 190);
+    setCapabilityLibraryPosition({
+      left,
+      bottom: Math.max(12, viewportHeight - anchorTop + 10),
+      width,
+      maxHeight: Math.max(280, Math.min(590, anchorTop - 18)),
+    });
+    setCapabilityLibraryOpen(true);
   }
 
   async function runDailyBriefAction(action: DailyBriefAction) {
@@ -240,16 +440,87 @@ export function InboxWorkspace({ familyId, students, categories, initialEvidence
   function cancelAgentJob() {
     if (!agentJob) return;
     askDraft.current = text;
+    setCapabilityLibraryOpen(false);
     setAgentJob(null); setText(recordDraft.current); setMessage(null); onFocusModeChange?.(false);
   }
 
   async function submitCurrent() {
-    const assignmentQuestion = !agentJob && assignmentContext && !files.length && !linkUrl.trim() && isAssignmentGuidanceRequest(captureText)
-      ? { intent: "general", label: `Answering the ${assignmentContext.subject} question`, prompt: captureText, icon: Sparkles, expectedOutput: "A concrete answer grounded in this lesson" } satisfies AgentJob
+    const inferredJob = !agentJob && inferredKlioRequest
+      ? { intent: "general", label: isAssignmentGuidanceRequest(captureText) ? "Answering your question" : "Working with Klio", prompt: captureText, icon: Sparkles, expectedOutput: isAssignmentGuidanceRequest(captureText) ? "A clear answer grounded in your family workspace" : "A helpful answer or completed follow-through" } satisfies AgentJob
       : null;
     if (agentJob) await submitAgentJob();
-    else if (assignmentQuestion) await runAgentJob(assignmentQuestion, captureText);
+    else if (inferredJob) await runAgentJob(inferredJob, captureText);
     else await submitCapture();
+  }
+
+  async function openAgentConversation(nextConversationId: string) {
+    const response = await fetch(`/api/agent/turns?familyId=${encodeURIComponent(familyId)}&conversationId=${encodeURIComponent(nextConversationId)}`, { cache: "no-store" });
+    const body = await response.json() as { turns?: AgentTurnSummary[]; conversation?: { id: string; studentId?: string | null; messages: Array<{ role: string; content: string; turnId?: string | null }> } | null; error?: string };
+    if (!response.ok) throw new Error(body.error ?? "Klio could not open that conversation.");
+    const selectedTurn = body.turns?.[0];
+    if (!selectedTurn || !body.conversation) throw new Error("That conversation is no longer available.");
+    setConversationId(body.conversation.id);
+    setConversationHistory(body.conversation.messages
+      .filter((item) => item.turnId !== selectedTurn.id)
+      .map((item) => ({ role: item.role === "user" ? "parent" : "klio", content: item.content, turnId: item.turnId })));
+    setConversationContext({ studentId: selectedTurn.studentId ?? body.conversation.studentId ?? null, subject: selectedTurn.subject ?? undefined, taskName: selectedTurn.taskName });
+    setAgentTurn(selectedTurn);
+  }
+
+  async function loadRecentConversations() {
+    setConversationPickerLoading(true);
+    setConversationPickerError(null);
+    try {
+      const response = await fetch(`/api/agent/turns?familyId=${encodeURIComponent(familyId)}`, { cache: "no-store" });
+      const body = await response.json() as { conversations?: ConversationSummary[]; error?: string };
+      if (!response.ok) throw new Error(body.error ?? "Klio could not load your conversations.");
+      setRecentConversations((body.conversations ?? []).slice(0, 10));
+    } catch (error) {
+      setConversationPickerError(error instanceof Error ? error.message : "Klio could not load your conversations.");
+    } finally {
+      setConversationPickerLoading(false);
+    }
+  }
+
+  async function toggleConversationPicker() {
+    if (conversationPickerOpen) {
+      setConversationPickerOpen(false);
+      return;
+    }
+    const button = conversationButton.current;
+    if (button) {
+      const bounds = button.getBoundingClientRect();
+      const width = Math.min(360, window.innerWidth - 24);
+      setConversationPickerPosition({
+        left: Math.max(12, Math.min(bounds.right - width, window.innerWidth - width - 12)),
+        bottom: Math.max(12, window.innerHeight - bounds.top + 10),
+      });
+    }
+    setConversationPickerOpen(true);
+    await loadRecentConversations();
+  }
+
+  async function selectRecentConversation(nextConversationId: string) {
+    setConversationPickerOpen(false);
+    try {
+      await openAgentConversation(nextConversationId);
+      // A finished conversation can be minimized while remaining the current
+      // thread. Re-selecting it from history should reopen it just as selecting
+      // any other thread does, so reset the conversation view's local state.
+      setConversationViewVersion((version) => version + 1);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Klio could not open that conversation.");
+    }
+  }
+
+  function startNewAgentConversation() {
+    setConversationPickerOpen(false);
+    setConversationId(null);
+    setConversationHistory([]);
+    setConversationContext(null);
+    setAgentTurn(null);
+    onFocusModeChange?.(false);
+    window.setTimeout(() => captureInput.current?.focus({ preventScroll: true }), 80);
   }
 
   async function submitAgentJob() {
@@ -306,7 +577,7 @@ export function InboxWorkspace({ familyId, students, categories, initialEvidence
     }
     setBusy(true); setMessage(null);
     const queuedAt = new Date().toISOString();
-    setAgentTurn({ id: requestId, status: "queued", goal: job.intent, request, result: null, clarification: null, events: [{ sequence: 1, kind: "turn.queued", label: "Received the handoff" }], tools: [], taskName: job.label || "Handling a family handoff", studentId: targetStudentId || null, subject: job.subject ?? assignmentContext?.subject ?? null, sourceCount: job.evidenceIds?.length ?? 0, normalizedStep: "waiting", expectedOutput: job.expectedOutput ?? "A useful response from Klio", createdAt: queuedAt, startedAt: null, lastHeartbeatAt: null, lastProgressAt: queuedAt, conversationId: options?.preserveConversation ? conversationId : null, interactionMode: job.intent === "general" ? "answer" : "act", streamedMessage: null });
+    setAgentTurn({ id: requestId, status: "queued", goal: job.intent, request, result: null, clarification: null, events: [{ sequence: 1, kind: "turn.queued", label: "Received the handoff" }], tools: [], taskName: job.label || "Handling a family handoff", studentId: targetStudentId || null, subject: job.subject ?? assignmentContext?.subject ?? null, sourceCount: job.evidenceIds?.length ?? 0, normalizedStep: "waiting", expectedOutput: job.expectedOutput ?? "A useful response from Klio", createdAt: queuedAt, startedAt: null, lastHeartbeatAt: null, lastProgressAt: queuedAt, conversationId: options?.preserveConversation ? conversationId : null, interactionMode: "act", streamedMessage: null });
     try {
       const response = await fetch("/api/agent", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ familyId, studentId: targetStudentId || null, evidenceIds: job.evidenceIds ?? [], intent: job.intent, request, requestId, contextDate: workspaceDate, assignmentId: targetAssignmentId, conversationId: options?.preserveConversation ? conversationId : undefined }) });
       const result = await response.json() as { turn?: { id: string }; conversationId?: string; interactionMode?: "answer" | "act"; error?: string };
@@ -326,7 +597,28 @@ export function InboxWorkspace({ familyId, students, categories, initialEvidence
       const prior: ConversationMessage[] = [{ role: "parent", content: parentVisibleRequest(turn.request), turnId: turn.id }, ...(turn.result?.message ? [{ role: "klio" as const, content: turn.result.message, turnId: turn.id }] : [])];
       setConversationHistory((current) => [...current, ...prior].slice(-20));
     }
-    await runAgentJob({ intent: "general", label: conversationContext?.taskName ?? "Continuing with Klio", prompt: request, icon: Sparkles, expectedOutput: "A direct answer to your follow-up", subject: conversationContext?.subject ?? turn.subject ?? undefined }, request, { studentId: conversationContext?.studentId ?? turn.studentId, assignmentId: conversationContext?.assignmentId, preserveConversation: true });
+    let evidenceIds: string[] = [];
+    const namedStudentId = explicitlyMentionedStudentId(request, students);
+    const attachmentStudentId = assignmentContext?.studentId ?? namedStudentId ?? (studentId || conversationContext?.studentId || turn.studentId || null);
+    if (files.length) {
+      if (!attachmentStudentId) throw new Error("Choose a learner for these attachments.");
+      const body = new FormData();
+      body.set("familyId", familyId);
+      body.set("studentId", attachmentStudentId);
+      body.set("kind", "note");
+      body.set("intents", JSON.stringify([DEFAULT_CAPTURE_INTENT]));
+      body.set("conversationAttachment", "true");
+      if (request.trim()) body.set("text", request.trim());
+      const targetAssignmentId = conversationContext?.assignmentId ?? assignmentContext?.id;
+      if (targetAssignmentId) body.set("assignmentId", targetAssignmentId);
+      files.forEach((file) => body.append("file", file));
+      const upload = await fetch("/api/evidence", { method: "POST", body });
+      const uploaded = await upload.json() as { ids?: string[]; id?: string; error?: string };
+      if (!upload.ok) throw new Error(uploaded.error ?? "Klio could not attach those files.");
+      evidenceIds = uploaded.ids ?? (uploaded.id ? [uploaded.id] : []);
+    }
+    await runAgentJob({ intent: "general", label: conversationContext?.taskName ?? "Continuing with Klio", prompt: request, icon: Sparkles, evidenceIds, expectedOutput: "A helpful answer or completed follow-through", subject: conversationContext?.subject ?? turn.subject ?? undefined }, request, { studentId: namedStudentId ?? attachmentStudentId ?? conversationContext?.studentId ?? turn.studentId, assignmentId: conversationContext?.assignmentId, preserveConversation: true });
+    if (evidenceIds.length) setFiles([]);
   }
 
   async function submitCapture() {
@@ -519,19 +811,103 @@ export function InboxWorkspace({ familyId, students, categories, initialEvidence
     setSpellingMenu(null);
   }
 
-  async function toggleRecording() {
-    if (recording) { recorder.current?.stop(); setRecording(false); return; }
+  function clearRecordingTimers() {
+    if (recordingTimer.current !== null) window.clearInterval(recordingTimer.current);
+    if (recordingDeadline.current !== null) window.clearTimeout(recordingDeadline.current);
+    recordingTimer.current = null;
+    recordingDeadline.current = null;
+  }
+
+  function stopRecording() {
+    const activeRecorder = recorder.current;
+    if (!activeRecorder || activeRecorder.state === "inactive") return;
+    clearRecordingTimers();
+    setVoicePhase("transcribing");
+    setVoiceMessage("Turning your recording into text…");
+    activeRecorder.stop();
+  }
+
+  function showVoiceResult(phase: Extract<VoicePhase, "done" | "error">, status: string) {
+    setVoicePhase(phase);
+    setVoiceMessage(status);
+    if (voiceResetTimer.current !== null) window.clearTimeout(voiceResetTimer.current);
+    voiceResetTimer.current = window.setTimeout(() => {
+      setVoicePhase("idle");
+      setVoiceMessage("");
+      voiceResetTimer.current = null;
+    }, phase === "done" ? 2_500 : 5_000);
+  }
+
+  async function transcribeRecording(blob: Blob) {
+    const validationError = dictationValidationError(blob);
+    if (validationError) { showVoiceResult("error", validationError); return; }
+    const request = new AbortController();
+    transcriptionRequest.current = request;
+    const body = new FormData();
+    body.set("file", new File([blob], dictationFileName(blob.type), { type: blob.type }));
     try {
+      const response = await fetch("/api/transcribe", { method: "POST", body, signal: request.signal });
+      const result = await response.json() as { text?: string; error?: string };
+      if (!response.ok || !result.text) throw new Error(result.error ?? "I couldn’t transcribe that recording.");
+      if (!mounted.current) return;
+      setText((current) => appendDictationText(current, result.text!));
+      showVoiceResult("done", "Added to your draft. You can edit it before sending.");
+    } catch (error) {
+      if (!mounted.current || request.signal.aborted) return;
+      showVoiceResult("error", error instanceof Error ? error.message : "I couldn’t transcribe that recording. Try again.");
+    } finally {
+      if (transcriptionRequest.current === request) transcriptionRequest.current = null;
+    }
+  }
+
+  async function toggleRecording() {
+    if (voicePhase === "recording") { stopRecording(); return; }
+    if (voicePhase === "requesting" || voicePhase === "transcribing") return;
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      showVoiceResult("error", "Voice input isn’t supported in this browser.");
+      return;
+    }
+    try {
+      if (voiceResetTimer.current !== null) window.clearTimeout(voiceResetTimer.current);
+      setVoicePhase("requesting");
+      setVoiceMessage("Requesting microphone access…");
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream); chunks.current = [];
-      mediaRecorder.ondataavailable = (event) => chunks.current.push(event.data);
-      mediaRecorder.onstop = () => {
-        const blob = new Blob(chunks.current, { type: mediaRecorder.mimeType || "audio/webm" });
-        addFiles([new File([blob], `voice-note-${Date.now()}.webm`, { type: blob.type })]);
+      if (!mounted.current) { stream.getTracks().forEach((track) => track.stop()); return; }
+      const mediaRecorder = new MediaRecorder(stream);
+      chunks.current = [];
+      recordingStream.current = stream;
+      mediaRecorder.ondataavailable = (event) => { if (event.data.size > 0) chunks.current.push(event.data); };
+      mediaRecorder.onerror = () => {
+        mediaRecorder.onstop = null;
+        clearRecordingTimers();
         stream.getTracks().forEach((track) => track.stop());
+        recordingStream.current = null;
+        recorder.current = null;
+        showVoiceResult("error", "Recording stopped unexpectedly. Try again.");
       };
-      recorder.current = mediaRecorder; mediaRecorder.start(); setRecording(true);
-    } catch { setMessage("Microphone access is needed to record a voice note."); }
+      mediaRecorder.onstop = () => {
+        clearRecordingTimers();
+        stream.getTracks().forEach((track) => track.stop());
+        recordingStream.current = null;
+        recorder.current = null;
+        const blob = new Blob(chunks.current, { type: mediaRecorder.mimeType || "audio/webm" });
+        chunks.current = [];
+        if (mounted.current) void transcribeRecording(blob);
+      };
+      recorder.current = mediaRecorder;
+      mediaRecorder.start();
+      const startedAt = Date.now();
+      setVoiceSeconds(0);
+      setVoicePhase("recording");
+      setVoiceMessage("Listening… tap Stop when you’re done.");
+      recordingTimer.current = window.setInterval(() => setVoiceSeconds(Math.floor((Date.now() - startedAt) / 1_000)), 250);
+      recordingDeadline.current = window.setTimeout(stopRecording, MAX_DICTATION_SECONDS * 1_000);
+    } catch {
+      recordingStream.current?.getTracks().forEach((track) => track.stop());
+      recordingStream.current = null;
+      recorder.current = null;
+      showVoiceResult("error", "Allow microphone access to use voice input.");
+    }
   }
 
   async function updateReminder(status: "completed" | "dismissed") {
@@ -609,35 +985,116 @@ export function InboxWorkspace({ familyId, students, categories, initialEvidence
     </div>,
     document.body,
   ) : null;
+  const conversationComposer: ConversationComposer = {
+    text,
+    files,
+    studentId,
+    recording,
+    voicePhase,
+    voiceSeconds,
+    voiceMessage,
+    onTextChange: handleTextChange,
+    onStudentChange: selectCaptureStudent,
+    onPhoto: () => imageInput.current?.click(),
+    onFile: () => fileInput.current?.click(),
+    onVoice: () => { void toggleRecording(); },
+    onScore: () => setText((current) => current || `${studentNames.get(studentId) ?? "The learner"} scored `),
+    onRemoveFile: (index) => setFiles((current) => current.filter((_, itemIndex) => itemIndex !== index)),
+    onPaste: pasteImages,
+  };
+  const conversationPickerPortal = conversationPickerOpen && typeof document !== "undefined" ? createPortal(
+    <section
+      ref={conversationPicker}
+      className="conversation-history-picker"
+      role="dialog"
+      aria-modal="false"
+      aria-labelledby="conversation-history-title"
+      style={conversationPickerPosition}
+    >
+      <header>
+        <div><strong id="conversation-history-title">Recent conversations</strong><span>Your last 10 threads with Klio</span></div>
+        <button type="button" className="conversation-history-new" onClick={startNewAgentConversation}><Plus size={14} />New</button>
+      </header>
+      <div className="conversation-history-list">
+        {conversationPickerLoading ? <div className="conversation-history-loading" aria-label="Loading conversations"><i /><i /><i /><span>Loading conversations</span></div> : null}
+        {!conversationPickerLoading && conversationPickerError ? <div className="conversation-history-state" role="alert"><strong>Couldn’t load conversations</strong><span>{conversationPickerError}</span><button type="button" onClick={() => void loadRecentConversations()}>Try again</button></div> : null}
+        {!conversationPickerLoading && !conversationPickerError && !recentConversations.length ? <div className="conversation-history-state"><strong>No conversations yet</strong><span>Tell Klio what you need to start one.</span><button type="button" onClick={startNewAgentConversation}>Start a conversation</button></div> : null}
+        {!conversationPickerLoading && !conversationPickerError ? recentConversations.map((conversation) => {
+          const learner = conversation.studentId ? studentNames.get(conversation.studentId) ?? "Learner" : "Family";
+          const selected = conversation.id === conversationId;
+          return <button type="button" className={selected ? "selected" : ""} onClick={() => void selectRecentConversation(conversation.id)} key={conversation.id}>
+            <span className="conversation-history-copy"><strong>{conversation.title}</strong><small>{learner} · {formatConversationAge(conversation.updatedAt)}</small></span>
+            {selected ? <Check size={15} aria-label="Current conversation" /> : null}
+          </button>;
+        }) : null}
+      </div>
+    </section>,
+    document.body,
+  ) : null;
+  const conversationHistoryButton = <button ref={conversationButton} type="button" onClick={() => void toggleConversationPicker()} aria-label="Open conversations" aria-haspopup="dialog" aria-expanded={conversationPickerOpen}><MessagesSquare size={17} />Conversations</button>;
+  const capabilityLibraryPortal = capabilityLibraryOpen && typeof document !== "undefined" ? createPortal(
+    <section
+      ref={capabilityLibraryPanel}
+      id={CAPABILITY_LIBRARY_ID}
+      className="assistant-capability-library"
+      role="dialog"
+      aria-modal="false"
+      aria-labelledby="assistant-capability-title"
+      style={capabilityLibraryPosition}
+    >
+      <header>
+        <div><span>Ask Klio</span><h2 id="assistant-capability-title">Start with an outcome</h2><p>Choose a starting point, then make the request your own.</p></div>
+        <button type="button" className="assistant-capability-close" onClick={() => { setCapabilityLibraryOpen(false); capabilityLibraryButton.current?.focus({ preventScroll: true }); }} aria-label="Close everything Klio can do"><X size={16} /></button>
+      </header>
+      <div className="assistant-capability-groups">
+        {assistantStarterGroups.map((group) => <section aria-labelledby={`assistant-capability-${group.id}`} key={group.id}>
+          <h3 id={`assistant-capability-${group.id}`}>{group.label}</h3>
+          <div>{assistantStarters.filter((starter) => starter.groupId === group.id).map((starter) => {
+            const Icon = assistantStarterIcon(starter.id);
+            const disabledReason = starter.disabledReason ?? starterBlockReason;
+            return <button type="button" className="assistant-capability-row" onClick={() => selectAssistantStarter(starter)} disabled={starter.disabled || Boolean(starterBlockReason)} key={starter.id}>
+              <span className="assistant-capability-icon" aria-hidden="true"><Icon size={16} /></span>
+              <span className="assistant-capability-copy"><strong>{starter.label}</strong><small>{starter.detail}</small></span>
+              <span className={`assistant-capability-state ${disabledReason ? "disabled" : ""}`}>{disabledReason ?? <ArrowRight size={15} />}</span>
+            </button>;
+          })}</div>
+        </section>)}
+      </div>
+      <footer><FileCheck2 size={14} /><p>Uses current family records. Grades, curriculum changes, and major schedule changes still wait for you.</p></footer>
+    </section>,
+    document.body,
+  ) : null;
 
   if (compact) return (
     <section ref={captureShell} className={`week-capture ${dashboard ? "day-dashboard-capture" : ""}`} aria-labelledby={dashboard ? undefined : "week-capture-title"} onFocus={() => onFocusModeChange?.(true)} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) onFocusModeChange?.(false); }}>
       <header className="handoff-heading"><div><span>Hand something to Klio</span>{!dashboard ? <h2 id="week-capture-title">A lesson, score, file, or note</h2> : null}</div><small>Klio handles the follow-through</small></header>
-      <section className={`quiet-capture ${agentJob ? "agent-job-mode" : ""} ${assignmentContext ? "assignment-context-mode" : ""}`} aria-label={agentJob ? "Give Klio a job" : "Capture learning"} onDragOver={(event) => { event.preventDefault(); event.currentTarget.classList.add("dragging"); }} onDragLeave={(event) => event.currentTarget.classList.remove("dragging")} onDrop={handleCaptureDrop}>
-        {assignmentContext && !agentJob ? <motion.div className="quiet-assignment-context" initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }}><FileCheck2 size={14} /><span><small>Working with</small><strong>{assignmentContext.title}</strong></span><button type="button" onClick={onAssignmentContextClear} aria-label={`Remove ${assignmentContext.title}`}><X size={13} /></button></motion.div> : null}
-        <textarea className={assignmentContext ? "assignment-context-textarea" : undefined} ref={captureInput} rows={assignmentContext ? 4 : undefined} value={text} onChange={(event) => handleTextChange(event.target.value)} onContextMenu={openSpellingMenu} onPaste={agentJob ? undefined : pasteImages} placeholder={agentJob ? "What should Klio take care of?" : assignmentContext ? "Add a score, note, photo, or tell Klio what changed…" : "Drop a lesson, photo, score, file, or note here…"} aria-label={agentJob ? "What should Klio take care of?" : "Hand something to Klio"} lang="en" spellCheck autoCorrect="on" autoCapitalize="sentences" />
+      <section className="compact-agent-discovery" aria-labelledby="compact-agent-starters-title">
+        <header><span id="compact-agent-starters-title">Suggestions</span></header>
+        <div className="compact-agent-starter-list">{topAssistantStarters.map((starter) => { const Icon = assistantStarterIcon(starter.id); return <button type="button" onClick={() => selectAssistantStarter(starter)} disabled={starter.disabled || Boolean(starterBlockReason)} title={starter.disabledReason ?? starterBlockReason ?? starter.detail} key={starter.id}><Icon size={14} aria-hidden="true" /><span>{assistantStarterShortLabel(starter.id, starterContext)}</span></button>; })}</div>
+        <footer className="compact-agent-discovery-footer"><button ref={capabilityLibraryButton} type="button" className="compact-agent-library-trigger" onClick={openCapabilityLibrary} aria-label="See everything Klio can do" aria-expanded={capabilityLibraryOpen} aria-controls={CAPABILITY_LIBRARY_ID} disabled={Boolean(starterBlockReason)}>More <ArrowRight size={13} /></button></footer>
+        {starterBlockReason ? <p>{starterBlockReason}</p> : null}
+      </section>
+      <section className={`quiet-capture ${assignmentContext ? "assignment-context-mode" : ""}`} aria-label="Hand something to Klio" onDragOver={(event) => { event.preventDefault(); event.currentTarget.classList.add("dragging"); }} onDragLeave={(event) => event.currentTarget.classList.remove("dragging")} onDrop={handleCaptureDrop}>
+        {assignmentContext ? <motion.div className="quiet-assignment-context" initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }}><FileCheck2 size={14} /><span><small>Working with</small><strong>{assignmentContext.title}</strong></span>{!agentJob ? <button type="button" onClick={onAssignmentContextClear} aria-label={`Remove ${assignmentContext.title}`}><X size={13} /></button> : null}</motion.div> : null}
+        <textarea className={assignmentContext ? "assignment-context-textarea" : undefined} ref={captureInput} rows={assignmentContext ? 4 : undefined} value={text} onChange={(event) => handleTextChange(event.target.value)} onContextMenu={openSpellingMenu} onPaste={agentJob ? undefined : pasteImages} placeholder={assignmentContext ? "Ask about this lesson, add a result, or tell Klio what changed…" : "Tell Klio what happened or what you need…"} aria-label="Hand something to Klio" lang="en" spellCheck autoCorrect="on" autoCapitalize="sentences" />
         {spellingAssist}
-        {agentJob ? <div className="quiet-job-mode"><Sparkles size={13} /><span>{agentJob.label}</span><button type="button" onClick={cancelAgentJob} aria-label="Return to learning capture"><X size={13} /></button></div> : null}
+        <VoiceDictationFeedback phase={voicePhase} seconds={voiceSeconds} message={voiceMessage} onStop={recording ? stopRecording : undefined} />
         <div className="quiet-attachments"><AnimatePresence>{files.map((file, index) => <motion.div layout key={`${file.name}-${file.size}-${index}`} initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -3 }}><span>{fileIcon(file)}{file.name}</span><button type="button" onClick={() => setFiles((current) => current.filter((_, itemIndex) => itemIndex !== index))} aria-label={`Remove ${file.name}`}><X size={13} /></button></motion.div>)}</AnimatePresence></div>
         <AnimatePresence>{linkOpen ? <motion.label className="quiet-link reference-link" initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}><Link2 size={15} /><span><input value={linkUrl} onChange={(event) => setLinkUrl(event.target.value)} placeholder="Save a reference link" type="url" autoFocus /><small>Klio saves this address but does not open or read the page.</small></span><button type="button" onClick={() => { setLinkOpen(false); setLinkUrl(""); }} aria-label="Remove link"><X size={14} /></button></motion.label> : null}</AnimatePresence>
-        <div className="capture-intent-row">
-          <div className="capture-mode" aria-label="Choose what Klio should do">
-            <button type="button" className={!agentJob ? "active" : ""} onClick={cancelAgentJob}>Save record</button>
-            <button type="button" className={agentJob ? "active" : ""} onClick={startCustomAgentJob}><Sparkles size={13} />Ask Klio</button>
-          </div>
-          <label className={`capture-for ${assignmentContext ? "locked" : ""}`}><span>For</span><select value={assignmentContext?.studentId ?? studentId} onChange={(event) => selectCaptureStudent(event.target.value)} aria-label="Learner for this handoff" disabled={Boolean(assignmentContext)}><option value="">{agentJob ? "Family" : "Choose learner…"}</option>{students.map((student) => <option value={student.id} key={student.id}>{student.displayName}</option>)}</select></label>
-        </div>
-        <p className={`capture-interpretation ${!targetName ? "needs-target" : ""}`}>{sendInterpretation}</p>
         <footer>
           <input ref={imageInput} hidden multiple type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => { if (event.target.files) addFiles(event.target.files); event.target.value = ""; }} />
           <input ref={fileInput} hidden multiple type="file" accept="image/jpeg,image/png,image/webp,application/pdf,audio/*,text/csv" onChange={(event) => { if (event.target.files) addFiles(event.target.files); event.target.value = ""; }} />
-          {agentJob ? <div className="quiet-agent-context"><Sparkles size={14} /><span>Using current family records</span></div> : <div className="quiet-tools"><button type="button" onClick={() => imageInput.current?.click()}><Camera size={17} />Photo</button><button type="button" className={recording ? "recording" : ""} onClick={toggleRecording}>{recording ? <Square size={13} fill="currentColor" /> : <Mic size={17} />}{recording ? "Stop" : "Voice"}</button><button type="button" onClick={() => fileInput.current?.click()}><Paperclip size={17} />File</button><button type="button" onClick={() => setText((current) => current || `${studentNames.get(captureStudentId) ?? "The learner"} scored `)}><FileText size={17} />Score</button></div>}
-          <button type="button" className="quiet-save" aria-label={agentJob ? "Give this job to Klio" : "Save to Klio"} onClick={() => void submitCurrent()} disabled={!canSubmit}>{busy ? <LoaderCircle className="spin" size={17} /> : <ArrowUp size={18} />}</button>
+          {!agentJob ? <div className="quiet-tools">{conversationHistoryButton}<button type="button" onClick={() => imageInput.current?.click()}><Camera size={17} />Photo</button>{!recording ? <button type="button" className={voicePending ? "transcribing" : ""} onClick={toggleRecording} disabled={voicePending} aria-describedby="voice-transcription-disclosure" aria-label={voicePhase === "requesting" ? "Starting voice input" : voicePhase === "transcribing" ? "Transcribing voice input" : "Start voice input"}>{voicePending ? <LoaderCircle className="spin" size={16} /> : <Mic size={17} />}{voicePhase === "requesting" ? "Starting" : voicePhase === "transcribing" ? "Transcribing" : "Voice"}</button> : null}<button type="button" onClick={() => fileInput.current?.click()}><Paperclip size={17} />File</button><button type="button" onClick={() => setText((current) => current || `${studentNames.get(captureStudentId) ?? "The learner"} scored `)}><FileText size={17} />Score</button></div> : null}
+          <label className={`capture-for ${assignmentContext ? "locked" : ""}`}><span>For</span><select value={assignmentContext?.studentId ?? studentId} onChange={(event) => selectCaptureStudent(event.target.value)} aria-label="Learner for this handoff" disabled={Boolean(assignmentContext)}><option value="">Family</option>{students.map((student) => <option value={student.id} key={student.id}>{student.displayName}</option>)}</select></label>
+          <button type="button" className="quiet-save" aria-label="Send to Klio" onClick={() => void submitCurrent()} disabled={!canSubmit}>{busy ? <LoaderCircle className="spin" size={17} /> : <ArrowUp size={18} />}</button>
+          {!agentJob ? <VoiceTranscriptionDisclosure /> : null}
         </footer>
+          <AnimatePresence>{agentTurn ? <InlineAgentTurn key={`${agentTurn.id}:${conversationViewVersion}`} concise composer={conversationComposer} familyId={familyId} students={students} history={conversationHistory} turn={agentTurn} artifacts={initialArtifacts} learnerName={agentTurn.studentId ? studentNames.get(agentTurn.studentId) : undefined} onDismiss={() => void dismissAgentTurn(agentTurn)} onCancel={() => void cancelAgentTurn(agentTurn)} onAnswer={(answer) => answerAgentTurn(agentTurn, answer)} onFollowUp={(request) => followUpAgentTurn(agentTurn, request)} onConversationSelect={openAgentConversation} onNewConversation={startNewAgentConversation} onPracticeOpen={onPracticeOpen} onRetry={() => void retryAgentTurn(agentTurn)} /> : null}</AnimatePresence>
       </section>
-      <AnimatePresence>{agentTurn ? <InlineAgentTurn concise history={conversationHistory} turn={agentTurn} artifacts={initialArtifacts} learnerName={agentTurn.studentId ? studentNames.get(agentTurn.studentId) : undefined} onDismiss={() => void dismissAgentTurn(agentTurn)} onCancel={() => void cancelAgentTurn(agentTurn)} onAnswer={(answer) => answerAgentTurn(agentTurn, answer)} onFollowUp={(request) => followUpAgentTurn(agentTurn, request)} onPracticeOpen={onPracticeOpen} onRetry={() => void retryAgentTurn(agentTurn)} /> : null}</AnimatePresence>
       <AnimatePresence>{message ? <motion.p className="quiet-message" role="status" initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>{message}</motion.p> : null}</AnimatePresence>
       {spellingMenuPortal}
+      {conversationPickerPortal}
+      {capabilityLibraryPortal}
     </section>
   );
 
@@ -647,6 +1104,7 @@ export function InboxWorkspace({ familyId, students, categories, initialEvidence
         {assignmentContext && !agentJob ? <motion.div className="quiet-assignment-context" initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }}><FileCheck2 size={14} /><span><small>Working with</small><strong>{assignmentContext.title}</strong></span><button type="button" onClick={onAssignmentContextClear} aria-label={`Remove ${assignmentContext.title}`}><X size={13} /></button></motion.div> : null}
         <textarea ref={captureInput} rows={assignmentContext ? 4 : undefined} value={text} onChange={(event) => handleTextChange(event.target.value)} onContextMenu={openSpellingMenu} onPaste={agentJob ? undefined : pasteImages} placeholder={agentJob ? "What should Klio take care of?" : assignmentContext ? "Add a score, note, photo, or tell Klio what changed…" : "What happened in learning today?"} aria-label={agentJob ? "What should Klio take care of?" : "What happened in learning today?"} lang="en" spellCheck autoCorrect="on" autoCapitalize="sentences" />
         {spellingAssist}
+        <VoiceDictationFeedback phase={voicePhase} seconds={voiceSeconds} message={voiceMessage} onStop={recording ? stopRecording : undefined} />
         {agentJob ? <div className="quiet-job-mode"><Sparkles size={13} /><span>{agentJob.label}</span><button type="button" onClick={cancelAgentJob} aria-label="Return to learning capture"><X size={13} /></button></div> : null}
         <div className="quiet-attachments"><AnimatePresence>{files.map((file, index) => <motion.div layout key={`${file.name}-${file.size}-${index}`} initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -3 }}><span>{fileIcon(file)}{file.name}</span><button type="button" onClick={() => setFiles((current) => current.filter((_, itemIndex) => itemIndex !== index))} aria-label={`Remove ${file.name}`}><X size={13} /></button></motion.div>)}</AnimatePresence></div>
         <AnimatePresence>{linkOpen ? <motion.label className="quiet-link reference-link" initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}><Link2 size={15} /><span><input value={linkUrl} onChange={(event) => setLinkUrl(event.target.value)} placeholder="Save a reference link" type="url" autoFocus /><small>Klio saves this address but does not open or read the page.</small></span><button type="button" onClick={() => { setLinkOpen(false); setLinkUrl(""); }} aria-label="Remove link"><X size={14} /></button></motion.label> : null}</AnimatePresence>
@@ -654,9 +1112,10 @@ export function InboxWorkspace({ familyId, students, categories, initialEvidence
         <footer>
           <input ref={imageInput} hidden multiple type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => { if (event.target.files) addFiles(event.target.files); event.target.value = ""; }} />
           <input ref={fileInput} hidden multiple type="file" accept="image/jpeg,image/png,image/webp,application/pdf,audio/*,text/csv" onChange={(event) => { if (event.target.files) addFiles(event.target.files); event.target.value = ""; }} />
-          {agentJob ? <div className="quiet-agent-context"><Sparkles size={14} /><span>Using current family records</span></div> : <div className="quiet-tools"><button type="button" onClick={() => imageInput.current?.click()}><Camera size={17} />Photo</button><button type="button" className={recording ? "recording" : ""} onClick={toggleRecording}>{recording ? <Square size={13} fill="currentColor" /> : <Mic size={17} />}{recording ? "Stop" : "Voice"}</button><button type="button" onClick={() => fileInput.current?.click()}><Paperclip size={17} />File</button><button type="button" onClick={() => setLinkOpen((open) => !open)}><Link2 size={17} />Link</button></div>}
+          {agentJob ? <div className="quiet-agent-context"><Sparkles size={14} /><span>Using current family records</span></div> : <div className="quiet-tools">{conversationHistoryButton}<button type="button" onClick={() => imageInput.current?.click()}><Camera size={17} />Photo</button>{!recording ? <button type="button" className={voicePending ? "transcribing" : ""} onClick={toggleRecording} disabled={voicePending} aria-describedby="voice-transcription-disclosure" aria-label={voicePhase === "requesting" ? "Starting voice input" : voicePhase === "transcribing" ? "Transcribing voice input" : "Start voice input"}>{voicePending ? <LoaderCircle className="spin" size={16} /> : <Mic size={17} />}{voicePhase === "requesting" ? "Starting" : voicePhase === "transcribing" ? "Transcribing" : "Voice"}</button> : null}<button type="button" onClick={() => fileInput.current?.click()}><Paperclip size={17} />File</button><button type="button" onClick={() => setLinkOpen((open) => !open)}><Link2 size={17} />Link</button></div>}
           <label className="capture-for"><span>For</span><select value={studentId} onChange={(event) => selectCaptureStudent(event.target.value)} aria-label="Selected child"><option value="">{agentJob ? "Family" : "Choose learner…"}</option>{students.map((student) => <option value={student.id} key={student.id}>{student.displayName}</option>)}</select></label>
           <button type="button" className="quiet-save" aria-label={agentJob ? "Give this job to Klio" : "Save to Klio"} onClick={() => void submitCurrent()} disabled={!canSubmit}>{busy ? <LoaderCircle className="spin" size={17} /> : <ArrowUp size={18} />}</button>
+          {!agentJob ? <VoiceTranscriptionDisclosure /> : null}
         </footer>
       </section>
       <section className="quiet-agent-suggestions" aria-label="Things Klio can do"><button type="button" className="quiet-agent-launch" onClick={startCustomAgentJob} disabled={busy || files.length > 0}><Sparkles size={12} /> Ask Klio to</button><div>{agentJobs.slice(0, 3).map((job) => { const Icon = job.icon; return <button type="button" onClick={() => selectAgentJob(job)} disabled={busy || files.length > 0} key={`${job.intent}-${job.label}`}><Icon size={13} />{job.label}</button>; })}</div></section>
@@ -676,9 +1135,11 @@ export function InboxWorkspace({ familyId, students, categories, initialEvidence
         {dailyBrief.action.kind === "agent" ? <button type="button" className="quiet-daily-action" onClick={() => void runDailyBriefAction(dailyBrief.action)} disabled={busy || files.length > 0}>{dailyBrief.action.label}<ChevronRight size={13} /></button> : null}
         {dailyBrief.action.kind === "none" ? <span className="quiet-daily-passive">{dailyBrief.action.label}</span> : null}
       </section>
-      <AnimatePresence>{agentTurn ? <InlineAgentTurn concise history={conversationHistory} turn={agentTurn} artifacts={initialArtifacts} learnerName={agentTurn.studentId ? studentNames.get(agentTurn.studentId) : undefined} onDismiss={() => void dismissAgentTurn(agentTurn)} onCancel={() => void cancelAgentTurn(agentTurn)} onAnswer={(answer) => answerAgentTurn(agentTurn, answer)} onFollowUp={(request) => followUpAgentTurn(agentTurn, request)} onRetry={() => void retryAgentTurn(agentTurn)} /> : null}</AnimatePresence>
+      <AnimatePresence>{agentTurn ? <InlineAgentTurn key={`${agentTurn.id}:${conversationViewVersion}`} concise composer={conversationComposer} familyId={familyId} students={students} history={conversationHistory} turn={agentTurn} artifacts={initialArtifacts} learnerName={agentTurn.studentId ? studentNames.get(agentTurn.studentId) : undefined} onDismiss={() => void dismissAgentTurn(agentTurn)} onCancel={() => void cancelAgentTurn(agentTurn)} onAnswer={(answer) => answerAgentTurn(agentTurn, answer)} onFollowUp={(request) => followUpAgentTurn(agentTurn, request)} onConversationSelect={openAgentConversation} onNewConversation={startNewAgentConversation} onRetry={() => void retryAgentTurn(agentTurn)} /> : null}</AnimatePresence>
       <AnimatePresence>{message ? <motion.p className="quiet-message" role="status" initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>{message}</motion.p> : null}</AnimatePresence>
       {spellingMenuPortal}
+      {conversationPickerPortal}
+      {capabilityLibraryPortal}
 
       <AnimatePresence mode="popLayout">{pendingReminder ? <motion.section className={`quiet-reminder ${editingReminder ? "editing" : ""}`} aria-label="Klio reminder" layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}>
         {editingReminder ? <div className="reminder-edit-form"><label><span>Reminder</span><input value={reminderTitle} onChange={(event) => setReminderTitle(event.target.value)} autoFocus /></label><label><span>Due date</span><input type="date" value={reminderDate} onChange={(event) => setReminderDate(event.target.value)} /></label><div><button type="button" onClick={() => setEditingReminder(false)}>Cancel</button><button type="button" onClick={saveReminderEdit} disabled={!reminderTitle.trim()}>Save</button></div></div> : <><div><span>Klio reminder</span><p>{pendingReminder.title}</p>{pendingReminder.dueAt ? <small>{formatDue(pendingReminder.dueAt)}</small> : null}</div><div className="reminder-actions"><button type="button" onClick={() => updateReminder("completed")}><Check size={15} />Done</button><button type="button" onClick={beginReminderEdit}><Pencil size={13} />Edit</button></div></>}
@@ -717,18 +1178,38 @@ export function InboxWorkspace({ familyId, students, categories, initialEvidence
   );
 }
 
-function InlineAgentTurn({ turn, artifacts, learnerName, history = [], concise = false, onDismiss, onCancel, onAnswer, onFollowUp, onPracticeOpen, onRetry }: { turn: AgentTurnSummary; artifacts: ArtifactDTO[]; learnerName?: string; history?: ConversationMessage[]; concise?: boolean; onDismiss: () => void; onCancel?: () => void; onAnswer?: (answer: string) => Promise<void>; onFollowUp?: (request: string) => Promise<void>; onPracticeOpen?: (artifactId: string) => void; onRetry: () => void }) {
+function VoiceDictationFeedback({ phase, seconds, message, onStop }: { phase: VoicePhase; seconds: number; message: string; onStop?: () => void }) {
+  if (phase === "idle") return null;
+  if (phase === "error") return <p className="voice-dictation-feedback error" role="alert"><span aria-hidden="true"><X size={13} /></span><strong>Voice input stopped</strong><small>{message}</small></p>;
+  if (phase === "done") return <p className="voice-dictation-feedback done" role="status" aria-live="polite" aria-atomic="true"><span aria-hidden="true"><Check size={13} /></span><strong>Voice added</strong><small>{message}</small></p>;
+  const label = phase === "requesting" ? "Starting microphone" : phase === "recording" ? "Recording" : "Transcribing";
+  return <div className={`voice-dictation-feedback ${phase}`} role="status" aria-live="polite" aria-label={`${label}${phase === "recording" ? `, ${formatDictationDuration(seconds)}` : ""}. ${message}`}>
+    <span className="voice-recording-meta"><i aria-hidden="true" /><strong>{label}</strong>{phase === "recording" ? <time>{formatDictationDuration(seconds)}</time> : null}</span>
+    <span className="voice-waveform" aria-hidden="true">{Array.from({ length: 24 }, (_, index) => <i key={index} />)}</span>
+    {phase === "recording" && onStop ? <button type="button" onClick={onStop} aria-label="Stop recording"><Square size={11} fill="currentColor" />Stop</button> : <span className="voice-processing-label">{phase === "requesting" ? "Connecting" : "Preparing text"}</span>}
+  </div>;
+}
+
+function VoiceTranscriptionDisclosure() {
+  return <small className="voice-transcription-disclosure" id="voice-transcription-disclosure">Voice is sent to OpenAI for transcription when recording stops. <Link href="/privacy">Privacy</Link></small>;
+}
+
+function InlineAgentTurn({ turn, artifacts, composer, familyId, students = [], learnerName, history = [], concise = false, onDismiss, onCancel, onAnswer, onFollowUp, onConversationSelect, onNewConversation, onPracticeOpen, onRetry }: { turn: AgentTurnSummary; artifacts: ArtifactDTO[]; composer?: ConversationComposer; familyId?: string; students?: StudentDTO[]; learnerName?: string; history?: ConversationMessage[]; concise?: boolean; onDismiss: () => void; onCancel?: () => void; onAnswer?: (answer: string) => Promise<void>; onFollowUp?: (request: string) => Promise<void>; onConversationSelect?: (conversationId: string) => Promise<void>; onNewConversation?: () => void; onPracticeOpen?: (artifactId: string) => void; onRetry: () => void }) {
   const [now, setNow] = useState<number | null>(null);
   const [answer, setAnswer] = useState("");
   const [answering, setAnswering] = useState(false);
   const [answerError, setAnswerError] = useState<string | null>(null);
-  const [minimized, setMinimized] = useState(false);
+  const [minimizedTurnId, setMinimizedTurnId] = useState<string | null>(null);
+  const minimized = minimizedTurnId === turn.id;
+  const portalReady = useSyncExternalStore(subscribeToClientMount, () => true, () => false);
   useEffect(() => { const update = () => setNow(Date.now()); update(); const timer = window.setInterval(update, 10_000); return () => window.clearInterval(timer); }, []);
   const receiptState = now === null ? turn.status : deriveReceiptState({ status: turn.status, createdAt: turn.createdAt, lastHeartbeatAt: turn.lastHeartbeatAt, now });
   const stale = receiptState === "paused";
   const active = turn.status === "running" && !stale;
   const queued = turn.status === "queued" && !stale;
-  const awaitingParent = turn.status === "awaiting_parent";
+  // A raw worker status is not a parent question. Only surface the blocking
+  // state when the bounded clarification tool produced an answerable prompt.
+  const awaitingParent = turn.status === "awaiting_parent" && Boolean(turn.clarification);
   const failed = turn.status === "failed";
   const steps = receiptSteps(turn.normalizedStep, turn.status, stale);
   async function submitAnswer() {
@@ -737,10 +1218,19 @@ function InlineAgentTurn({ turn, artifacts, learnerName, history = [], concise =
     try { await onAnswer(answer.trim()); }
     catch (error) { setAnswerError(error instanceof Error ? error.message : "Klio could not save that answer."); setAnswering(false); }
   }
-  if (concise && typeof document !== "undefined") return createPortal(
-    minimized ? <aside className="klio-minimized" aria-live="polite"><button type="button" onClick={() => setMinimized(false)}><span className={active || queued ? "working" : ""}><Sparkles size={15} /></span><span><strong>{awaitingParent ? "Klio needs one detail" : failed || stale ? "Klio paused" : active ? "Klio is working" : queued ? "Waiting to begin" : "Klio finished"}</strong><small>{turn.taskName}</small></span><ArrowRight size={16} /></button>{(active || queued) && onCancel ? <button type="button" className="klio-minimized-cancel" onClick={onCancel}>Cancel</button> : null}</aside> : <><button type="button" tabIndex={-1} className="klio-conversation-backdrop" onClick={() => setMinimized(true)} aria-label="Minimize Klio and return to the workspace" /><AgentConversation turn={turn} artifacts={artifacts} learnerName={learnerName} history={history} stale={stale} active={active} queued={queued} awaitingParent={awaitingParent} failed={failed} answer={answer} answering={answering} answerError={answerError} setAnswer={setAnswer} submitAnswer={submitAnswer} onMinimize={() => setMinimized(true)} onCancel={onCancel} onFollowUp={onFollowUp} onPracticeOpen={onPracticeOpen} onRetry={onRetry} /></>,
+  if (concise) {
+    if (minimized) {
+      // Finished conversation is continued through the universal composer.
+      // Only live or blocked work needs a second, persistent status surface.
+      if (!active && !queued && !awaitingParent && !failed && !stale) return null;
+      return <aside className="klio-minimized" aria-live="polite"><button type="button" onClick={() => setMinimizedTurnId(null)}><span className={active || queued ? "working" : ""}><Sparkles size={15} /></span><span><strong>{awaitingParent ? "Klio needs one detail" : failed || stale ? "Klio paused" : active ? "Klio is working" : "Waiting to begin"}</strong><small>{turn.taskName}</small></span><ArrowRight size={16} /></button>{(active || queued) && onCancel ? <button type="button" className="klio-minimized-cancel" onClick={onCancel}>Cancel</button> : null}</aside>;
+    }
+    if (!portalReady) return null;
+    return createPortal(
+    <><button type="button" tabIndex={-1} className="klio-conversation-backdrop" onClick={() => setMinimizedTurnId(turn.id)} aria-label="Minimize Klio and return to the workspace" /><AgentConversation turn={turn} artifacts={artifacts} composer={composer} familyId={familyId} students={students} now={now} learnerName={learnerName} history={history} stale={stale} active={active} queued={queued} awaitingParent={awaitingParent} failed={failed} answer={answer} answering={answering} answerError={answerError} setAnswer={setAnswer} submitAnswer={submitAnswer} onMinimize={() => setMinimizedTurnId(turn.id)} onCancel={onCancel} onFollowUp={onFollowUp} onConversationSelect={onConversationSelect} onNewConversation={onNewConversation} onPracticeOpen={onPracticeOpen} onRetry={onRetry} /></>,
     document.body,
   );
+  }
   return <motion.section className={`quiet-agent-turn work-receipt ${active ? "working" : ""} ${failed || stale ? "failed" : ""}`} layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }}>
     <span className="quiet-agent-mark"><Sparkles size={14} /></span>
     <div><header><div><small>{stale ? "Klio paused" : "On Klio’s desk"}</small><strong>{turn.taskName}</strong><p>{[learnerName, turn.subject, turn.sourceCount ? `${turn.sourceCount} ${turn.sourceCount === 1 ? "source" : "sources"}` : null].filter(Boolean).join(" · ")}</p></div>{!active && !queued && !awaitingParent ? <button type="button" onClick={onDismiss} aria-label="Dismiss Klio result"><X size={13} /></button> : null}</header>
@@ -756,19 +1246,30 @@ function InlineAgentTurn({ turn, artifacts, learnerName, history = [], concise =
   </motion.section>;
 }
 
-function AgentConversation({ turn, artifacts, learnerName, history, stale, active, queued, awaitingParent, failed, answer, answering, answerError, setAnswer, submitAnswer, onMinimize, onCancel, onFollowUp, onPracticeOpen, onRetry }: {
-  turn: AgentTurnSummary; artifacts: ArtifactDTO[]; learnerName?: string; history: ConversationMessage[];
+function AgentConversation({ turn, artifacts, composer, familyId, students, now, learnerName, history, stale, active, queued, awaitingParent, failed, answer, answering, answerError, setAnswer, submitAnswer, onMinimize, onCancel, onFollowUp, onConversationSelect, onNewConversation, onPracticeOpen, onRetry }: {
+  turn: AgentTurnSummary; artifacts: ArtifactDTO[]; composer?: ConversationComposer; familyId?: string; students: StudentDTO[]; now: number | null; learnerName?: string; history: ConversationMessage[];
   stale: boolean; active: boolean; queued: boolean; awaitingParent: boolean; failed: boolean;
   answer: string; answering: boolean; answerError: string | null; setAnswer: (value: string) => void; submitAnswer: () => Promise<void>;
-  onMinimize: () => void; onCancel?: () => void; onFollowUp?: (request: string) => Promise<void>; onPracticeOpen?: (artifactId: string) => void; onRetry: () => void;
+  onMinimize: () => void; onCancel?: () => void; onFollowUp?: (request: string) => Promise<void>; onConversationSelect?: (conversationId: string) => Promise<void>; onNewConversation?: () => void; onPracticeOpen?: (artifactId: string) => void; onRetry: () => void;
 }) {
-  const [followUp, setFollowUp] = useState("");
+  const [localFollowUp, setLocalFollowUp] = useState("");
   const [followingUp, setFollowingUp] = useState(false);
+  const [followUpError, setFollowUpError] = useState<string | null>(null);
+  const [workTurns, setWorkTurns] = useState<AgentTurnSummary[]>([turn]);
+  const [workLoading, setWorkLoading] = useState(false);
+  const [workError, setWorkError] = useState<string | null>(null);
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [conversationMenuOpen, setConversationMenuOpen] = useState(false);
+  const [switchingConversationId, setSwitchingConversationId] = useState<string | null>(null);
   const dialogRef = useRef<HTMLElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const positionedResponse = useRef<string | null>(null);
   const response = turn.streamedMessage ?? turn.result?.message;
-  const finished = turn.status === "completed";
-  const status = stale ? "Paused — your original request is safe" : queued ? "Waiting to begin" : active ? receiptStepLabel(turn.normalizedStep) : awaitingParent ? "Klio needs one detail" : failed ? "Klio could not finish" : "Done";
+  const followUp = composer?.text ?? localFollowUp;
+  const attachedFiles = composer?.files ?? [];
+  const composerVoicePending = composer?.voicePhase === "requesting" || composer?.voicePhase === "transcribing";
+  const changeFollowUp = (value: string) => composer ? composer.onTextChange(value) : setLocalFollowUp(value);
+  const status = stale ? "Paused — your original request is safe" : queued ? "Thinking" : active ? conversationProgressLabel(turn) : awaitingParent ? "Klio needs one detail" : failed ? "Klio could not finish" : "Done";
   useEffect(() => { dialogRef.current?.focus({ preventScroll: true }); }, []);
   useEffect(() => {
     const minimizeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") onMinimize(); };
@@ -776,20 +1277,91 @@ function AgentConversation({ turn, artifacts, learnerName, history, stale, activ
     return () => window.removeEventListener("keydown", minimizeOnEscape);
   }, [onMinimize]);
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: history.length ? "smooth" : "auto" });
-  }, [active, awaitingParent, failed, history.length, response, stale]);
+    const scroller = scrollRef.current;
+    const stream = scroller?.firstElementChild;
+    if (!scroller || !stream) return;
+    const frame = requestAnimationFrame(() => {
+      const latest = stream.lastElementChild as HTMLElement | null;
+      if (!latest) return;
+      if (active || queued) {
+        const distanceFromBottom = scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop;
+        if (distanceFromBottom < 90) scroller.scrollTop = scroller.scrollHeight;
+        return;
+      }
+      if (!response || positionedResponse.current === response) return;
+      positionedResponse.current = response;
+      scroller.scrollTop = completedConversationScrollTarget({
+        scrollHeight: scroller.scrollHeight,
+        clientHeight: scroller.clientHeight,
+        latestOffsetTop: latest.offsetTop,
+        latestHeight: latest.offsetHeight,
+      });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [active, history.length, queued, response]);
+  useEffect(() => {
+    if (!familyId) return;
+    const controller = new AbortController();
+    async function loadWork() {
+      setWorkLoading(true);
+      try {
+        const response = await fetch(`/api/agent/turns?familyId=${encodeURIComponent(familyId!)}`, { cache: "no-store", signal: controller.signal });
+        const body = await response.json() as { turns?: AgentTurnSummary[]; conversations?: ConversationSummary[]; error?: string };
+        if (!response.ok) throw new Error(body.error ?? "Klio’s work could not be loaded.");
+        setWorkTurns(body.turns ?? []);
+        setConversations(body.conversations ?? []);
+        setWorkError(null);
+      } catch (error) {
+        if (!controller.signal.aborted) setWorkError(error instanceof Error ? error.message : "Klio’s work could not be loaded.");
+      } finally {
+        if (!controller.signal.aborted) setWorkLoading(false);
+      }
+    }
+    void loadWork();
+    const timer = window.setInterval(() => void loadWork(), 10_000);
+    return () => { controller.abort(); window.clearInterval(timer); };
+  }, [familyId]);
   async function sendFollowUp() {
-    if (!onFollowUp || !followUp.trim() || followingUp) return;
-    setFollowingUp(true);
-    try { await onFollowUp(followUp.trim()); setFollowUp(""); }
-    finally { setFollowingUp(false); }
+    if (!onFollowUp || (!followUp.trim() && !attachedFiles.length) || followingUp) return;
+    setFollowingUp(true); setFollowUpError(null);
+    try {
+      await onFollowUp(followUp.trim() || "Review the attached work and help me with the next step.");
+      changeFollowUp("");
+    } catch (error) {
+      setFollowUpError(error instanceof Error ? error.message : "Klio could not send that handoff.");
+    } finally { setFollowingUp(false); }
   }
+  async function switchConversation(nextConversationId: string) {
+    if (!onConversationSelect || nextConversationId === turn.conversationId || switchingConversationId) {
+      setConversationMenuOpen(false);
+      return;
+    }
+    setSwitchingConversationId(nextConversationId);
+    setFollowUpError(null);
+    try {
+      await onConversationSelect(nextConversationId);
+      setConversationMenuOpen(false);
+    } catch (error) {
+      setFollowUpError(error instanceof Error ? error.message : "Klio could not open that conversation.");
+    } finally { setSwitchingConversationId(null); }
+  }
+  const currentWorkTurns = workTurns.some((item) => item.id === turn.id) ? workTurns.map((item) => item.id === turn.id ? turn : item) : [turn, ...workTurns];
+  const hasVisibleWork = currentWorkTurns.some(isVisibleWorkspaceWork);
   return <>
     <section ref={dialogRef} tabIndex={-1} className="klio-conversation" role="dialog" aria-label="Conversation with Klio">
       <header className="klio-conversation-header">
         <span className="klio-conversation-mark"><Sparkles size={16} /></span>
-        <div><strong>Klio</strong><span>{[learnerName, turn.subject].filter(Boolean).join(" · ") || "Family workspace"}</span></div>
-        <div className="klio-conversation-controls"><button type="button" onClick={onMinimize} aria-label="Close conversation">Done</button>{(queued || active) && onCancel ? <button type="button" className="conversation-stop" onClick={onCancel}>Cancel work</button> : null}</div>
+        <div><strong>{conversations.find((item) => item.id === turn.conversationId)?.title ?? "Klio"}</strong><span>{[learnerName, turn.subject].filter(Boolean).join(" · ") || "Family workspace"}</span></div>
+        <div className="klio-conversation-controls">
+          <button type="button" onClick={() => setConversationMenuOpen((current) => !current)} aria-label="Conversations" aria-expanded={conversationMenuOpen} aria-controls="klio-conversation-menu"><MessagesSquare size={15} /><span>Conversations</span></button>
+          {onNewConversation ? <button type="button" onClick={onNewConversation} aria-label="New conversation"><Plus size={15} /><span>New</span></button> : null}
+          <button type="button" onClick={onMinimize} aria-label="Close conversation">Done</button>
+          {(queued || active) && onCancel ? <button type="button" className="conversation-stop" onClick={onCancel}>Cancel work</button> : null}
+        </div>
+        {conversationMenuOpen ? <div id="klio-conversation-menu" className="klio-conversation-menu">
+          <header><strong>Recent conversations</strong>{onNewConversation ? <button type="button" onClick={onNewConversation}><Plus size={14} />New conversation</button> : null}</header>
+          <div>{conversations.length ? conversations.map((conversation) => <button type="button" className={conversation.id === turn.conversationId ? "selected" : ""} onClick={() => void switchConversation(conversation.id)} disabled={Boolean(switchingConversationId)} key={conversation.id}><span><strong>{conversation.title}</strong><small>{conversation.studentId ? students.find((student) => student.id === conversation.studentId)?.displayName ?? "Learner" : "Family"}</small></span>{switchingConversationId === conversation.id ? <LoaderCircle className="spin" size={14} /> : conversation.id === turn.conversationId ? <Check size={14} /> : <ArrowRight size={14} />}</button>) : <p>Your recent conversations will appear here.</p>}</div>
+        </div> : null}
       </header>
       <div ref={scrollRef} className="klio-conversation-scroll">
         <div className="klio-conversation-stream">
@@ -797,27 +1369,69 @@ function AgentConversation({ turn, artifacts, learnerName, history, stale, activ
           <ConversationMessageView message={{ role: "parent", content: parentVisibleRequest(turn.request) }} />
           <article className="conversation-message conversation-klio">
             <span>Klio</span>
-            {response ? <p>{response}</p> : stale ? <p className="conversation-state-message">This stopped before finishing. Your original request is safe.</p> : failed ? <p className="conversation-state-message">I couldn’t finish this request. You can try it again without losing the original work.</p> : <div className="conversation-working"><i /><i /><i /><small>{status}</small></div>}
+            {response ? <AssistantRichMessage content={response} /> : stale ? <p className="conversation-state-message">This stopped before finishing. Your original request is safe.</p> : failed ? <p className="conversation-state-message">I couldn’t finish this request. You can try it again without losing the original work.</p> : <div className="conversation-working"><i /><i /><i /><small>{status}</small></div>}
             {failed || stale ? <button type="button" onClick={onRetry}>Try again</button> : null}
             {turn.result?.actions.length ? <ReceiptActions actions={turn.result.actions} artifacts={artifacts} onPracticeOpen={onPracticeOpen ? (artifactId) => { onMinimize(); onPracticeOpen(artifactId); } : undefined} /> : null}
             {awaitingParent && turn.clarification ? <div className="conversation-clarification"><p>{turn.clarification.question}</p><textarea aria-label={turn.clarification.question} value={answer} onChange={(event) => setAnswer(event.target.value)} maxLength={4000} rows={3} autoFocus /><div><button type="button" onClick={() => void submitAnswer()} disabled={!answer.trim() || answering}>{answering ? <LoaderCircle className="spin" size={14} /> : null}Send answer</button>{onCancel ? <button type="button" onClick={onCancel} disabled={answering}>Cancel</button> : null}</div>{answerError ? <small role="alert">{answerError}</small> : null}</div> : null}
           </article>
         </div>
       </div>
-      <Link className="klio-conductor-status" href={`/app/activity?turn=${encodeURIComponent(turn.id)}#conductor`} onClick={onMinimize}>
-        <span className={active || queued ? "working" : awaitingParent ? "needs-detail" : failed || stale ? "paused" : "finished"}><Sparkles size={14} /></span>
-        <span><strong>{awaitingParent ? "Klio needs one detail" : failed || stale ? "Klio paused" : active ? "Klio is working" : queued ? "Waiting to begin" : "Klio finished"}</strong><small>{turn.taskName}</small></span>
-        <span>Open Conductor <ArrowRight size={14} /></span>
-      </Link>
+      {hasVisibleWork ? <div className="klio-work-dock"><KlioWorkTray turns={currentWorkTurns} students={students} now={now} loading={workLoading} error={workError} /></div> : null}
       <footer className="klio-conversation-footer">
-        {onFollowUp && !awaitingParent ? <div className="conversation-followup"><textarea value={followUp} onChange={(event) => setFollowUp(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendFollowUp(); } }} rows={1} placeholder={finished ? "Ask Klio a follow-up…" : "Message Klio while it works…"} aria-label="Message Klio" /><button type="button" onClick={() => void sendFollowUp()} disabled={!followUp.trim() || followingUp} aria-label="Send message">{followingUp ? <LoaderCircle className="spin" size={16} /> : <ArrowUp size={17} />}</button></div> : null}
+        {onFollowUp && (!awaitingParent || !turn.clarification) ? <div className="conversation-followup">
+          <textarea value={followUp} onChange={(event) => changeFollowUp(event.target.value)} onPaste={composer?.onPaste} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendFollowUp(); } }} rows={2} placeholder="Tell Klio what happened, ask a question, or hand off work…" aria-label="Message Klio" />
+          {attachedFiles.length ? <div className="conversation-attachments">{attachedFiles.map((file, index) => <span key={`${file.name}-${file.size}-${index}`}>{fileIcon(file)}<b>{file.name}</b><button type="button" onClick={() => composer?.onRemoveFile(index)} aria-label={`Remove ${file.name}`}><X size={12} /></button></span>)}</div> : null}
+          {composer ? <VoiceDictationFeedback phase={composer.voicePhase} seconds={composer.voiceSeconds} message={composer.voiceMessage} onStop={composer.recording ? composer.onVoice : undefined} /> : null}
+          <div className="conversation-followup-footer">
+            {composer ? <div className="conversation-tools"><button type="button" onClick={composer.onPhoto} aria-label="Attach photo"><Camera size={16} /></button>{!composer.recording ? <button type="button" className={composerVoicePending ? "transcribing" : ""} onClick={composer.onVoice} disabled={composerVoicePending} aria-label={composer.voicePhase === "requesting" ? "Starting voice input" : composer.voicePhase === "transcribing" ? "Transcribing voice input" : "Start voice input"}>{composerVoicePending ? <LoaderCircle className="spin" size={15} /> : <Mic size={16} />}</button> : null}<button type="button" onClick={composer.onFile} aria-label="Attach file"><Paperclip size={16} /></button><button type="button" onClick={composer.onScore} aria-label="Add score"><FileText size={16} /></button></div> : <span><Sparkles size={12} />Using your family workspace</span>}
+            {composer ? <label className="conversation-for"><span>For</span><select value={composer.studentId} onChange={(event) => composer.onStudentChange(event.target.value)} aria-label="Learner for this message"><option value="">Family</option>{students.map((student) => <option value={student.id} key={student.id}>{student.displayName}</option>)}</select></label> : null}
+            <button type="button" className="conversation-send" onClick={() => void sendFollowUp()} disabled={(!followUp.trim() && !attachedFiles.length) || followingUp || composer?.voicePhase === "recording" || composerVoicePending} aria-label="Send message">{followingUp ? <LoaderCircle className="spin" size={16} /> : <ArrowUp size={17} />}</button>
+          </div>
+          {followUpError ? <p className="conversation-followup-error" role="alert">{followUpError}</p> : null}
+        </div> : null}
       </footer>
     </section>
   </>;
 }
 
+function KlioWorkTray({ turns, students, now, loading, error }: { turns: AgentTurnSummary[]; students: StudentDTO[]; now: number | null; loading: boolean; error: string | null }) {
+  const learnerNames = new Map(students.map((student) => [student.id, student.displayName]));
+  const openTurns = turns.filter(isVisibleWorkspaceWork);
+  const visibleTurns = openTurns.slice(0, 3);
+  if (!visibleTurns.length && !loading && !error) return null;
+  return <section id="klio-work-tray" className="klio-work-tray" aria-label="Klio’s current work">
+    <header><div><span>Conductor</span><strong>{openTurns.length ? `${openTurns.length} open ${openTurns.length === 1 ? "job" : "jobs"}` : "Checking current work"}</strong></div></header>
+    {loading && !turns.length ? <div className="klio-work-loading"><i /><i /><i /></div> : error && !visibleTurns.length ? <p className="klio-work-error">{error}</p> : <div className="klio-work-cards">{visibleTurns.map((workTurn) => {
+      const receiptState = now === null ? workTurn.status : deriveReceiptState({ status: workTurn.status, createdAt: workTurn.createdAt, lastHeartbeatAt: workTurn.lastHeartbeatAt, now });
+      const paused = receiptState === "paused";
+      const steps = receiptSteps(workTurn.normalizedStep, workTurn.status, paused);
+      const completed = steps.filter((step) => step.state === "done").length;
+      const stateLabel = paused ? "Paused" : workTurn.status === "awaiting_parent" ? "Needs your input" : workTurn.status === "running" ? "Working" : workTurn.status === "queued" ? "Queued" : workTurn.status === "failed" ? "Needs a retry" : "Finished";
+      return <article className={`klio-work-card ${paused || workTurn.status === "failed" ? "paused" : workTurn.status}`} key={workTurn.id}>
+        <header><div><span>{stateLabel}</span><strong>{workTurn.taskName}</strong><small>{[workTurn.studentId ? learnerNames.get(workTurn.studentId) : null, workTurn.subject].filter(Boolean).join(" · ") || "Family workspace"}</small></div><em>{completed} of {steps.length}</em></header>
+        <ol>{steps.map((step) => <li className={step.state} key={step.label}>{step.state === "done" ? <Check size={12} /> : step.state === "current" ? <i /> : <Circle size={9} />}<span>{step.label}</span></li>)}</ol>
+        {workTurn.expectedOutput ? <footer><span>Output</span><p>{parentFacingExpectedOutput(workTurn.expectedOutput)}</p></footer> : null}
+      </article>;
+    })}</div>}
+    {error && visibleTurns.length ? <p className="klio-work-refresh-error">Live updates paused. Showing the latest saved state.</p> : null}
+  </section>;
+}
+
+function isVisibleWorkspaceWork(turn: AgentTurnSummary) {
+  if (!["queued", "running", "awaiting_parent", "failed"].includes(turn.status)) return false;
+  if (turn.goal !== "general") return true;
+  // A general turn begins as conversation. It becomes visible operational work
+  // only after Klio actually chooses a workspace tool or reaches an action step.
+  return turn.tools.length > 0 || ["updating_week", "creating_practice", "preparing_feedback", "ready_review"].includes(turn.normalizedStep ?? "");
+}
+
+function conversationProgressLabel(turn: AgentTurnSummary) {
+  if (turn.goal === "general" && !isVisibleWorkspaceWork(turn)) return "Thinking";
+  return receiptStepLabel(turn.normalizedStep);
+}
+
 function ConversationMessageView({ message }: { message: ConversationMessage }) {
-  return <article className={`conversation-message ${message.role === "parent" ? "conversation-parent" : "conversation-klio"}`}><span>{message.role === "parent" ? "You" : "Klio"}</span><p>{message.content}</p></article>;
+  return <article className={`conversation-message ${message.role === "parent" ? "conversation-parent" : "conversation-klio"}`}><span>{message.role === "parent" ? "You" : "Klio"}</span>{message.role === "parent" ? <p>{message.content}</p> : <AssistantRichMessage content={message.content} />}</article>;
 }
 
 function parentVisibleRequest(request: string) {
@@ -963,6 +1577,17 @@ function reminderTime(item: ReminderDTO) { return item.dueAt ? new Date(item.due
 function fileIcon(file: File) { if (file.type.startsWith("image/")) return <ImageIcon size={14} />; if (file.type.startsWith("audio/")) return <Volume2 size={14} />; return <FileText size={14} />; }
 function outputIcon(type: string) { if (type === "weekly_plan") return <CalendarDays size={14} />; if (type === "lesson" || type === "practice") return <BookOpen size={14} />; return <LayoutDashboard size={14} />; }
 function kindIcon(kind: string) { if (kind === "photo") return <ImageIcon size={15} />; if (kind === "voice") return <Mic size={15} />; return <FileText size={15} />; }
+function assistantStarterIcon(id: AssistantStarterId) {
+  return ({
+    family_briefing: LayoutDashboard,
+    organize_today: CalendarDays,
+    teach_next_lesson: BookOpen,
+    practice_from_mistakes: Pencil,
+    review_recent_learning: FileText,
+    plan_week: CalendarDays,
+    portfolio_update: FileCheck2,
+  } satisfies Record<AssistantStarterId, typeof LayoutDashboard>)[id];
+}
 function kindLabel(kind: string) { return ({ photo: "Photo", voice: "Voice", document: "File", note: "Note", grade: "Math", book: "Reading", activity: "Activity" } as Record<string,string>)[kind] ?? kind.replaceAll("_", " "); }
 function description(item: EvidenceDTO) { return (item.title || item.rawText || kindLabel(item.kind)).replace(/^Link:\s*/i, "").slice(0, 105); }
 function submissionDescription(submission: CaptureSubmission) {
@@ -974,6 +1599,18 @@ function submissionDescription(submission: CaptureSubmission) {
   return documentType ? `${submission.items.length}-file ${documentType}` : `${submission.items.length} uploaded files`;
 }
 function dayLabel(value: string) { const date = new Date(value); const today = new Date(); if (date.toDateString() === today.toDateString()) return "Today"; const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1); if (date.toDateString() === yesterday.toDateString()) return "Yesterday"; return new Intl.DateTimeFormat("en", { weekday: "long", month: "short", day: "numeric" }).format(date); }
+function formatConversationAge(value: string) {
+  const elapsed = Date.now() - new Date(value).getTime();
+  if (!Number.isFinite(elapsed) || elapsed < 0) return "Just now";
+  const minutes = Math.floor(elapsed / 60_000);
+  if (minutes < 1) return "Just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Intl.DateTimeFormat("en", { month: "short", day: "numeric" }).format(new Date(value));
+}
 function groupCaptureSubmissions(items: EvidenceDTO[]) {
   const groups = new Map<string, CaptureSubmission>();
   for (const item of items) {

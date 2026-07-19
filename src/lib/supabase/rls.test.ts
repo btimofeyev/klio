@@ -48,6 +48,98 @@ describe("family RLS isolation", () => {
     expect(result.error).not.toBeNull();
   });
 
+  it("keeps assignment cursor RPCs ordered, complete, and inside the calling family", async () => {
+    const studentA = await clients[0].from("students").insert({ family_id: families[0], display_name: "Pagination learner A" }).select("id").single();
+    const studentB = await clients[1].from("students").insert({ family_id: families[1], display_name: "Pagination learner B" }).select("id").single();
+    if (studentA.error ?? studentB.error) throw studentA.error ?? studentB.error;
+    const unitA = await clients[0].from("curriculum_units").insert({ family_id: families[0], student_id: studentA.data!.id, created_by: users[0], subject: "Math", title: "Cursor Math A" }).select("id").single();
+    const unitB = await clients[1].from("curriculum_units").insert({ family_id: families[1], student_id: studentB.data!.id, created_by: users[1], subject: "Math", title: "Cursor Math B" }).select("id").single();
+    if (unitA.error ?? unitB.error) throw unitA.error ?? unitB.error;
+
+    const ids = Array.from({ length: 5 }, () => crypto.randomUUID());
+    const inserted = await clients[0].from("assignments").insert([
+      { id: ids[0], family_id: families[0], student_id: studentA.data!.id, curriculum_unit_id: unitA.data!.id, created_by: users[0], title: "Cursor lesson 1", subject: "Math", sequence_number: 1, scheduled_date: "2026-09-01", scheduled_time: "09:00", status: "planned" },
+      { id: ids[1], family_id: families[0], student_id: studentA.data!.id, curriculum_unit_id: unitA.data!.id, created_by: users[0], title: "Cursor lesson 2", subject: "Math", sequence_number: 2, scheduled_date: "2026-09-01", scheduled_time: "09:00", status: "completed" },
+      { id: ids[2], family_id: families[0], student_id: studentA.data!.id, curriculum_unit_id: unitA.data!.id, created_by: users[0], title: "Cursor lesson 3", subject: "Math", sequence_number: 3, scheduled_date: "2026-09-01", scheduled_time: "12:00", status: "skipped" },
+      { id: ids[3], family_id: families[0], student_id: studentA.data!.id, curriculum_unit_id: unitA.data!.id, created_by: users[0], title: "Cursor lesson unnumbered A", subject: "Math", sequence_number: null, scheduled_date: "2026-09-01", scheduled_time: null, status: "planned" },
+      { id: ids[4], family_id: families[0], student_id: studentA.data!.id, curriculum_unit_id: unitA.data!.id, created_by: users[0], title: "Cursor lesson unnumbered B", subject: "Math", sequence_number: null, scheduled_date: "2026-09-01", scheduled_time: null, status: "doing" },
+    ]);
+    if (inserted.error) throw inserted.error;
+    const hiddenAssignment = await clients[1].from("assignments").insert({ family_id: families[1], student_id: studentB.data!.id, curriculum_unit_id: unitB.data!.id, created_by: users[1], title: "Hidden cursor lesson", subject: "Math", sequence_number: 1, scheduled_date: "2026-09-01" }).select("id").single();
+    if (hiddenAssignment.error) throw hiddenAssignment.error;
+
+    const sortedTimedIds = [ids[0], ids[1]].sort();
+    const sortedNullIds = [ids[3], ids[4]].sort();
+    const expectedIds = [...sortedTimedIds, ids[2], ...sortedNullIds];
+    const scheduledFirst = await clients[0].rpc("list_scheduled_assignments_page", { p_family_id: families[0], p_from: "2026-09-01", p_to: "2026-09-01", p_limit: 4 });
+    if (scheduledFirst.error) throw scheduledFirst.error;
+    expect(scheduledFirst.data.map((row) => row.id)).toEqual(expectedIds.slice(0, 4));
+    const scheduledBoundary = scheduledFirst.data.at(-1)!;
+    const scheduledNext = await clients[0].rpc("list_scheduled_assignments_page", { p_family_id: families[0], p_from: "2026-09-01", p_to: "2026-09-01", p_after_date: scheduledBoundary.scheduled_date!, p_after_id: scheduledBoundary.id, p_limit: 4 });
+    if (scheduledNext.error) throw scheduledNext.error;
+    expect(scheduledNext.data.map((row) => row.id)).toEqual(expectedIds.slice(4));
+    expect(new Set([...scheduledFirst.data, ...scheduledNext.data].map((row) => row.id)).size).toBe(5);
+
+    const curriculumFirst = await clients[0].rpc("list_curriculum_assignments_page", { p_family_id: families[0], p_curriculum_unit_id: unitA.data!.id, p_student_id: studentA.data!.id, p_limit: 4 });
+    if (curriculumFirst.error) throw curriculumFirst.error;
+    expect(curriculumFirst.data.map((row) => row.id)).toEqual([ids[0], ids[1], ids[2], sortedNullIds[0]]);
+    const curriculumBoundary = curriculumFirst.data.at(-1)!;
+    const curriculumNext = await clients[0].rpc("list_curriculum_assignments_page", { p_family_id: families[0], p_curriculum_unit_id: unitA.data!.id, p_student_id: studentA.data!.id, p_after_id: curriculumBoundary.id, p_limit: 4 });
+    if (curriculumNext.error) throw curriculumNext.error;
+    expect(curriculumNext.data.map((row) => row.id)).toEqual([sortedNullIds[1]]);
+
+    const stats = await clients[0].rpc("curriculum_assignment_stats", { p_family_id: families[0], p_student_id: studentA.data!.id });
+    if (stats.error) throw stats.error;
+    expect(stats.data.find((row) => row.curriculum_unit_id === unitA.data!.id)).toEqual({ curriculum_unit_id: unitA.data!.id, assignment_count: 5, completed_count: 1, active_count: 3 });
+    expect((await clients[0].rpc("list_scheduled_assignments_page", { p_family_id: families[1], p_from: "2026-09-01", p_to: "2026-09-01" })).data).toEqual([]);
+    expect((await clients[0].rpc("list_curriculum_assignments_page", { p_family_id: families[1], p_curriculum_unit_id: unitB.data!.id })).data).toEqual([]);
+    expect((await clients[0].rpc("curriculum_assignment_stats", { p_family_id: families[1] })).data).toEqual([]);
+
+    const anon = createClient<Database>(url, publishable, { auth: { persistSession: false } });
+    expect((await anon.rpc("list_scheduled_assignments_page", { p_family_id: families[0], p_from: "2026-09-01", p_to: "2026-09-01" })).error).not.toBeNull();
+    expect((await anon.rpc("list_curriculum_assignments_page", { p_family_id: families[0], p_curriculum_unit_id: unitA.data!.id })).error).not.toBeNull();
+    expect((await anon.rpc("curriculum_assignment_stats", { p_family_id: families[0] })).error).not.toBeNull();
+  });
+
+  it("keeps family-wide and learner calendar conflicts inside the owning family", async () => {
+    const studentA = await clients[0].from("students").insert({ family_id: families[0], display_name: "Conflict learner A" }).select("id").single();
+    const studentB = await clients[1].from("students").insert({ family_id: families[1], display_name: "Conflict learner B" }).select("id").single();
+    if (studentA.error ?? studentB.error) throw studentA.error ?? studentB.error;
+
+    const familyConflict = await clients[0].from("calendar_conflicts").insert({
+      family_id: families[0], student_id: null, conflict_date: "2026-08-03", all_day: true,
+      title: "Private family day", created_by: users[0],
+    }).select("id,title").single();
+    if (familyConflict.error) throw familyConflict.error;
+    const learnerConflict = await clients[0].from("calendar_conflicts").insert({
+      family_id: families[0], student_id: studentA.data!.id, conflict_date: "2026-08-04", all_day: false,
+      starts_at: "10:00", ends_at: "11:00", title: "Private appointment", created_by: users[0],
+    }).select("id,title").single();
+    if (learnerConflict.error) throw learnerConflict.error;
+
+    expect((await clients[0].from("calendar_conflicts").select("id").in("id", [familyConflict.data.id, learnerConflict.data.id])).data).toHaveLength(2);
+    expect((await clients[1].from("calendar_conflicts").select("id").in("id", [familyConflict.data.id, learnerConflict.data.id])).data).toEqual([]);
+    expect((await clients[1].from("calendar_conflicts").update({ title: "Forged update" }).eq("id", familyConflict.data.id).select("id")).data).toEqual([]);
+    expect((await clients[1].from("calendar_conflicts").delete().eq("id", learnerConflict.data.id).select("id")).data).toEqual([]);
+
+    const crossFamilyLearner = await clients[0].from("calendar_conflicts").insert({
+      family_id: families[0], student_id: studentB.data!.id, conflict_date: "2026-08-05", all_day: true,
+      title: "Cross-family learner", created_by: users[0],
+    });
+    expect(crossFamilyLearner.error).not.toBeNull();
+    const forgedCreator = await clients[0].from("calendar_conflicts").insert({
+      family_id: families[0], student_id: studentA.data!.id, conflict_date: "2026-08-06", all_day: true,
+      title: "Forged creator", created_by: users[1],
+    });
+    expect(forgedCreator.error).not.toBeNull();
+
+    const ownUpdate = await clients[0].from("calendar_conflicts").update({ title: "Updated appointment" }).eq("id", learnerConflict.data.id).select("title").single();
+    expect(ownUpdate.error).toBeNull();
+    expect(ownUpdate.data?.title).toBe("Updated appointment");
+    const ownDelete = await clients[0].from("calendar_conflicts").delete().eq("id", learnerConflict.data.id).select("id").single();
+    expect(ownDelete.error).toBeNull();
+  });
+
   it("does not let another family dismiss a guessed practice session", async () => {
     const student = await clients[0].from("students").insert({ family_id: families[0], display_name: "Private practice learner" }).select("id").single();
     if (student.error) throw student.error;
@@ -224,14 +316,26 @@ describe("family RLS isolation", () => {
   it("isolates curriculum, assignments, reviews, and adjustment proposals by family", async () => {
     const student = await clients[0].from("students").insert({ family_id: families[0], display_name: "Operating-loop learner" }).select("id").single();
     if (student.error) throw student.error;
-    const unit = await clients[0].from("curriculum_units").insert({ family_id: families[0], student_id: student.data.id, created_by: users[0], subject: "Math", title: "Private Algebra" }).select("id").single();
+    const unit = await clients[0].from("curriculum_units").insert({ family_id: families[0], student_id: student.data.id, created_by: users[0], subject: "Math", title: "Private Algebra" }).select("id,attention_mode,parent_attention_minutes").single();
     if (unit.error) throw unit.error;
-    const assignment = await clients[0].from("assignments").insert({ family_id: families[0], student_id: student.data.id, curriculum_unit_id: unit.data.id, created_by: users[0], title: "Private Algebra · Lesson 1", subject: "Math", scheduled_date: "2026-07-13" }).select("id").single();
+    const assignment = await clients[0].from("assignments").insert({ family_id: families[0], student_id: student.data.id, curriculum_unit_id: unit.data.id, created_by: users[0], title: "Private Algebra · Lesson 1", subject: "Math", scheduled_date: "2026-07-13", scheduled_time: "10:00" }).select("id,scheduled_date,scheduled_time").single();
     if (assignment.error) throw assignment.error;
 
     expect((await clients[1].from("curriculum_units").select("id").eq("id", unit.data.id)).data).toEqual([]);
     expect((await clients[1].from("assignments").select("id").eq("id", assignment.data.id)).data).toEqual([]);
     expect((await clients[1].from("assignments").update({ status: "completed" }).eq("id", assignment.data.id).select("id")).data).toEqual([]);
+    const ownCurriculumAttention = await clients[0].from("curriculum_units").update({ attention_mode: "flexible", parent_attention_minutes: 10 }).eq("id", unit.data.id).select("attention_mode,parent_attention_minutes").single();
+    expect(ownCurriculumAttention.data).toEqual({ attention_mode: "flexible", parent_attention_minutes: 10 });
+    const ownAssignmentAttention = await clients[0].from("assignments").update({ attention_mode: "independent", parent_attention_minutes: null }).eq("id", assignment.data.id).select("attention_mode,parent_attention_minutes,scheduled_date,scheduled_time").single();
+    expect(ownAssignmentAttention.data).toEqual({ attention_mode: "independent", parent_attention_minutes: null, scheduled_date: "2026-07-13", scheduled_time: "10:00:00" });
+    expect((await clients[0].from("assignments").update({ attention_mode: "independent", parent_attention_minutes: 10 }).eq("id", assignment.data.id)).error?.code).toBe("23514");
+    expect((await clients[0].from("curriculum_units").update({ attention_mode: "flexible", parent_attention_minutes: null }).eq("id", unit.data.id)).error?.code).toBe("23514");
+    expect((await clients[1].from("curriculum_units").update({ attention_mode: "parent_led", parent_attention_minutes: null }).eq("id", unit.data.id).select("id")).data).toEqual([]);
+    expect((await clients[1].from("assignments").update({ attention_mode: "parent_led", parent_attention_minutes: null }).eq("id", assignment.data.id).select("id")).data).toEqual([]);
+    expect((await clients[0].from("curriculum_units").select("attention_mode").eq("id", unit.data.id).single()).data?.attention_mode).toBe("flexible");
+    expect((await clients[0].from("assignments").select("attention_mode").eq("id", assignment.data.id).single()).data?.attention_mode).toBe("independent");
+    const serviceUpdate = await admin.from("assignments").update({ attention_mode: null, parent_attention_minutes: null }).eq("id", assignment.data.id).select("id").single();
+    expect(serviceUpdate.error).toBeNull();
     const forged = await clients[1].from("assignments").insert({ family_id: families[0], student_id: student.data.id, title: "Forged work", subject: "Math" });
     expect(forged.error).not.toBeNull();
     const version = await admin.from("families").select("agent_context_version").eq("id", families[0]).single();
@@ -288,6 +392,29 @@ describe("family RLS isolation", () => {
     expect((await clients[1].from("klio_insights").update({ status: "dismissed", dismissed_by: users[1] }).eq("id", insight.data.id).select("id")).data).toEqual([]);
     const forgedPolicy = await clients[1].from("family_autonomy_policies").update({ preset: "ask_first" }).eq("family_id", families[0]).select("family_id");
     expect(forgedPolicy.data).toEqual([]);
+  });
+
+  it("keeps generated weekly briefings immutable and inside the family", async () => {
+    const evaluation = await admin.from("proactive_evaluations").insert({ family_id: families[0], requested_by: users[0], event_kind: "weekly_boundary", entity_type: "family", entity_id: families[0], idempotency_key: `weekly-briefing:rls-${suffix}` }).select("id").single();
+    if (evaluation.error) throw evaluation.error;
+    const created = await admin.from("weekly_briefings").insert({
+      family_id: families[0], evaluation_id: evaluation.data.id, week_start: "2026-08-03",
+      headline: "Your week at a glance", summary: "Private family schedule totals.",
+      sections: { weekStart: "2026-08-03", headline: "Your week at a glance", learners: [] },
+    }).select("id,summary").single();
+    if (created.error) throw created.error;
+
+    expect((await clients[0].from("weekly_briefings").select("id,summary").eq("id", created.data.id)).data).toEqual([{ id: created.data.id, summary: "Private family schedule totals." }]);
+    expect((await clients[1].from("weekly_briefings").select("id").eq("id", created.data.id)).data).toEqual([]);
+    expect((await clients[0].from("weekly_briefings").insert({ family_id: families[0], evaluation_id: evaluation.data.id, week_start: "2026-08-10", headline: "Forged", summary: "Forged" })).error).not.toBeNull();
+    expect((await clients[0].from("weekly_briefings").update({ summary: "Client rewrite" }).eq("id", created.data.id)).error).not.toBeNull();
+    expect((await clients[1].from("weekly_briefings").update({ status: "dismissed", dismissed_at: new Date().toISOString(), dismissed_by: users[1] }).eq("id", created.data.id).select("id")).data).toEqual([]);
+
+    const dismissedAt = new Date().toISOString();
+    const dismissed = await clients[0].from("weekly_briefings").update({ status: "dismissed", viewed_at: dismissedAt, dismissed_at: dismissedAt, dismissed_by: users[0] }).eq("id", created.data.id).select("status,dismissed_by").single();
+    expect(dismissed.error).toBeNull();
+    expect(dismissed.data).toMatchObject({ status: "dismissed", dismissed_by: users[0] });
+    expect((await admin.from("weekly_briefings").select("id", { count: "exact", head: true }).eq("id", created.data.id)).count).toBe(1);
   });
 
   it("keeps saved workspace arrangements inside the family", async () => {

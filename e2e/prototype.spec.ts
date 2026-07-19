@@ -92,7 +92,7 @@ test("an authenticated family can start Stripe test checkout", async ({ page }) 
     await page.getByLabel("Suggest, then ask", { exact: false }).click();
     await page.getByRole("button", { name: "Enter Klio" }).click();
     await expect(page).toHaveURL(/\/app$/);
-    await page.goto("/app/settings");
+    await page.goto("/app/settings?view=account");
     await page.getByRole("button", { name: "Start membership" }).click();
     await page.waitForURL(/checkout\.stripe\.com/, { timeout: 20_000 });
     expect(page.url()).toContain("checkout.stripe.com");

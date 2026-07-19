@@ -48,8 +48,9 @@ test("a parent checks source-backed Klio suggestions and corrections", async ({ 
     expect(wrongFamily).toBe(403);
 
     await page.goto("/app/activity");
+    await expect(page.getByRole("heading", { name: "Activity", exact: true })).toBeVisible();
     await expect(page.getByRole("heading", { name: "What happened" })).toBeVisible();
-    await expect(page.getByText("Open any row for its full receipt.")).toBeVisible();
+    await expect(page.getByText("Open a row for details, evidence, or undo.")).toBeVisible();
     await expect(page.getByRole("heading", { name: "Fraction worksheet" })).toBeVisible();
     await expect(page.getByText("Orphan draft must stay hidden")).toHaveCount(0);
     await expect(page.getByText("Another family private suggestion")).toHaveCount(0);

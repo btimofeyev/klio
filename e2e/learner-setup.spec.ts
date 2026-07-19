@@ -36,8 +36,8 @@ test("each learner keeps an independent subject and weekly setup", async ({ page
     await page.goto("/app/settings");
     await expect(page.locator(".learner-index-row")).toHaveCount(1);
     await expect(page.getByLabel("First name")).toHaveCount(0);
-    await expect(page.getByRole("heading", { name: "Academic plan" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "How independently should Klio work?" })).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Student workspace sections" }).getByRole("link", { name: "Academic plan" })).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Student workspace sections" }).getByRole("link", { name: "Klio autonomy" })).toBeVisible();
     await page.getByRole("link", { name: "Add learner" }).click();
     await expect(page).toHaveURL(/\/app\/settings\/learners\/new$/);
     await page.getByLabel("First name").fill("Eli");
@@ -45,6 +45,7 @@ test("each learner keeps an independent subject and weekly setup", async ({ page
     await page.getByRole("button", { name: "Continue to learning setup" }).click();
     await expect(page).toHaveURL(/\/app\/settings\/learners\/[0-9a-f-]+$/);
 
+    await page.getByRole("tab", { name: "Subjects" }).click();
     const siblingMath = page.getByRole("button", { name: "Add Math, used by Noah" });
     await expect(siblingMath).toBeVisible();
     await siblingMath.click();
@@ -55,6 +56,7 @@ test("each learner keeps an independent subject and weekly setup", async ({ page
     await page.getByLabel("Language Arts times per week").selectOption("4");
     await page.getByLabel("Add a subject").selectOption("Science");
     await page.getByLabel("Science times per week").selectOption("2");
+    await page.getByRole("tab", { name: "Schedule" }).click();
     await page.getByLabel("Typical learning time").selectOption("90");
     await page.getByRole("group", { name: "Learning days" }).getByText("F").click();
     await page.locator('input[name="learningDays"][value="Sat"]').check({ force: true });
@@ -89,13 +91,18 @@ test("each learner keeps an independent subject and weekly setup", async ({ page
     await page.goto("/app/week");
     await expect(page.getByLabel("View schedule for")).toHaveValue("all");
     await expect(page.getByLabel("Learner for this handoff")).toHaveValue("");
-    await expect(page.getByText("Choose a learner before saving", { exact: true })).toBeVisible();
+    await expect(page.locator(".composer-interpretation")).toHaveCount(0);
     await page.getByLabel("Learner for this handoff").selectOption(eli!.id);
-    await expect(page.getByText("Save as Eli’s learning record", { exact: true })).toBeVisible();
-    await expect(page.getByText("Sat", { exact: true }).first()).toBeVisible();
-    await expect(page.locator(".teacher-week-learner-lane").filter({ hasText: "Noah" }).first()).toBeVisible();
-    await expect(page.locator(".teacher-week-learner-lane").filter({ hasText: "Eli" }).first()).toBeVisible();
+    await expect(page.getByLabel("Learner for this handoff")).toHaveValue(eli!.id);
     const familyAssignments = await admin.from("assignments").select("student_id,scheduled_date").eq("family_id", family.data!.id);
+    const noahDate = familyAssignments.data?.find((assignment) => assignment.student_id === noah!.id)?.scheduled_date;
+    const eliDate = familyAssignments.data?.find((assignment) => assignment.student_id === eli!.id)?.scheduled_date;
+    expect(noahDate).toBeTruthy();
+    expect(eliDate).toBeTruthy();
+    await page.goto(`/app/week?date=${noahDate}`);
+    await expect(page.locator(".teacher-week-learner-lane").filter({ hasText: "Noah" }).first()).toBeVisible();
+    await page.goto(`/app/week?date=${eliDate}`);
+    await expect(page.locator(".teacher-week-learner-lane").filter({ hasText: "Eli" }).first()).toBeVisible();
     expect(familyAssignments.data?.filter((assignment) => assignment.student_id === noah!.id)).toHaveLength(initialNoahAssignmentCount);
     expect(familyAssignments.data?.filter((assignment) => assignment.student_id === eli!.id).length).toBeGreaterThan(0);
     const totalAssignmentCount = familyAssignments.data?.length ?? 0;

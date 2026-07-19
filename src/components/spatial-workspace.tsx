@@ -53,6 +53,7 @@ type SpatialWorkspaceProps = {
   layoutPersistence?: SpatialLayoutPersistence;
   onCameraChange?: (state: SpatialCameraState) => void;
   toolbar: React.ReactNode;
+  briefing?: React.ReactNode;
   assistant: React.ReactNode;
 };
 
@@ -60,7 +61,8 @@ const LAYOUT_VERSION = 2;
 const LEFT_POSITION = 0;
 const RIGHT_POSITION = 3200;
 
-export function SpatialWorkspace({ ariaLabel, persistenceKey, items, homeItemId = "schedule", focusRequest, layoutPersistence, onCameraChange, toolbar, assistant }: SpatialWorkspaceProps) {
+export function SpatialWorkspace({ ariaLabel, persistenceKey, items, homeItemId = "schedule", focusRequest, layoutPersistence, onCameraChange, toolbar, briefing, assistant }: SpatialWorkspaceProps) {
+  const surface = persistenceKey.startsWith("day:") ? "day" : persistenceKey.startsWith("week:") || persistenceKey.startsWith("month:") ? "calendar" : "workspace";
   const persistedPositions = layoutPersistence?.layoutVersion === LAYOUT_VERSION ? layoutPersistence.positions : undefined;
   const initialLayout = () => workspaceRailLayout(items, homeItemId, persistedPositions);
   const [layout, setLayout] = useState<WorkspaceRailLayout>(initialLayout);
@@ -201,7 +203,9 @@ export function SpatialWorkspace({ ariaLabel, persistenceKey, items, homeItemId 
   }, [activePanelId]);
 
   function onWorkspaceClick(event: React.MouseEvent<HTMLDivElement>) {
-    const target = (event.target as HTMLElement).closest<HTMLElement>("[data-spatial-focus-target]");
+    const clicked = event.target as HTMLElement;
+    if (clicked.closest("button,a,input,select,textarea,summary")) return;
+    const target = clicked.closest<HTMLElement>("[data-spatial-focus-target]");
     if (!target || activePanelId) return;
     updateCamera({ level: "nested", id: target.dataset.spatialFocusId, parentId: homeItemId, label: target.dataset.spatialFocusLabel ?? "Lesson" });
   }
@@ -210,7 +214,7 @@ export function SpatialWorkspace({ ariaLabel, persistenceKey, items, homeItemId 
 
   return (
     <div
-      className={`${styles.viewport} spatial-workspace`}
+      className={`${styles.viewport} ${surface === "day" ? styles.dayViewport : surface === "calendar" ? styles.calendarViewport : ""} spatial-workspace`}
       aria-label={ariaLabel}
       data-camera-level={camera.level}
       data-camera-id={camera.id ?? ""}
@@ -219,7 +223,8 @@ export function SpatialWorkspace({ ariaLabel, persistenceKey, items, homeItemId 
     >
       <div className={styles.toolbar}>{toolbar}</div>
 
-      <div className={`${styles.board} ${updateCount === 0 ? styles.boardQuiet : ""}`}>
+      <div className={`${styles.board} ${briefing ? styles.boardWithBriefing : ""} ${updateCount === 0 && !briefing ? styles.boardQuiet : ""}`} data-spatial-board data-has-briefing={Boolean(briefing)} data-layout={updateCount === 0 && !briefing ? "quiet" : "active"}>
+        {briefing ? <div className={styles.briefing}>{briefing}</div> : null}
         {layout.left.length ? <WorkspaceRail side="left" ids={layout.left} items={visibleItems} activePanelId={activePanelId} arranging={arranging} draggedIdRef={draggedIdRef} onOpen={showPanel} onMove={moveTab} onNudge={nudgeTab} onSwitchSide={switchTabSide} /> : null}
 
         <main className={styles.scheduleStage} aria-label={`${schedule.label}: ${schedule.title}`} data-spatial-id={schedule.id} data-spatial-object>

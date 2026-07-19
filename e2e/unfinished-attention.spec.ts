@@ -18,7 +18,7 @@ test("marking unfinished work lets Klio move it automatically with undo", async 
     await page.getByLabel("Learner’s first name").fill("Malachi");
     await page.getByLabel("Add a subject").selectOption("Math");
     await page.getByLabel("Math course or curriculum").fill("Math Foundations");
-    await page.getByLabel("Suggest, then ask", { exact: false }).click();
+    await page.getByLabel("Autopilot", { exact: false }).click();
     await page.getByRole("button", { name: "Enter Klio" }).click();
     await expect(page).toHaveURL(/\/app$/);
 
@@ -39,14 +39,14 @@ test("marking unfinished work lets Klio move it automatically with undo", async 
     const siblingAssignment = await admin.from("assignments").insert({ family_id: family.data!.id, student_id: sibling.data!.id, created_by: userId, title: "Reading · Lesson 1", subject: "Reading", status: "planned", scheduled_date: dateOffset(0), estimated_minutes: 25, source_kind: "parent" });
     expect(siblingAssignment.error).toBeNull();
 
-    await page.goto("/app");
+    await page.goto(`/app?date=${dateOffset(0)}`);
     await expect(page.getByLabel("View day plan for")).toHaveValue("all");
-    await expect(page.getByText("Family work", { exact: true })).toBeVisible();
+    await expect(page.getByText("Your day", { exact: true })).toBeVisible();
     await page.getByText("Jacob · Reading").scrollIntoViewIfNeeded();
     await expect(page.getByText("Jacob · Reading")).toBeVisible();
     await expect(page.getByRole("button", { name: /Attention/ })).toHaveCount(0);
     await page.getByLabel("View day plan for").selectOption(student.data!.id);
-    await expect(page.getByText("Malachi’s work")).toBeVisible();
+    await expect(page.getByText("Malachi’s day")).toBeVisible();
 
     await page.goto("/app/week");
     await expect(page.getByLabel("View schedule for")).toHaveValue("all");
@@ -64,9 +64,10 @@ test("marking unfinished work lets Klio move it automatically with undo", async 
 
     await page.goto("/app");
     await page.getByRole("button", { name: "Previous day" }).click();
-    await page.locator(".day-assignment").filter({ hasText: "Math · Lesson 1" }).click();
-    await page.getByRole("button", { name: "Not finished" }).click();
-    await expect(page).toHaveURL(/\/app$/);
+    const missedMath = page.locator(".day-assignment").filter({ hasText: "Math · Lesson 1" });
+    await missedMath.getByLabel("Actions for Math · Lesson 1").click();
+    await missedMath.getByRole("menuitem", { name: "Not finished" }).click();
+    await expect(page).toHaveURL(`/app?date=${missedDate}`);
     const assignmentIds = [inserted.data!.find((item) => item.title === "Math · Lesson 1")!.id];
     await page.getByRole("button", { name: /Klio adjusted/ }).click();
     await expect(page.getByRole("button", { name: "Undo" })).toBeVisible();
@@ -82,18 +83,32 @@ test("marking unfinished work lets Klio move it automatically with undo", async 
 
     await page.goto("/app");
     await page.getByRole("button", { name: "Previous day" }).click();
-    await page.locator(".day-assignment").filter({ hasText: "Phonics · Lesson 1" }).click();
-    await page.getByRole("button", { name: "Not finished" }).click();
+    const missedPhonics = page.locator(".day-assignment").filter({ hasText: "Phonics · Lesson 1" });
+    await missedPhonics.getByLabel("Actions for Phonics · Lesson 1").click();
+    await missedPhonics.getByRole("menuitem", { name: "Not finished" }).click();
     const adjustedTab = page.getByRole("button", { name: /Klio adjusted/ });
     await expect(adjustedTab).toBeVisible();
-    await adjustedTab.click();
-    const panel = page.locator("aside[data-spatial-object]");
-    await expect(panel.getByRole("button", { name: "Acknowledge" })).toBeVisible();
-    await panel.getByRole("button", { name: "Acknowledge" }).click();
-    await expect(adjustedTab).toHaveCount(0);
-    await expect(panel).toHaveCount(0);
+    const adjustedTabName = (await adjustedTab.innerText()).replace(/\s+/g, " ").trim();
+    await page.goto("/app/adjustments");
+    const completedChange = page.locator(".adjustments-list article").filter({ hasText: "Schedule updated" });
+    await expect(completedChange).toBeVisible();
+    await expect(page.getByText("Nothing is waiting for your decision.")).toHaveCount(0);
+    const acknowledge = completedChange.getByRole("button", { name: "Acknowledge" });
+    await expect(acknowledge).toBeVisible();
+    await acknowledge.click();
+    await expect(page.getByText("Acknowledged.", { exact: true })).toBeVisible();
+    await expect.poll(async () => {
+      const result = await admin.from("adjustment_proposals").select("id", { count: "exact", head: true }).eq("family_id", family.data!.id).eq("status", "applied").is("acknowledged_at", null);
+      expect(result.error).toBeNull();
+      return result.count;
+    }).toBe(0);
+    const activeAdjustedInsights = await admin.from("klio_insights").select("id,title,summary,status,action_ref").eq("family_id", family.data!.id).eq("status", "active").eq("kind", "adjusted");
+    expect(activeAdjustedInsights.error).toBeNull();
+    expect(activeAdjustedInsights.data).toEqual([]);
+    await page.goto(`/app?date=${dateOffset(0)}`);
+    const currentAdjustedTab = page.getByRole("button", { name: adjustedTabName, exact: true });
+    await expect(currentAdjustedTab).toHaveCount(0);
 
-    await expect.poll(async () => (await admin.from("adjustment_proposals").select("acknowledged_at").eq("family_id", family.data!.id).eq("status", "applied").order("created_at", { ascending: false }).limit(1).single()).data?.acknowledged_at).not.toBeNull();
     const acknowledged = await admin.from("adjustment_proposals").select("id,summary,status,undo_status,acknowledged_at").eq("family_id", family.data!.id).eq("status", "applied").order("created_at", { ascending: false }).limit(1).single();
     expect(acknowledged.error).toBeNull();
     expect(acknowledged.data).toMatchObject({ status: "applied", undo_status: "available" });

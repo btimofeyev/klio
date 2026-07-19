@@ -1,0 +1,182 @@
+.dashboard {
+  width: 100%;
+  height: 100dvh;
+  min-height: 0;
+  padding: 20px clamp(22px, 3vw, 44px) 22px;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  overflow: hidden;
+  color: #30372f;
+  background: #f7f4ed;
+}
+
+.header {
+  min-height: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 30px;
+  border-bottom: 1px solid rgba(53, 62, 53, .17);
+}
+
+.header > div > span,
+.recordsPane > header span,
+.progressRail > header > span {
+  color: #617063;
+  font-size: 9px;
+  font-weight: 820;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+
+.header h1 { margin: 3px 0 2px; font-size: 30px; line-height: 1; letter-spacing: -.045em; }
+.header p { margin: 0; color: #747c74; font-size: 10px; }
+.header > nav { display: flex; align-items: center; gap: 8px; }
+.header > nav a { min-height: 39px; padding: 0 11px; display: inline-flex; align-items: center; gap: 6px; color: #506652; border-radius: 7px; font-size: 10px; font-weight: 750; }
+.header > nav a:hover { background: #edf0e9; }
+.header > nav a.primaryAction { padding-inline: 13px; color: #fffefa; background: #536f57; }
+.header > nav a.primaryAction:hover { background: #435e48; }
+
+.scopeBar { min-height: 58px; display: flex; align-items: center; justify-content: space-between; gap: 22px; border-bottom: 1px solid rgba(53, 62, 53, .13); }
+.learnerTabs { min-width: 0; display: flex; align-items: center; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+.dashboard .learnerTabs a { min-height: 36px; padding: 0 10px 0 6px; display: inline-flex; align-items: center; gap: 6px; color: #707870; background: transparent; border-radius: 7px; font-size: 10px; font-weight: 710; white-space: nowrap; }
+.dashboard .learnerTabs a i { width: 25px; height: 25px; display: grid; place-items: center; color: #506652; background: #e8ede5; border-radius: 50%; font-size: 9px; font-style: normal; }
+.dashboard .learnerTabs a:hover { color: #3b5140; background: #eff1eb; }
+.dashboard .learnerTabs a.active { color: #304b35; background: #e6ece3; }
+
+.mobileViews { display: none; }
+.body { min-height: 0; padding-top: 18px; display: grid; grid-template-columns: 170px minmax(390px, 1fr) minmax(230px, 270px); gap: clamp(20px, 2.5vw, 36px); overflow: hidden; }
+
+.folderRail { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; background: transparent !important; border: 0 !important; border-right: 1px solid rgba(53, 62, 53, .13) !important; border-radius: 0 !important; box-shadow: none !important; }
+.folderRail > header { min-height: 43px; padding-right: 19px; display: flex; align-items: start; justify-content: space-between; gap: 8px; }
+.folderRail h2 { margin: 0; color: #3a433b; font-size: 13px; }
+.folderRail > header span { color: #878d87; font-size: 8px; }
+.folderRail nav { min-height: 0; padding-right: 19px; display: grid; align-content: start; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #c7ccc5 transparent; }
+.dashboard .folderRail a { position: relative; min-height: 42px; padding: 0 5px; display: grid; grid-template-columns: 19px minmax(0, 1fr) auto; align-items: center; gap: 8px; color: #687069; background: transparent; border: 0; border-bottom: 1px solid rgba(53, 62, 53, .1); font-size: 10px; }
+.dashboard .folderRail a:first-child { border-top: 1px solid rgba(53, 62, 53, .1); }
+.dashboard .folderRail a svg { color: #858d85; }
+.dashboard .folderRail a span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dashboard .folderRail a b { color: #929891; font-size: 8px; font-weight: 650; }
+.dashboard .folderRail a:hover { color: #3c5541; background: rgba(236, 239, 232, .55); }
+.dashboard .folderRail a.active { padding-left: 10px; color: #304b35; background: #e8ede5; font-weight: 760; }
+.dashboard .folderRail a.active::before { content: ""; position: absolute; top: 9px; bottom: 9px; left: 0; width: 2px; background: #5b745e; }
+.dashboard .folderRail a.needsHelp { color: #8a5747; }
+
+.recordsPane { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; background: transparent !important; border: 0 !important; border-radius: 0 !important; box-shadow: none !important; }
+.recordsPane > header { min-height: 55px; padding-bottom: 13px; display: flex; align-items: end; justify-content: space-between; gap: 18px; border-bottom: 1px solid #465047; }
+.recordsPane > header h2 { margin: 3px 0 0; font-size: 23px; line-height: 1; letter-spacing: -.035em; }
+.recordsPane > header p { margin: 0; color: #808680; font-size: 9px; }
+.recordScroller { min-height: 0; padding-right: 10px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #c5cbc3 transparent; }
+.recordMonth { margin-top: 22px; }
+.recordMonth > h3 { margin: 0 0 5px; color: #747d75; font-size: 8px; font-weight: 820; letter-spacing: .11em; text-transform: uppercase; }
+.recordMonth > div { display: grid; }
+.learningEntry { min-height: 66px; padding: 9px 2px; display: grid; grid-template-columns: 34px 30px minmax(0, 1fr) auto; align-items: center; gap: 10px; border-bottom: 1px solid rgba(53, 62, 53, .11); }
+.learningEntry time { display: grid; justify-items: center; color: #858b85; line-height: 1; }
+.learningEntry time strong { color: #3c453d; font-size: 15px; }
+.learningEntry time span { margin-top: 3px; font-size: 7px; text-transform: uppercase; }
+.entryIcon { width: 29px; height: 29px; display: grid; place-items: center; color: #58705b; background: #e9ede7; border-radius: 50%; }
+.entryCopy { min-width: 0; }
+.entryCopy h4 { margin: 0; overflow: hidden; color: #343c35; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.entryCopy p { margin: 3px 0 0; overflow: hidden; color: #777f78; font-size: 9px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
+.learningEntry > a { min-height: 32px; padding: 0 7px; display: inline-flex; align-items: center; gap: 3px; color: #506953; border-radius: 6px; font-size: 8px; font-weight: 760; }
+.learningEntry > a:hover { background: #ebeee8; }
+
+.progressRail { min-width: 0; min-height: 0; padding-left: clamp(18px, 2vw, 28px); display: grid; grid-template-rows: auto auto minmax(0, 1fr); align-content: start; overflow-y: auto; border-left: 1px solid rgba(53, 62, 53, .13); scrollbar-width: thin; scrollbar-color: #c5cbc3 transparent; }
+.progressRail > header { padding-bottom: 15px; border-bottom: 1px solid rgba(53, 62, 53, .12); }
+.progressRail > header h2 { margin: 5px 0 4px; font-size: 16px; line-height: 1.25; letter-spacing: -.02em; }
+.progressRail > header p { margin: 0; color: #808680; font-size: 8px; }
+.insights { display: grid; }
+.insights article { padding: 15px 0; border-bottom: 1px solid rgba(53, 62, 53, .11); }
+.insights article > span { display: flex; align-items: center; gap: 5px; color: #5a705d; font-size: 8px; font-weight: 820; letter-spacing: .09em; text-transform: uppercase; }
+.insights h3 { margin: 8px 0 5px; font-size: 12px; line-height: 1.35; }
+.insights p { margin: 0; color: #707870; font-size: 9px; line-height: 1.5; }
+.insights footer { margin-top: 10px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.insights footer small { color: #858b85; font-size: 8px; }
+.insights footer a { display: inline-flex; align-items: center; gap: 2px; color: #4d6852; font-size: 8px; font-weight: 780; }
+.insights details { margin-top: 8px; color: #59665b; font-size: 8px; }
+.insights details summary { cursor: pointer; }
+.insights details p { margin-top: 5px; font-size: 8px; }
+.onTrack svg { color: #5d755f; }
+.results { min-height: 0; padding-top: 16px; overflow: hidden; }
+.results > header { min-height: 29px; display: flex; align-items: start; justify-content: space-between; gap: 12px; }
+.results > header h3 { margin: 0; font-size: 10px; }
+.results > header span { color: #858c85; font-size: 8px; }
+.results > div { min-height: 47px; display: grid; grid-template-columns: 38px minmax(0, 1fr); align-items: center; gap: 8px; border-top: 1px solid rgba(53, 62, 53, .1); }
+.results > div > strong { color: #435047; font-size: 13px; }
+.results > div > p { margin: 0; overflow: hidden; color: #4f5a50; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.results small { display: block; margin-top: 2px; color: #878d87; font-size: 7px; }
+.results > p { color: #777f78; font-size: 9px; }
+
+.empty { min-height: 260px; display: grid; place-items: center; align-content: center; color: #607460; text-align: center; }
+.empty h3 { margin: 9px 0 3px; color: #3c453d; font-size: 13px; }
+.empty p { max-width: 300px; margin: 0; color: #7b827b; font-size: 9px; line-height: 1.5; }
+.empty a { margin-top: 12px; color: #4e6852; font-size: 9px; font-weight: 760; }
+
+@media (max-width: 1020px) {
+  .body { grid-template-columns: 150px minmax(0, 1fr); }
+  .progressRail { display: none; }
+  .mobileViews { display: flex; align-items: center; gap: 4px; }
+  .mobileViews a { min-height: 34px; padding: 0 10px; color: #6f776f; border-radius: 6px; font-size: 9px; font-weight: 740; }
+  .mobileViews a.active { color: #344b39; background: #e7ece5; }
+  .progressMode .folderRail,.progressMode .recordsPane { display: none; }
+  .progressMode .body { display: block; }
+  .progressMode .progressRail { height: 100%; padding: 0; display: grid; border-left: 0; }
+}
+
+@media (max-width: 900px) {
+  .dashboard { height: calc(100dvh - 67px); padding: 12px 16px 13px; }
+  .header { min-height: 68px; }
+  .header h1 { font-size: 25px; }
+  .header p { display: none; }
+  .header > nav a:first-child { display: none; }
+  .header > nav a.primaryAction { min-height: 37px; padding-inline: 10px; }
+  .scopeBar { min-height: 52px; }
+  .body { padding-top: 12px; }
+}
+
+@media (max-width: 640px) {
+  .dashboard { padding-inline: 13px; }
+  .header > div > span { display: none; }
+  .header h1 { font-size: 22px; }
+  .header > nav a.primaryAction { font-size: 0; }
+  .header > nav a.primaryAction svg { width: 17px; height: 17px; }
+  .scopeBar { align-items: center; }
+  .learnerTabs { gap: 2px; }
+  .dashboard .learnerTabs a { padding-right: 7px; font-size: 9px; }
+  .dashboard .learnerTabs a i { width: 22px; height: 22px; }
+  .body { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); gap: 10px; }
+  .folderRail { display: block; overflow: visible; border-right: 0; }
+  .folderRail > header { display: none; }
+  .folderRail nav { padding: 0 0 6px; grid-auto-flow: column; grid-auto-columns: max-content; gap: 3px; overflow-x: auto; scrollbar-width: none; }
+  .dashboard .folderRail a,.dashboard .folderRail a:first-child { min-height: 35px; padding: 0 9px; display: inline-flex; border: 0; border-radius: 6px; }
+  .dashboard .folderRail a svg { display: none; }
+  .dashboard .folderRail a.active { padding-left: 9px; background: #e7ece5; }
+  .dashboard .folderRail a.active::before { display: none; }
+  .recordsPane > header { min-height: 48px; padding-bottom: 10px; }
+  .recordsPane > header h2 { font-size: 20px; }
+  .recordScroller { padding-right: 4px; }
+  .learningEntry { min-height: 62px; grid-template-columns: 30px 27px minmax(0, 1fr); gap: 8px; }
+  .learningEntry > a { display: none; }
+  .entryIcon { width: 27px; height: 27px; }
+  .progressMode .body { display: block; }
+  .progressMode .folderRail { display: none; }
+  .progressMode .progressRail { height: 100%; overflow-y: auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dashboard a { transition: none; }
+}
+
+.loadingHeading { display: grid; gap: 8px; }
+.loadingHeading i,.loadingHeading b,.loadingHeading span,.loadingTabs i,.loadingList i { display: block; background: #e5e7e0; border-radius: 4px; animation: records-pulse 1.4s ease-in-out infinite; }
+.loadingHeading i { width: 52px; height: 8px; }
+.loadingHeading b { width: 170px; height: 24px; }
+.loadingHeading span { width: 260px; height: 9px; }
+.loadingTabs { display: flex; gap: 8px; }
+.loadingTabs i { width: 82px; height: 34px; }
+.loadingList { padding: 10px 18px 0 0; display: grid; gap: 10px; }
+.loadingList i { height: 48px; }
+.recordsPane > .loadingList { padding-top: 55px; }
+.progressRail > .loadingList { padding-top: 0; }
+@keyframes records-pulse { 50% { opacity: .5; } }
+@media (prefers-reduced-motion: reduce) { .loadingHeading i,.loadingHeading b,.loadingHeading span,.loadingTabs i,.loadingList i { animation: none; } }

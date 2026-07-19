@@ -8,6 +8,25 @@ import { writeAuditEvent } from "@/lib/audit/write-audit-event";
 
 const schema = z.object({ decision: z.enum(["approve", "reject", "undo", "acknowledge"]) }).strict();
 
+async function dismissLinkedInsights(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  familyId: string,
+  proposalIds: string[],
+  parentId: string,
+  dismissedAt: string,
+) {
+  if (!proposalIds.length) return;
+  const activeInsights = await supabase.from("klio_insights").select("id,action_ref").eq("family_id", familyId).eq("status", "active");
+  if (activeInsights.error) throw activeInsights.error;
+  const linkedInsightIds = activeInsights.data.flatMap((insight) => {
+    const ref = insight.action_ref && typeof insight.action_ref === "object" && !Array.isArray(insight.action_ref) ? insight.action_ref : null;
+    return ref && typeof ref.proposalId === "string" && proposalIds.includes(ref.proposalId) ? [insight.id] : [];
+  });
+  if (!linkedInsightIds.length) return;
+  const dismissed = await supabase.from("klio_insights").update({ status: "dismissed", dismissed_at: dismissedAt, dismissed_by: parentId }).in("id", linkedInsightIds);
+  if (dismissed.error) throw dismissed.error;
+}
+
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
     const parent = await requireParentApi();
@@ -30,18 +49,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         .select("id");
       if (acknowledged.error) throw acknowledged.error;
       const acknowledgedIds = acknowledged.data.map((item) => item.id);
-      if (acknowledgedIds.length) {
-        const activeInsights = await supabase.from("klio_insights").select("id,action_ref").eq("family_id", proposal.data.family_id).eq("status", "active");
-        if (activeInsights.error) throw activeInsights.error;
-        const linkedInsightIds = activeInsights.data.flatMap((insight) => {
-          const ref = insight.action_ref && typeof insight.action_ref === "object" && !Array.isArray(insight.action_ref) ? insight.action_ref : null;
-          return ref && typeof ref.proposalId === "string" && acknowledgedIds.includes(ref.proposalId) ? [insight.id] : [];
-        });
-        if (linkedInsightIds.length) {
-          const dismissed = await supabase.from("klio_insights").update({ status: "dismissed", dismissed_at: acknowledgedAt, dismissed_by: parent.id }).in("id", linkedInsightIds);
-          if (dismissed.error) throw dismissed.error;
-        }
-      }
+      await dismissLinkedInsights(supabase, proposal.data.family_id, acknowledgedIds, parent.id, acknowledgedAt);
       await writeAuditEvent(admin, {
         familyId: proposal.data.family_id,
         actorId: parent.id,
@@ -56,8 +64,10 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     }
     if (parsed.data.decision === "reject") {
       if (proposal.data.status !== "proposed") return NextResponse.json({ error: "That adjustment has already been decided." }, { status: 409 });
-      const rejected = await supabase.from("adjustment_proposals").update({ status: "rejected", approved_by: parent.id, approved_at: new Date().toISOString() }).eq("id", id).eq("family_id", proposal.data.family_id).eq("status", "proposed");
+      const rejectedAt = new Date().toISOString();
+      const rejected = await supabase.from("adjustment_proposals").update({ status: "rejected", approved_by: parent.id, approved_at: rejectedAt }).eq("id", id).eq("family_id", proposal.data.family_id).eq("status", "proposed");
       if (rejected.error) throw rejected.error;
+      await dismissLinkedInsights(supabase, proposal.data.family_id, [id], parent.id, rejectedAt);
       await writeAuditEvent(admin, { familyId: proposal.data.family_id, actorId: parent.id, actorType: "parent", action: "schedule_adjustment.rejected", entityType: "adjustment_proposal", entityId: id });
       revalidatePath("/app", "layout");
       return NextResponse.json({ status: "rejected" });
@@ -72,6 +82,9 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     }
     const outcome = rpc.data && typeof rpc.data === "object" && !Array.isArray(rpc.data) ? rpc.data as Record<string, unknown> : {};
     if (outcome.status === "stale" || outcome.status === "expired") return NextResponse.json({ error: parsed.data.decision === "undo" ? "The week changed after this adjustment, so undo would overwrite later work." : "The week changed after this proposal. Ask Klio to recalculate it." }, { status: 409 });
+    if (parsed.data.decision === "undo" && outcome.status === "undone") {
+      await dismissLinkedInsights(supabase, proposal.data.family_id, [id], parent.id, new Date().toISOString());
+    }
     revalidatePath("/app", "layout");
     return NextResponse.json(rpc.data);
   } catch (error) {

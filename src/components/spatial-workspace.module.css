@@ -17,6 +17,10 @@
   transform: translateX(-50%);
 }
 
+.briefing {
+  display: contents;
+}
+
 .board {
   position: absolute;
   top: 94px;
@@ -24,11 +28,17 @@
   bottom: 152px;
   left: 18px;
   display: grid;
-  grid-template-columns: minmax(112px, 148px) minmax(620px, 1120px) minmax(112px, 148px);
+  grid-template-columns: minmax(160px, 200px) minmax(620px, 1040px) minmax(160px, 200px);
   justify-content: center;
   gap: clamp(12px, 1.5vw, 24px);
 }
 .boardQuiet { grid-template-columns: minmax(620px, 1120px); }
+.boardQuiet .scheduleStage { grid-column: 1; }
+.boardWithBriefing { grid-template-rows: auto minmax(0, 1fr); }
+.boardWithBriefing .scheduleStage { grid-row: 1 / 3; }
+.boardWithBriefing .rail { grid-row: 2; }
+.briefing :global([data-briefing-side="left"]) { grid-column: 1; grid-row: 1; margin-bottom: 12px; }
+.briefing :global([data-briefing-side="right"]) { grid-column: 3; grid-row: 1; margin-bottom: 12px; }
 
 .scheduleStage {
   grid-column: 2;
@@ -187,29 +197,231 @@
   backdrop-filter: blur(3px) saturate(.72);
 }
 
-.viewport:has(:global(.spatial-assistant-surface .quiet-capture:focus-within)) .assistant {
-  transform: translateY(-64px);
+/* The daily workspace is one quiet teaching ledger with useful paper in its margins. */
+.dayViewport {
+  background: #f7f4ed;
+}
+
+.dayViewport .toolbar {
+  top: 16px;
+  width: min(940px, calc(100% - 390px));
+  max-width: none;
+}
+
+.dayViewport .board {
+  top: 88px;
+  right: 24px;
+  bottom: 108px;
+  left: 24px;
+  grid-template-columns: 190px minmax(0, 800px) 190px;
+  grid-template-rows: minmax(0, 1fr);
+  gap: clamp(28px, 2.5vw, 36px);
+}
+
+.dayViewport .scheduleStage {
+  grid-row: 1;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.dayViewport .scheduleHeader { display: none; }
+.dayViewport .scheduleScroll { height: 100%; padding: 0; }
+.dayViewport .boardQuiet { grid-template-columns: minmax(620px, 1040px); }
+.dayViewport .boardQuiet .scheduleStage { grid-column: 1; }
+.dayViewport .boardWithBriefing { grid-template-rows: auto minmax(0, 1fr); }
+.dayViewport .boardWithBriefing .scheduleStage { grid-row: 1 / 3; }
+.dayViewport .briefing :global([data-briefing-side="left"]),
+.dayViewport .briefing :global([data-briefing-side="right"]) { grid-row: 1; align-self: start; }
+.dayViewport .briefing :global([data-briefing-side="left"]) { margin-top: 154px; }
+.dayViewport .briefing :global([data-briefing-side="right"]) { margin-top: 174px; }
+.dayViewport .rail { grid-row: 1; padding: 184px 4px 8px; overflow: hidden auto; scrollbar-width: none; }
+.dayViewport .rail::-webkit-scrollbar { display: none; }
+.dayViewport .railRight { padding-top: 206px; }
+.dayViewport .boardWithBriefing .briefing :global([data-briefing-side="left"]),
+.dayViewport .boardWithBriefing .briefing :global([data-briefing-side="right"]) { margin-top: 0; }
+.dayViewport .boardWithBriefing .rail { grid-row: 2; padding-top: 12px; }
+.dayViewport .railTabs { gap: 14px; }
+.dayViewport .tabWrap {
+  position: relative;
+  overflow: visible;
+  background: #f8f3e9;
+  border: 0;
+  border-radius: 1px;
+  box-shadow: 0 16px 28px rgba(63, 55, 43, .13), 0 2px 5px rgba(63, 55, 43, .08);
+  transform: rotate(-.8deg);
+  transform-origin: 70% 0;
+}
+.dayViewport .railRight .tabWrap { transform: rotate(.7deg); transform-origin: 25% 0; }
+.dayViewport .railLeft .tabWrap:nth-child(even) { transform: rotate(.55deg); transform-origin: 25% 0; }
+.dayViewport .railRight .tabWrap:nth-child(even) { transform: rotate(-.55deg); transform-origin: 70% 0; }
+.dayViewport .tabWrap::before {
+  position: absolute;
+  z-index: 1;
+  top: 12px;
+  left: 50%;
+  width: 17px;
+  height: 17px;
+  content: "";
+  background: #c8b693;
+  border: 1px solid rgba(91, 75, 52, .2);
+  border-radius: 50%;
+  box-shadow: inset 0 1px rgba(255, 255, 255, .58), 0 2px 4px rgba(70, 57, 41, .25);
+  transform: translateX(-50%);
+}
+.dayViewport .tabWrap:hover {
+  background: #fbf7ef;
+  border-color: transparent;
+  transform: rotate(-.8deg) translateY(-2px);
+}
+.dayViewport .railRight .tabWrap:hover { transform: rotate(.7deg) translateY(-2px); }
+.dayViewport .railLeft .tabWrap:nth-child(even):hover { transform: rotate(.55deg) translateY(-2px); }
+.dayViewport .railRight .tabWrap:nth-child(even):hover { transform: rotate(-.55deg) translateY(-2px); }
+.dayViewport .tab {
+  min-height: 184px;
+  padding: 46px 23px 24px;
+  display: block;
+  color: #354038;
+  text-align: left;
+}
+.dayViewport .railLeft .tab { text-align: left; }
+.dayViewport .tab span {
+  display: block;
+  padding-bottom: 12px;
+  color: #344038;
+  border-bottom: 1px solid rgba(93, 82, 62, .28);
+  font-size: 13px;
+  font-weight: 720;
+  white-space: normal;
+}
+.dayViewport .tab small {
+  margin-top: 14px;
+  display: block;
+  overflow: visible;
+  color: #59645d;
+  font-size: 11px;
+  line-height: 1.5;
+  text-overflow: clip;
+  white-space: normal;
+}
+.dayViewport .assistant { bottom: 16px; width: min(900px, calc(100% - 320px)); }
+.dayViewport .layoutControls,
+.dayViewport .arrangeHint { display: none; }
+.dayViewport:has(:global(.spatial-assistant-surface .quiet-capture:focus-within))::after { display: none; }
+
+/* Calendar surfaces use the same quiet frame as the daily view. Empty note
+   rails collapse so all five or seven calendar columns stay readable. */
+.calendarViewport { background: #f7f4ed; }
+.calendarViewport .toolbar { top: 16px; width: min(940px, calc(100% - 390px)); max-width: none; }
+.calendarViewport .board {
+  top: 88px;
+  right: 24px;
+  bottom: 108px;
+  left: 24px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: clamp(14px, 1.6vw, 22px);
+}
+.calendarViewport .scheduleStage { grid-column: 1; }
+.calendarViewport .board:has(.railLeft):not(:has(.railRight)) { grid-template-columns: 142px minmax(0, 1fr); }
+.calendarViewport .board:has(.railLeft):not(:has(.railRight)) .scheduleStage { grid-column: 2; }
+.calendarViewport .board:has(.railLeft):not(:has(.railRight)) .railLeft { grid-column: 1; }
+.calendarViewport .board:has(.railRight):not(:has(.railLeft)) { grid-template-columns: minmax(0, 1fr) 142px; }
+.calendarViewport .board:has(.railRight):not(:has(.railLeft)) .railRight { grid-column: 2; }
+.calendarViewport .board:has(.railLeft):has(.railRight) { grid-template-columns: 132px minmax(0, 1fr) 132px; }
+.calendarViewport .board:has(.railLeft):has(.railRight) .scheduleStage { grid-column: 2; }
+.calendarViewport .board:has(.railLeft):has(.railRight) .railLeft { grid-column: 1; }
+.calendarViewport .board:has(.railLeft):has(.railRight) .railRight { grid-column: 3; }
+.calendarViewport .assistant { bottom: 16px; width: min(900px, calc(100% - 320px)); }
+.calendarViewport .layoutControls,
+.calendarViewport .arrangeHint { display: none; }
+.calendarViewport:has(:global(.spatial-assistant-surface .quiet-capture:focus-within))::after { display: none; }
+
+@media (max-width: 1320px) {
+  .dayViewport .board { grid-template-columns: 150px minmax(0, 760px) 150px; gap: 20px; }
+  .dayViewport .boardQuiet { grid-template-columns: minmax(0, 1040px); }
+  .dayViewport .rail { padding-top: 174px; }
+  .dayViewport .railRight { padding-top: 194px; }
+  .dayViewport .tab { min-height: 168px; padding: 43px 17px 20px; }
+  .dayViewport .tab small { font-size: 10px; }
 }
 
 @media (max-width: 980px) {
   .toolbar { max-width: calc(100% - 24px); }
-  .board { grid-template-columns: 92px minmax(520px, 1fr) 92px; gap: 9px; }
+  .board { grid-template-columns: minmax(130px, 150px) minmax(520px, 1fr) minmax(130px, 150px); gap: 9px; }
+  .boardQuiet { grid-template-columns: minmax(0, 1fr); }
   .railLabel { display: none; }
   .tab { min-height: 52px; padding: 8px; }
   .tab small { display: none; }
   .panel { width: min(410px, calc(100% - 120px)); }
+  .dayViewport .toolbar { width: calc(100% - 36px); }
+  .dayViewport .board { grid-template-columns: 118px minmax(500px, 1fr) 118px; gap: 14px; }
+  .dayViewport .boardQuiet { grid-template-columns: minmax(0, 1fr); }
+  .dayViewport .assistant { width: min(760px, calc(100% - 36px)); }
+  .calendarViewport .toolbar { width: calc(100% - 36px); }
+  .calendarViewport .board,
+  .calendarViewport .board:has(.railLeft):not(:has(.railRight)),
+  .calendarViewport .board:has(.railRight):not(:has(.railLeft)),
+  .calendarViewport .board:has(.railLeft):has(.railRight) { grid-template-columns: minmax(0, 1fr); }
+  .calendarViewport .board .scheduleStage,
+  .calendarViewport .board:has(.railLeft):not(:has(.railRight)) .scheduleStage,
+  .calendarViewport .board:has(.railRight):not(:has(.railLeft)) .scheduleStage,
+  .calendarViewport .board:has(.railLeft):has(.railRight) .scheduleStage { grid-column: 1; }
+  .calendarViewport .rail { display: none; }
+  .calendarViewport .assistant { width: min(760px, calc(100% - 36px)); }
+}
+
+@media (min-width: 761px) and (max-width: 980px) {
+  .dayViewport .boardWithBriefing,
+  .calendarViewport .boardWithBriefing {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .dayViewport .boardWithBriefing .briefing,
+  .calendarViewport .boardWithBriefing .briefing {
+    grid-column: 1;
+    grid-row: 1;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+  .dayViewport .boardWithBriefing .briefing :global([data-briefing-side="left"]),
+  .calendarViewport .boardWithBriefing .briefing :global([data-briefing-side="left"]) { grid-column: 1; grid-row: 1; }
+  .dayViewport .boardWithBriefing .briefing :global([data-briefing-side="right"]),
+  .calendarViewport .boardWithBriefing .briefing :global([data-briefing-side="right"]) { grid-column: 2; grid-row: 1; }
+  .calendarViewport .boardWithBriefing .scheduleStage { grid-column: 1; grid-row: 2; }
+  .dayViewport .boardWithBriefing { grid-template-rows: auto auto auto minmax(0, 1fr); }
+  .dayViewport .boardWithBriefing .railLeft,
+  .dayViewport .boardWithBriefing .railRight { grid-column: 1; padding: 0; overflow: hidden; }
+  .dayViewport .boardWithBriefing .railLeft { grid-row: 2; }
+  .dayViewport .boardWithBriefing .railRight { grid-row: 3; }
+  .dayViewport .boardWithBriefing .railTabs { display: flex; gap: 7px; overflow-x: auto; scrollbar-width: none; }
+  .dayViewport .boardWithBriefing .tabWrap { flex: 0 0 min(230px, calc(50% - 4px)); transform: none; box-shadow: none; }
+  .dayViewport .boardWithBriefing .tabWrap::before { display: none; }
+  .dayViewport .boardWithBriefing .tab { min-height: 44px; padding: 8px 10px; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 8px; text-align: left; }
+  .dayViewport .boardWithBriefing .tab span { padding: 0 8px 0 0; border: 0; border-right: 1px solid rgba(93, 82, 62, .2); font-size: 10px; white-space: nowrap; }
+  .dayViewport .boardWithBriefing .tab small { margin: 0; display: block; font-size: 9px; text-align: left; }
+  .dayViewport .boardWithBriefing .scheduleStage { grid-column: 1; grid-row: 4; }
 }
 
 @media (max-width: 760px) {
-  .viewport { min-height: 100dvh; }
+  /* The mobile app frame already reserves the bottom-navigation height. Keep
+     the canvas inside that frame so focusing the composer cannot scroll this
+     overflow-hidden ancestor and make the handoff jump. */
+  .viewport { height: 100%; min-height: 0; }
   .toolbar { top: 8px; width: calc(100% - 16px); max-width: none; }
+  .briefing { display: block; grid-column: 1; grid-row: 1; min-width: 0; overflow: hidden; }
   .board { top: 76px; right: 8px; bottom: 204px; left: 8px; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr); gap: 7px; }
   .rail { min-height: 36px; padding: 0; overflow: visible; }
   .railLeft { grid-column: 1; grid-row: 1; }
   .railRight { grid-column: 1; grid-row: 2; }
   .scheduleStage { grid-column: 1; grid-row: 3; min-height: 0; }
+  .boardWithBriefing { grid-template-rows: auto auto auto minmax(0, 1fr); }
+  .boardWithBriefing .railLeft { grid-row: 2; }
+  .boardWithBriefing .railRight { grid-row: 3; }
+  .boardWithBriefing .scheduleStage { grid-column: 1; grid-row: 4; }
   .boardQuiet { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
-  .boardQuiet .scheduleStage { grid-row: 1; }
+  .boardQuiet .scheduleStage { grid-column: 1; grid-row: 1; }
   .railTabs { display: flex; gap: 5px; overflow-x: auto; scrollbar-width: none; }
   .railTabs::-webkit-scrollbar { display: none; }
   .tabWrap { flex: 0 0 auto; }
@@ -233,6 +445,36 @@
   .layoutStatus { display: none; }
   .arrangeHint { display: none; }
   .assistant { right: 8px; bottom: 72px; left: 8px; width: calc(100% - 16px); }
+  .dayViewport .toolbar { top: 5px; width: calc(100% - 16px); }
+  .dayViewport .board,
+  .dayViewport .boardQuiet { top: 66px; right: 8px; bottom: 142px; left: 8px; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr); gap: 6px; }
+  .dayViewport .railLeft,
+  .dayViewport .railRight { grid-column: 1; padding: 0; overflow: hidden; }
+  .dayViewport .railLeft { display: block; grid-row: 1; }
+  .dayViewport .railRight { grid-row: 2; }
+  .dayViewport .rail .railTabs { gap: 8px; overflow-x: auto; scroll-snap-type: x proximity; }
+  .dayViewport .rail .tabWrap { flex: 0 0 calc(100% - 36px); transform: none; box-shadow: none; scroll-snap-align: start; }
+  .dayViewport .rail .tabWrap:hover,
+  .dayViewport .rail .tabWrap:nth-child(even):hover { transform: none; }
+  .dayViewport .rail .tabWrap::before { display: none; }
+  .dayViewport .rail .tab { min-height: 42px; padding: 8px 11px; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 8px; text-align: left; }
+  .dayViewport .rail .tab span { grid-column: 1; grid-row: 1; padding: 0 8px 0 0; border: 0; border-right: 1px solid rgba(93, 82, 62, .2); font-size: 10px; white-space: nowrap; }
+  .dayViewport .rail .tab small,
+  .dayViewport .rail .tab:has(.grip) small { grid-column: 2; margin: 0; overflow: hidden; font-size: 9px; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+  .dayViewport .scheduleStage,
+  .dayViewport .boardQuiet .scheduleStage { grid-column: 1; grid-row: 3; }
+  .dayViewport .boardWithBriefing { grid-template-rows: auto auto auto minmax(0, 1fr); }
+  .dayViewport .boardWithBriefing .briefing { grid-row: 1; }
+  .dayViewport .boardWithBriefing .railLeft { grid-row: 2; }
+  .dayViewport .boardWithBriefing .railRight { grid-row: 3; }
+  .dayViewport .boardWithBriefing .scheduleStage { grid-row: 4; }
+  .dayViewport .briefing :global([data-briefing-side="left"]),
+  .dayViewport .briefing :global([data-briefing-side="right"]) { margin-top: 0; }
+  .dayViewport .assistant { right: 8px; bottom: 70px; left: 8px; width: calc(100% - 16px); }
+  .dayViewport .layoutControls { display: none; }
+  .calendarViewport .toolbar { top: 5px; width: calc(100% - 16px); }
+  .calendarViewport .board { top: 66px; right: 8px; bottom: 142px; left: 8px; }
+  .calendarViewport .assistant { right: 8px; bottom: 70px; left: 8px; width: calc(100% - 16px); }
 }
 
 @media (prefers-reduced-motion: reduce) {

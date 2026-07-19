@@ -12,6 +12,9 @@ import { findFamilyCrowdedOutSubjects, refreshFamilyPacingCheckpoints } from "@/
 import { enqueueWorkspaceTurn } from "@/lib/agent/workspace/turns";
 import { moveUnfinishedWork, recordExplicitCompletion } from "./adjustments";
 import { enqueueProactiveEvaluation } from "./queue";
+import { weeklyBriefingSchedule } from "./weekly-schedule";
+import { createWeeklyFamilyBriefing } from "./weekly-briefing-store";
+import { loadAvailabilityByDate } from "@/lib/schedule/availability-data";
 
 export { enqueueProactiveEvaluation } from "./queue";
 
@@ -90,14 +93,16 @@ export async function enqueueScheduledFamilyEvaluations(now = new Date(), family
   if (families.error) throw families.error;
   let queued = 0;
   for (const family of families.data) {
-    const local = localClock(now, family.timezone);
-    const events: Array<{ kind: ProactiveEventKind; suffix: string }> = [];
-    if (local.hour >= 5) events.push({ kind: "day_preparation", suffix: "morning" });
-    if (local.hour >= 17) events.push({ kind: "day_reconciliation", suffix: "evening" });
-    if (local.weekday === 1 && local.hour >= 5) events.push({ kind: "weekly_boundary", suffix: "week" });
+    const local = safeLocalClock(now, family.timezone);
+    if (!local) continue;
+    const weekly = weeklyBriefingSchedule(now, family.timezone);
+    const events: Array<{ kind: ProactiveEventKind; idempotencyKey: string }> = [];
+    if (local.hour >= 5) events.push({ kind: "day_preparation", idempotencyKey: `morning:${local.date}` });
+    if (local.hour >= 17) events.push({ kind: "day_reconciliation", idempotencyKey: `evening:${local.date}` });
+    if (weekly?.due) events.push({ kind: "weekly_boundary", idempotencyKey: weekly.idempotencyKey });
     for (const event of events) {
       try {
-        const result = await enqueueProactiveEvaluation({ familyId: family.id, eventKind: event.kind, entityType: "family", entityId: family.id, idempotencyKey: `${event.suffix}:${local.date}` });
+        const result = await enqueueProactiveEvaluation({ familyId: family.id, eventKind: event.kind, entityType: "family", entityId: family.id, idempotencyKey: event.idempotencyKey });
         if (!result.duplicate) queued += 1;
       } catch (error) {
         // A family can be deleted after the sweep reads it. That is a completed
@@ -113,6 +118,11 @@ export async function enqueueScheduledFamilyEvaluations(now = new Date(), family
 function databaseErrorCode(error: unknown) {
   if (!error || typeof error !== "object" || !("code" in error)) return null;
   return typeof error.code === "string" ? error.code : null;
+}
+
+function safeLocalClock(now: Date, timeZone: string) {
+  try { return localClock(now, timeZone); }
+  catch (error) { if (error instanceof RangeError) return null; throw error; }
 }
 
 async function evaluateOperationalEvent(evaluation: EvaluationRow) {
@@ -155,6 +165,7 @@ async function evaluateCompletion(evaluation: EvaluationRow) {
     .eq("family_id", evaluation.family_id).eq("id", evaluation.entity_id).maybeSingle();
   if (assignment.error) throw assignment.error;
   if (!assignment.data || assignment.data.status !== "completed") return noAction("The assignment is not recorded as completed.");
+  await supersedeResolvedScheduleQuestions(admin, evaluation.family_id, assignment.data.student_id, assignment.data.id);
   const next = assignment.data.curriculum_unit_id && assignment.data.sequence_number
     ? await admin.from("assignments").select("id,title,scheduled_date,status,sequence_number").eq("family_id", evaluation.family_id).eq("student_id", assignment.data.student_id).eq("curriculum_unit_id", assignment.data.curriculum_unit_id).gt("sequence_number", assignment.data.sequence_number).in("status", ["planned", "doing"]).order("sequence_number").limit(1).maybeSingle()
     : { data: null, error: null };
@@ -178,6 +189,7 @@ async function evaluateScheduleChange(evaluation: EvaluationRow) {
   const admin = createAdminClient();
   const assignment = await admin.from("assignments").select("id,title,scheduled_date,estimated_minutes").eq("family_id", evaluation.family_id).eq("student_id", evaluation.student_id).eq("id", evaluation.entity_id).maybeSingle();
   if (assignment.error) throw assignment.error;
+  if (assignment.data) await supersedeResolvedScheduleQuestions(admin, evaluation.family_id, evaluation.student_id, assignment.data.id);
   if (!assignment.data?.scheduled_date) return noAction("The schedule change left no dated work to evaluate.");
   const [student, day] = await Promise.all([
     admin.from("students").select("daily_capacity_minutes").eq("family_id", evaluation.family_id).eq("id", evaluation.student_id).single(),
@@ -286,7 +298,14 @@ async function evaluateDayBoundary(evaluation: EvaluationRow, period: "morning" 
         (moved.applied ? movedAppliedProposalIds : movedReviewProposalIds).push(moved.proposal.id);
       } catch (error) {
         if (!(error instanceof Error) || error.message !== "NO_CAPACITY_FOR_UNFINISHED_WORK") throw error;
-        await upsertInsight({ evaluation: { ...evaluation, student_id: studentId }, kind: "needs_detail", title: "The remaining work does not fit this week", summary: "Klio kept the lessons in place because there is no open learning day within the learner’s capacity.", reason: "Evening reconciliation could not find a safe slot without overloading the learner.", priority: 93, evidenceRefs: assignmentIds.map((id) => ({ type: "assignment", id })), actionRef: { type: "week", date: today } });
+        const learner = (students.data ?? []).find((student) => student.id === studentId);
+        const affected = unfinishedAssignments.filter((assignment) => assignmentIds.includes(assignment.id));
+        const learnerName = learner?.display_name ?? "This learner";
+        const learnerPossessive = `${learnerName}${learnerName.endsWith("s") ? "’" : "’s"}`;
+        const title = affected.length === 1
+          ? `${learnerPossessive} ${affected[0].title} needs another day`
+          : `${learnerName} has ${affected.length} lessons that need another day`;
+        await upsertInsight({ evaluation: { ...evaluation, student_id: studentId }, kind: "needs_detail", title, summary: `Klio checked the rest of the week and could not move ${affected.length === 1 ? "it" : "them"} without exceeding ${learnerPossessive} daily limit.`, reason: "Evening reconciliation could not find a safe slot without overloading the learner.", priority: 93, evidenceRefs: assignmentIds.map((id) => ({ type: "assignment", id })), actionRef: { type: "week", date: today, studentId, assignmentIds } });
       }
     }
   }
@@ -369,17 +388,26 @@ async function evaluateWeeklyBoundary(evaluation: EvaluationRow) {
   const latestByGoal = [...new Map(checkpoints.data.map((checkpoint) => [checkpoint.goal_id, checkpoint])).values()];
   const concern = latestByGoal.filter((checkpoint) => ["at_risk", "blocked"].includes(checkpoint.state) || !checkpoint.feasible)
     .sort((a, b) => Number(b.expected_value) - Number(b.actual_value) - (Number(a.expected_value) - Number(a.actual_value)))[0];
-  if (!concern && !crowded.length) return noAction(latestByGoal.length ? "Current pacing checkpoints do not require a recommendation." : "No active pacing checkpoint exists yet; Klio left the weekly review quiet.", { checkpointCount: latestByGoal.length });
-  if (!concern && crowded.length) {
+  let evaluationResult: ReturnType<typeof noAction> | { outcome: "review_required"; summary: string; result: Record<string, unknown> };
+  if (!concern && !crowded.length) {
+    evaluationResult = noAction(latestByGoal.length ? "Current pacing checkpoints do not require a recommendation." : "No active pacing checkpoint exists yet; Klio left the weekly review quiet.", { checkpointCount: latestByGoal.length });
+  } else if (!concern && crowded.length) {
     const first = crowded[0];
     await upsertInsight({ evaluation: { ...evaluation, student_id: first.studentId }, kind: "noticed", title: `${first.subject} is being crowded out`, summary: `${first.scheduledWeeklyMinutes} of ${first.expectedWeeklyMinutes} parent-planned minutes are scheduled while overall capacity is already ${Math.round(first.learnerCapacityConsumedRatio * 100)}% used.`, reason: "The parent-defined subject effort is short while the learner's week is nearly full.", priority: 89, evidenceRefs: [], actionRef: { type: "week" } });
-    return { outcome: "review_required" as const, summary: "Weekly capacity found a subject being crowded out.", result: { crowdedOut: crowded.slice(0, 5) } };
+    evaluationResult = { outcome: "review_required", summary: "Weekly capacity found a subject being crowded out.", result: { crowdedOut: crowded.slice(0, 5) } };
+  } else {
+    const prior = checkpoints.data.find((checkpoint) => checkpoint.goal_id === concern!.goal_id && checkpoint.id !== concern!.id);
+    const change = prior ? { since: prior.as_of_date, actualDelta: Number(concern!.actual_value) - Number(prior.actual_value), expectedDelta: Number(concern!.expected_value) - Number(prior.expected_value), stateChanged: concern!.state !== prior.state, feasibilityChanged: concern!.feasible !== prior.feasible } : null;
+    const crowdedForLearner = crowded.filter((item) => item.studentId === concern!.student_id).slice(0, 5);
+    await upsertInsight({ evaluation: { ...evaluation, student_id: concern!.student_id }, kind: "noticed", title: concern!.state === "blocked" ? "A learning goal is blocked" : "A learning goal is behind pace", summary: `Actual progress is ${concern!.actual_value}; expected progress is ${concern!.expected_value}.${change ? ` Since ${change.since}, actual progress changed by ${change.actualDelta} while expected progress changed by ${change.expectedDelta}.` : ""}${crowdedForLearner.length ? ` ${crowdedForLearner[0].subject} is also short ${crowdedForLearner[0].shortfallMinutes} planned minutes.` : ""}`, reason: concern!.feasible ? "The learner is behind the parent-defined term pace." : "The remaining target does not fit the current parent-defined cadence or capacity.", priority: concern!.state === "blocked" ? 97 : 93, evidenceRefs: [{ type: "pacing_checkpoint", id: concern!.id }], actionRef: { type: "goal", goalId: concern!.goal_id } });
+    evaluationResult = { outcome: "review_required", summary: "Weekly pacing found one goal that needs a bounded planning decision.", result: { goalId: concern!.goal_id, checkpointId: concern!.id, state: concern!.state, feasible: concern!.feasible, change, crowdedOut: crowdedForLearner } };
   }
-  const prior = checkpoints.data.find((checkpoint) => checkpoint.goal_id === concern!.goal_id && checkpoint.id !== concern!.id);
-  const change = prior ? { since: prior.as_of_date, actualDelta: Number(concern!.actual_value) - Number(prior.actual_value), expectedDelta: Number(concern!.expected_value) - Number(prior.expected_value), stateChanged: concern!.state !== prior.state, feasibilityChanged: concern!.feasible !== prior.feasible } : null;
-  const crowdedForLearner = crowded.filter((item) => item.studentId === concern!.student_id).slice(0, 5);
-  await upsertInsight({ evaluation: { ...evaluation, student_id: concern!.student_id }, kind: "noticed", title: concern!.state === "blocked" ? "A learning goal is blocked" : "A learning goal is behind pace", summary: `Actual progress is ${concern!.actual_value}; expected progress is ${concern!.expected_value}.${change ? ` Since ${change.since}, actual progress changed by ${change.actualDelta} while expected progress changed by ${change.expectedDelta}.` : ""}${crowdedForLearner.length ? ` ${crowdedForLearner[0].subject} is also short ${crowdedForLearner[0].shortfallMinutes} planned minutes.` : ""}`, reason: concern!.feasible ? "The learner is behind the parent-defined term pace." : "The remaining target does not fit the current parent-defined cadence or capacity.", priority: concern!.state === "blocked" ? 97 : 93, evidenceRefs: [{ type: "pacing_checkpoint", id: concern!.id }], actionRef: { type: "goal", goalId: concern!.goal_id } });
-  return { outcome: "review_required" as const, summary: "Weekly pacing found one goal that needs a bounded planning decision.", result: { goalId: concern!.goal_id, checkpointId: concern!.id, state: concern!.state, feasible: concern!.feasible, change, crowdedOut: crowdedForLearner } };
+  const briefing = await createWeeklyFamilyBriefing({ evaluationId: evaluation.id, familyId: evaluation.family_id, studentId: evaluation.student_id, idempotencyKey: evaluation.idempotency_key });
+  return {
+    ...evaluationResult,
+    summary: briefing ? `${evaluationResult.summary} The weekly family briefing is ready.` : evaluationResult.summary,
+    result: { ...evaluationResult.result, briefingId: briefing?.id ?? null, briefingWeekStart: briefing?.snapshot.weekStart ?? null, briefingCreated: briefing?.created ?? false },
+  };
 }
 
 async function evaluateApprovedGrade(evaluation: EvaluationRow) {
@@ -447,7 +475,7 @@ async function evaluateApprovedGrade(evaluation: EvaluationRow) {
   }
   const session = await findOrCreatePracticeSession({ evaluation, actorId, artifactId: artifact.id, practice });
   const currentDate = dateInTimezone(new Date(), family.data.timezone);
-  const scheduledDate = await nextOpenPracticeDate({ familyId: evaluation.family_id, studentId: evaluation.student_id, anchor: sourceAssignment.data.scheduled_date && sourceAssignment.data.scheduled_date > currentDate ? sourceAssignment.data.scheduled_date : currentDate, capacity: student.data.daily_capacity_minutes, weekdays: learnerWeekdays(student.data.schedule_preferences, family.data.available_days), practiceMinutes });
+  const scheduledDate = await nextOpenPracticeDate({ familyId: evaluation.family_id, studentId: evaluation.student_id, anchor: sourceAssignment.data.scheduled_date && sourceAssignment.data.scheduled_date > currentDate ? sourceAssignment.data.scheduled_date : currentDate, capacity: student.data.daily_capacity_minutes, weekdays: learnerWeekdays(student.data.schedule_preferences, family.data.available_days), practiceMinutes, schedulePreferences: student.data.schedule_preferences, familyLearningDays: family.data.available_days });
   if (!scheduledDate) {
     await upsertInsight({ evaluation, kind: "practice_ready", title: `${sourceAssignment.data.subject} practice is ready`, summary: `I made a focused practice from the last three results, but the next learning days are at capacity.`, reason: trend.reason, priority: 88, evidenceRefs: trend.evidence.map(reviewRef), actionRef: { type: "practice", artifactId: artifact.id, practiceSessionId: session.id } });
     return { outcome: "review_required" as const, summary: "Practice is ready but needs a schedule tradeoff.", result: { artifactId: artifact.id, practiceSessionId: session.id, trend: "downward" } };
@@ -710,13 +738,14 @@ async function findOrCreatePracticeProposal(input: { evaluation: EvaluationRow; 
   return created.data;
 }
 
-async function nextOpenPracticeDate(input: { familyId: string; studentId: string; anchor: string; capacity: number; weekdays: number[]; practiceMinutes: number }) {
+async function nextOpenPracticeDate(input: { familyId: string; studentId: string; anchor: string; capacity: number; weekdays: number[]; practiceMinutes: number; schedulePreferences: unknown; familyLearningDays: unknown }) {
   const admin = createAdminClient();
   const days = scheduleDates(input.anchor, input.weekdays, 12).filter((date) => date > input.anchor);
   if (!days.length) return null;
   const assignments = await admin.from("assignments").select("scheduled_date,estimated_minutes,status").eq("family_id", input.familyId).eq("student_id", input.studentId).gte("scheduled_date", days[0]).lte("scheduled_date", days.at(-1)!);
   if (assignments.error) throw assignments.error;
-  return days.find((date) => assignments.data.filter((item) => item.scheduled_date === date && item.status !== "skipped").reduce((sum, item) => sum + (item.estimated_minutes ?? 0), 0) + input.practiceMinutes <= input.capacity) ?? null;
+  const availability = await loadAvailabilityByDate({ supabase: admin, familyId: input.familyId, studentId: input.studentId, dailyCapacityMinutes: input.capacity, schedulePreferences: input.schedulePreferences, familyLearningDays: input.familyLearningDays, dates: days });
+  return days.find((date) => assignments.data.filter((item) => item.scheduled_date === date && item.status !== "skipped").reduce((sum, item) => sum + (item.estimated_minutes ?? 0), 0) + input.practiceMinutes <= availability[date].availableMinutes) ?? null;
 }
 
 async function upsertInsight(input: { evaluation: EvaluationRow; kind: "noticed" | "adjusted" | "practice_ready" | "review_ready" | "needs_detail" | "on_track"; title: string; summary: string; reason: string; priority: number; evidenceRefs: unknown[]; actionRef: Record<string, unknown> }) {
@@ -731,6 +760,61 @@ async function upsertInsight(input: { evaluation: EvaluationRow; kind: "noticed"
   return saved.data;
 }
 
+async function supersedeResolvedScheduleQuestions(
+  admin: ReturnType<typeof createAdminClient>,
+  familyId: string,
+  studentId: string,
+  changedAssignmentId: string,
+) {
+  const insights = await admin.from("klio_insights").select("id,evidence_refs,action_ref")
+    .eq("family_id", familyId)
+    .eq("student_id", studentId)
+    .eq("status", "active")
+    .eq("kind", "needs_detail")
+    .contains("evidence_refs", JSON.stringify([{ type: "assignment", id: changedAssignmentId }]));
+  if (insights.error) throw insights.error;
+  const scheduleQuestions = insights.data.filter((insight) => {
+    const action = jsonObject(insight.action_ref);
+    return action?.type === "week";
+  });
+  if (!scheduleQuestions.length) return;
+
+  const assignmentIds = [...new Set(scheduleQuestions.flatMap((insight) => jsonAssignmentIds(insight.evidence_refs)))];
+  const assignments = assignmentIds.length
+    ? await admin.from("assignments").select("id,status,scheduled_date").eq("family_id", familyId).eq("student_id", studentId).in("id", assignmentIds)
+    : { data: [], error: null };
+  if (assignments.error) throw assignments.error;
+  const byId = new Map(assignments.data.map((assignment) => [assignment.id, assignment]));
+  const resolvedIds = scheduleQuestions.filter((insight) => {
+    const action = jsonObject(insight.action_ref);
+    const sourceDate = typeof action?.date === "string" ? action.date : null;
+    return !jsonAssignmentIds(insight.evidence_refs).some((id) => {
+      const assignment = byId.get(id);
+      return assignment
+        && ["planned", "doing"].includes(assignment.status)
+        && (!sourceDate || assignment.scheduled_date === sourceDate);
+    });
+  }).map((insight) => insight.id);
+  if (!resolvedIds.length) return;
+  const superseded = await admin.from("klio_insights").update({ status: "superseded" })
+    .eq("family_id", familyId)
+    .eq("status", "active")
+    .in("id", resolvedIds);
+  if (superseded.error) throw superseded.error;
+}
+
+function jsonObject(value: Json) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, Json | undefined> : null;
+}
+
+function jsonAssignmentIds(value: Json) {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const ref = jsonObject(item);
+    return ref?.type === "assignment" && typeof ref.id === "string" ? [ref.id] : [];
+  });
+}
+
 function noAction(summary: string, result: Record<string, unknown> = {}) { return { outcome: "no_action" as const, summary, result }; }
 function normalizeSkill(value: string) { return value.trim().toLocaleLowerCase("en-US").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""); }
 function readableSkill(value: string) { return value.replace(/[._-]+/g, " ").replace(/\s+/g, " ").trim(); }
@@ -742,5 +826,5 @@ function localClock(now: Date, timeZone: string) { const parts = new Intl.DateTi
 
 type EvaluationRow = {
   id: string; family_id: string; student_id: string | null; requested_by: string | null; event_kind: ProactiveEventKind;
-  entity_type: string; entity_id: string | null; status: string; attempt_count: number;
+  entity_type: string; entity_id: string | null; idempotency_key: string; status: string; attempt_count: number;
 };

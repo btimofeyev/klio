@@ -19,7 +19,7 @@ const descriptions: Record<WorkspaceToolName, string> = {
   record_explicit_parent_score: "Preserve a score the parent explicitly supplied; never infer or alter the value.",
   update_assignment_status: "Update one assignment only when the parent explicitly authorized that exact status change.",
   move_unfinished_work: "Coordinate one or more explicitly unfinished assignments, preserve curriculum order and capacity, and apply or propose the move according to family policy.",
-  organize_day_schedule: "Re-time one learner’s existing work on one date into a non-overlapping sequence. The host preserves dates, durations, curriculum, and other learners, then applies the change with undo.",
+  organize_day_schedule: "Authoritatively organize one learner on one date. If overloaded, the host rebalances the complete day across future learning days within capacity and curriculum order; otherwise it removes time overlaps. Applies safe changes with undo and returns measured before/after minutes.",
   create_assignment: "Create one ordinary family-scoped assignment with bounded text, duration, and optional curriculum link.",
   create_schedule_block: "Create one ordinary assignment and visible calendar block on a specified date.",
   move_schedule_work: "Prepare a bounded same-learner schedule move for listed assignments.",
@@ -37,7 +37,7 @@ const descriptions: Record<WorkspaceToolName, string> = {
   build_dashboard: "Create a parent-reviewable family learning dashboard draft.",
   draft_weekly_plan: "Create a parent-reviewable weekly plan draft.",
   create_lesson: "Create a parent-reviewable lesson draft.",
-  create_practice_activity: "Create a safe version-2 dynamic practice draft. Select subject-appropriate activity types from multiple choice, short answer, interactive line graphing, and written response.",
+  create_practice_activity: "Create safe version-2 dynamic practice from a parent request. When the parent explicitly names a day, include scheduleDate and a realistic estimatedMinutes so the host can add an undoable schedule card within family policy and capacity.",
   build_portfolio: "Create a parent-reviewable portfolio draft.",
   update_records_draft: "Create a parent-reviewable records update draft.",
 };

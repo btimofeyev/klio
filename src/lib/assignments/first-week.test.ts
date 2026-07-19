@@ -66,4 +66,36 @@ describe("buildFirstWeekAssignments", () => {
     expect(malachiUnits.every((unit) => result.filter((item) => item.curriculumUnitId === unit.id).length === 4)).toBe(true);
     expect(dates.every((date) => result.filter((item) => item.scheduledDate === date).reduce((sum, item) => sum + item.estimatedMinutes, 0) <= 90)).toBe(true);
   });
+
+  it("does not plan on an all-day blocked date", () => {
+    const result = buildFirstWeekAssignments({
+      units: units.slice(0, 2).map((unit) => ({ ...unit, weeklyFrequency: 1 })), existing: [], dailyCapacityMinutes: 180,
+      dates: ["2026-07-13", "2026-07-14"],
+      availabilityByDate: { "2026-07-13": { availableMinutes: 0 }, "2026-07-14": { availableMinutes: 180 } },
+    });
+    expect(result).toHaveLength(2);
+    expect(result.every((item) => item.scheduledDate === "2026-07-14")).toBe(true);
+  });
+
+  it("respects reduced effective capacity", () => {
+    const result = buildFirstWeekAssignments({
+      units: units.slice(0, 2).map((unit) => ({ ...unit, weeklyFrequency: 1, defaultMinutes: 45 })), existing: [], dailyCapacityMinutes: 180,
+      dates: ["2026-07-13", "2026-07-14"],
+      availabilityByDate: { "2026-07-13": { availableMinutes: 45 }, "2026-07-14": { availableMinutes: 180 } },
+    });
+    expect(result.filter((item) => item.scheduledDate === "2026-07-13").reduce((sum, item) => sum + item.estimatedMinutes, 0)).toBeLessThanOrEqual(45);
+  });
+
+  it("does not place timed work inside a blocked interval", () => {
+    const result = buildFirstWeekAssignments({
+      units: [{ ...units[0], weeklyFrequency: 1, scheduledTime: "10:00" }], existing: [], dailyCapacityMinutes: 180,
+      dates: ["2026-07-13", "2026-07-14"],
+      availabilityByDate: {
+        "2026-07-13": { availableMinutes: 120, teachingWindow: { start: "09:00", end: "12:00" }, blockedIntervals: [{ start: 570, end: 660 }] },
+        "2026-07-14": { availableMinutes: 180, teachingWindow: { start: "09:00", end: "12:00" }, blockedIntervals: [] },
+      },
+    });
+    expect(result).toHaveLength(1);
+    expect(result[0].scheduledDate).toBe("2026-07-14");
+  });
 });

@@ -1,9 +1,12 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, BookOpenText, FileText } from "lucide-react";
 import { LearnerSetupForm } from "@/components/learner-setup-form";
 import { getWorkspace } from "@/lib/data/workspace";
 import { createClient } from "@/lib/supabase/server";
+import { parseSchedulePreferences } from "@/lib/schedule/availability";
+import { validateAttentionMode } from "@/lib/schedule/parent-attention";
+import styles from "./learner-editor.module.css";
 
 export default async function LearnerSetupPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -13,12 +16,14 @@ export default async function LearnerSetupPage({ params }: { params: Promise<{ i
   if (!student) notFound();
 
   const supabase = await createClient();
-  const [studentResult, subjectsResult] = await Promise.all([
+  const [studentResult, subjectsResult, curriculumResult] = await Promise.all([
     supabase.from("students").select("schedule_preferences").eq("id", id).eq("family_id", workspace.family.id).eq("active", true).maybeSingle(),
     supabase.from("student_subjects").select("id,student_id,name,course_name,weekly_frequency,position").eq("family_id", workspace.family.id).eq("status", "active").order("position"),
+    supabase.from("curriculum_units").select("id,subject,title,attention_mode,parent_attention_minutes").eq("family_id", workspace.family.id).eq("student_id", id).neq("status", "archived"),
   ]);
   if (studentResult.error) throw studentResult.error;
   if (subjectsResult.error) throw subjectsResult.error;
+  if (curriculumResult.error) throw curriculumResult.error;
   if (!studentResult.data) notFound();
 
   const learnerNames = new Map(workspace.students.map((item) => [item.id, item.displayName]));
@@ -30,16 +35,33 @@ export default async function LearnerSetupPage({ params }: { params: Promise<{ i
     groups.set(key, current);
     return groups;
   }, new Map<string, { name: string; weeklyFrequency: number; usedBy: string[] }>()).values()].sort((a, b) => a.name.localeCompare(b.name));
-  const subjects = subjectsResult.data.filter((subject) => subject.student_id === id).map((subject) => ({ id: subject.id, name: subject.name, courseName: subject.course_name ?? "", weeklyFrequency: subject.weekly_frequency }));
+  const subjects = subjectsResult.data.filter((subject) => subject.student_id === id).map((subject) => {
+    const title = subject.course_name || subject.name;
+    const curriculum = curriculumResult.data.find((unit) => unit.subject.toLowerCase() === subject.name.toLowerCase() && unit.title.toLowerCase() === title.toLowerCase());
+    return { id: subject.id, name: subject.name, courseName: subject.course_name ?? "", weeklyFrequency: subject.weekly_frequency, attentionMode: curriculum ? validateAttentionMode(curriculum.attention_mode) : "unspecified" as const, parentAttentionMinutes: curriculum?.parent_attention_minutes ?? null };
+  });
 
-  return <div className="learner-route-page learner-edit-page">
-    <Link className="learner-route-back" href="/app/settings"><ArrowLeft size={15} /> All learners</Link>
-    <header className="learner-route-heading"><span className="learner-route-avatar" aria-hidden="true">{student.displayName.charAt(0)}</span><div><p className="eyebrow">Learning setup</p><h1>{student.displayName}</h1><p>Set the subjects, curriculum, and weekly rhythm Klio should use for this learner.</p></div></header>
-    <section className="learner-route-paper"><LearnerSetupForm familyId={workspace.family.id} familySubjects={familySubjects} learner={{ id: student.id, displayName: student.displayName, gradeBand: student.gradeBand, learningPreferences: student.learningPreferences, dailyCapacityMinutes: student.dailyCapacityMinutes ?? 180, learningDays: readLearningDays(studentResult.data.schedule_preferences, workspace.family.available_days), subjects }} /></section>
-  </div>;
+  const schedule = parseSchedulePreferences(studentResult.data.schedule_preferences, workspace.family.available_days);
+  return <main className={`fixed-dashboard ${styles.dashboard}`}>
+    <header className={styles.header}>
+      <div className={styles.identity}>
+        <Link className={styles.back} href="/app/settings" aria-label="All learners"><ArrowLeft size={16} /><span>Students</span></Link>
+        <span className={styles.avatar} aria-hidden="true">{student.displayName.charAt(0)}</span>
+        <div className={styles.title}>
+          <span>Learning setup</span>
+          <h1>{student.displayName}</h1>
+          <p>{stageLabel(student.gradeBand)} · {subjects.length} {subjects.length === 1 ? "subject" : "subjects"} · {student.dailyCapacityMinutes ?? 180} minutes a day</p>
+        </div>
+      </div>
+      <div className={styles.headerActions}>
+        <Link href={`/app/records?student=${student.id}`}><FileText size={15} />View records</Link>
+        <span><BookOpenText size={15} />Klio plans from this setup</span>
+      </div>
+    </header>
+    <section className={styles.viewport} aria-label={`${student.displayName} learning setup`}>
+      <LearnerSetupForm familyId={workspace.family.id} familySubjects={familySubjects} learner={{ id: student.id, displayName: student.displayName, gradeBand: student.gradeBand, learningPreferences: student.learningPreferences, dailyCapacityMinutes: student.dailyCapacityMinutes ?? 180, learningDays: schedule.learningDays, teachingWindows: schedule.teachingWindows, subjects }} />
+    </section>
+  </main>;
 }
 
-function readLearningDays(schedule: unknown, familyDays: unknown) {
-  if (schedule && typeof schedule === "object" && !Array.isArray(schedule) && "learningDays" in schedule && Array.isArray(schedule.learningDays)) return schedule.learningDays.filter((day): day is string => typeof day === "string");
-  return Array.isArray(familyDays) ? familyDays.filter((day): day is string => typeof day === "string") : ["Mon", "Tue", "Wed", "Thu", "Fri"];
-}
+function stageLabel(value: string | null) { return ({ "pre-k": "Pre-K", "k-2": "Grades K–2", "3-5": "Grades 3–5", "6-8": "Grades 6–8", "9-12": "Grades 9–12", other: "Mixed stage" } as Record<string,string>)[value ?? ""] ?? "Learning stage"; }

@@ -1,14 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowLeft, ArrowRight, CalendarDays, Check, ChevronRight, ClipboardCheck, Clock3, FileCheck2, GripVertical, Plus, RotateCcw, Sparkles, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, CalendarDays, Check, ChevronRight, ClipboardCheck, Clock3, Ellipsis, FileCheck2, GripVertical, LoaderCircle, Plus, RotateCcw, Sparkles, X } from "lucide-react";
 import { InboxWorkspace } from "@/components/inbox-workspace";
 import { SpatialWorkspace, type SpatialCameraState, type SpatialWorkspaceItem } from "@/components/spatial-workspace";
-import type { AdjustmentDTO, AssignmentDTO, AssignmentReviewDTO, CurriculumUnitDTO, PlanningProposalDTO, PracticeSessionDTO, SubmissionDTO } from "@/lib/data/operations";
-import type { AgentConversationDTO, AgentTurnDTO, ArtifactDTO, CategoryDTO, EvidenceDTO, KlioInsightDTO, ReminderDTO, StudentDTO, WorkspaceLayoutDTO } from "@/lib/data/workspace";
+import { WeeklyFamilyBriefing, weeklyBriefingShouldRender } from "@/components/weekly-family-briefing";
+import type { AdjustmentDTO, AssignmentDTO, AssignmentReviewDTO, CalendarConflictDTO, CurriculumUnitDTO, PlanningProposalDTO, PracticeSessionDTO, SubmissionDTO } from "@/lib/data/operations";
+import type { AgentConversationDTO, AgentTurnDTO, ArtifactDTO, CategoryDTO, EvidenceDTO, KlioInsightDTO, ReminderDTO, StudentDTO, WeeklyBriefingDTO, WeeklyBriefingState, WorkspaceLayoutDTO } from "@/lib/data/workspace";
 import { reorderDayIds } from "@/lib/schedule/day-order";
 import { normalizePracticeSpec } from "@/lib/practice/spec";
 import { estimatedPracticeMinutes } from "@/lib/practice/presentation";
@@ -16,6 +17,14 @@ import { practicePreviewStyles } from "@/components/practice-preview";
 import { reviewEntityAction } from "@/app/app/actions";
 import { PracticePlayer, type PracticePlayerResult } from "@/components/practice-player";
 import { learnerWeekdays, learningWeekDates } from "@/lib/assignments/dates";
+import { CalendarConflictEditor, type ConflictAffectedWork } from "@/components/calendar/calendar-conflict-editor";
+import { CalendarMonthView } from "@/components/calendar/calendar-month-view";
+import { effectiveAvailability } from "@/lib/schedule/availability";
+import { monthLabel, shiftMonth } from "@/lib/calendar/month";
+import { ParentSupportControl, ParentSupportLabel } from "@/components/parent-support-control";
+import { findParentAttentionConflicts } from "@/lib/schedule/parent-attention";
+import { buildScheduleDecisionPresentation, planningProposalNeedsDecision, scheduleDecisionProposalState, scheduleDecisionTurnState } from "@/lib/product/workspace-insight-presentation";
+import { dedupeAssignmentsById } from "@/lib/data/operation-assignment-pages";
 
 type Surface = "today" | "week" | "assignments" | "review" | "adjustments";
 type PracticeDismissalReason = "learned_in_curriculum" | "already_understands" | "not_right_fit";
@@ -39,15 +48,29 @@ type Workspace = {
   insights: KlioInsightDTO[];
   workspaceLayouts: WorkspaceLayoutDTO[];
   practiceSessions: PracticeSessionDTO[];
+  weeklyBriefing: WeeklyBriefingDTO | null;
+  weeklyBriefingState: WeeklyBriefingState;
+  calendarConflicts: CalendarConflictDTO[];
+  selectedDate: string;
+  selectedStudentId: string | null;
+  selectedCurriculumUnitId: string | null;
+  calendarMode: "week" | "month" | null;
+  assignmentPage: { curriculumUnitId: string | null; nextCursor: string | null } | null;
 };
 
-export function OperationsWorkspace({ surface, workspace, initialSelectedDate, initialStudentId, initialArtifactId, initialPracticeSessionId }: { surface: Surface; workspace: Workspace; initialSelectedDate?: string; initialStudentId?: string; initialArtifactId?: string; initialPracticeSessionId?: string }) {
+export function OperationsWorkspace({ surface, workspace, initialSelectedDate, initialStudentId, initialArtifactId, initialPracticeSessionId, initialCalendarMode = "week" }: { surface: Surface; workspace: Workspace; initialSelectedDate?: string; initialStudentId?: string; initialArtifactId?: string; initialPracticeSessionId?: string; initialCalendarMode?: "week" | "month" }) {
   const router = useRouter();
   const defaultsToFamily = workspace.students.length > 1;
   const [studentId, setStudentId] = useState(defaultsToFamily ? (initialStudentId ?? "all") : (initialStudentId ?? workspace.students[0]?.id ?? ""));
   const [selectedDate, setSelectedDate] = useState(initialSelectedDate ?? initialDate(workspace.assignments, studentId, workspace.currentDate));
+  const [navigationPending, startNavigation] = useTransition();
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const calendarMode = workspace.calendarMode ?? initialCalendarMode;
+  const [conflictOverrides, setConflictOverrides] = useState<CalendarConflictDTO[]>([]);
+  const [deletedConflictIds, setDeletedConflictIds] = useState<string[]>([]);
+  const [conflictEditor, setConflictEditor] = useState<{ date: string; conflict: CalendarConflictDTO | null; trigger: HTMLElement | null } | null>(null);
+  const [conflictAffected, setConflictAffected] = useState<{ conflict: CalendarConflictDTO; work: ConflictAffectedWork } | null>(null);
   const [showCurriculum, setShowCurriculum] = useState(false);
   const [submissionAssignment, setSubmissionAssignment] = useState<AssignmentDTO | null>(null);
   const [captureAssignment, setCaptureAssignment] = useState<AssignmentDTO | null>(null);
@@ -58,6 +81,10 @@ export function OperationsWorkspace({ surface, workspace, initialSelectedDate, i
   const [practiceSessionOverrides, setPracticeSessionOverrides] = useState<PracticeSessionDTO[]>([]);
   const [completedPracticeSessionIds, setCompletedPracticeSessionIds] = useState<string[]>([]);
   const [dismissedPracticeSessionIds, setDismissedPracticeSessionIds] = useState<string[]>([]);
+  const [assistantPrefill, setAssistantPrefill] = useState<{ key: number; request: string } | null>(null);
+  const [liveAgentTurn, setLiveAgentTurn] = useState<AgentTurnDTO | null>(workspace.latestAgentTurn);
+  const [assignmentAttentionOverrides, setAssignmentAttentionOverrides] = useState<Record<string, Partial<AssignmentDTO>>>({});
+  const [locallyDismissedBriefingId, setLocallyDismissedBriefingId] = useState<string | null>(null);
   const [activePracticeSessionId, setActivePracticeSessionId] = useState<string | null>(() => initialPracticeSessionId ?? (initialArtifactId
     ? workspace.practiceSessions.find((session) => session.artifactId === initialArtifactId && ["ready", "in_progress"].includes(session.status))?.id ?? null
     : null));
@@ -65,13 +92,16 @@ export function OperationsWorkspace({ surface, workspace, initialSelectedDate, i
   const practiceSessions = useMemo(() => [...practiceSessionOverrides, ...workspace.practiceSessions.filter((item) => !practiceSessionOverrides.some((override) => override.id === item.id))]
     .map((item) => completedPracticeSessionIds.includes(item.id) ? { ...item, status: "completed" } : dismissedPracticeSessionIds.includes(item.id) ? { ...item, status: "dismissed" } : item), [completedPracticeSessionIds, dismissedPracticeSessionIds, practiceSessionOverrides, workspace.practiceSessions]);
   const activePracticeSession = practiceSessions.find((item) => item.id === activePracticeSessionId) ?? null;
+  const calendarConflicts = [...conflictOverrides, ...workspace.calendarConflicts.filter((item) => !conflictOverrides.some((override) => override.id === item.id))].filter((item) => !deletedConflictIds.includes(item.id));
   const liveInsights = [...optimisticInsights, ...workspace.insights.filter((item) => !optimisticInsights.some((optimistic) => optimistic.id === item.id))]
     .filter((insight, index, all) => all.findIndex((candidate) => insightGroupKey(candidate) === insightGroupKey(insight)) === index)
     .filter((insight) => !dismissedInsightKeys.includes(insightGroupKey(insight)))
     .filter((insight) => typeof insight.actionRef.proposalId !== "string" || (!resolvedProposalIds.includes(insight.actionRef.proposalId) && !acknowledgedProposalIds.includes(insight.actionRef.proposalId)));
   const selectedLearner = workspace.students.find((student) => student.id === studentId);
   const learner = selectedLearner ?? workspace.students[0];
-  const assignments = studentId === "all" ? workspace.assignments : workspace.assignments.filter((item) => item.studentId === studentId);
+  const liveAssignments = workspace.assignments.map((item) => ({ ...item, ...(assignmentAttentionOverrides[item.id] ?? {}) }));
+  const visiblePlanningProposals = workspace.planningProposals.filter((proposal) => proposal.status !== "proposed" || planningProposalNeedsDecision(proposal, liveAssignments));
+  const assignments = studentId === "all" ? liveAssignments : liveAssignments.filter((item) => item.studentId === studentId);
   const enabledWeekdays = useMemo(() => {
     if (selectedLearner) return learnerWeekdays(selectedLearner.schedulePreferences, workspace.family.available_days);
     return [...new Set(workspace.students.flatMap((student) => learnerWeekdays(student.schedulePreferences, workspace.family.available_days)))].sort();
@@ -79,7 +109,12 @@ export function OperationsWorkspace({ surface, workspace, initialSelectedDate, i
   const days = useMemo(() => learningWeekDates(selectedDate, enabledWeekdays), [enabledWeekdays, selectedDate]);
   const pendingReviews = workspace.assignmentReviews.filter((review) => review.status === "draft" && assignments.some((item) => item.id === review.assignmentId));
   const proposals = workspace.adjustments.filter((proposal) => studentId === "all" || proposal.studentId === studentId);
-  const deskTurn = workspace.latestAgentTurn && (["queued", "running", "awaiting_parent", "failed"].includes(workspace.latestAgentTurn.status) || (workspace.latestAgentTurn.status === "completed" && workspace.latestAgentTurn.conversationId === workspace.latestAgentConversation?.id)) ? workspace.latestAgentTurn : null;
+  // Completed conversations belong in the explicit conversation picker. Restoring
+  // one as modal state here makes every workspace remount (day, learner, or lesson
+  // changes) look like the user asked to reopen chat.
+  const deskTurn = liveAgentTurn && ["queued", "running", "awaiting_parent", "failed"].includes(liveAgentTurn.status)
+    ? liveAgentTurn
+    : null;
   useEffect(() => {
     if (!activePracticeSessionId) return;
     const previousOverflow = document.body.style.overflow;
@@ -102,7 +137,32 @@ export function OperationsWorkspace({ surface, workspace, initialSelectedDate, i
     setActivePracticeSessionId(data.session.id);
   }, [practiceSessions]);
 
-  const captureWorkspace = <InboxWorkspace key={`capture-${studentId}`} familyId={workspace.family.id} students={workspace.students} categories={workspace.categories} initialEvidence={workspace.evidence} initialReminders={workspace.reminders} initialArtifacts={workspace.artifacts} pendingApprovals={workspace.pendingApprovals} initialAgentTurn={deskTurn} initialAgentConversation={workspace.latestAgentConversation} initialStudentId={selectedLearner?.id ?? ""} workspaceDate={selectedDate} assignmentContext={captureAssignment ? { id: captureAssignment.id, studentId: captureAssignment.studentId, title: captureAssignment.title, subject: captureAssignment.subject } : null} onAssignmentDrop={(assignmentId) => setCaptureAssignment(workspace.assignments.find((item) => item.id === assignmentId) ?? null)} onAssignmentContextClear={() => setCaptureAssignment(null)} onPracticeOpen={(artifactId) => void openPractice({ artifactId })} compact dashboard />;
+  const captureWorkspace = <InboxWorkspace key={`capture-${studentId}`} familyId={workspace.family.id} students={workspace.students} categories={workspace.categories} initialEvidence={workspace.evidence} initialReminders={workspace.reminders} initialArtifacts={workspace.artifacts} pendingApprovals={workspace.pendingApprovals} initialAgentTurn={deskTurn} initialAgentConversation={workspace.latestAgentConversation} initialStudentId={selectedLearner?.id ?? ""} workspaceDate={selectedDate} assignmentContext={captureAssignment ? { id: captureAssignment.id, studentId: captureAssignment.studentId, title: captureAssignment.title, subject: captureAssignment.subject } : null} onAssignmentDrop={(assignmentId) => setCaptureAssignment(workspace.assignments.find((item) => item.id === assignmentId) ?? null)} onAssignmentContextClear={() => setCaptureAssignment(null)} onPracticeOpen={(artifactId) => void openPractice({ artifactId })} onAgentTurnChange={setLiveAgentTurn} assistantPrefill={assistantPrefill} compact dashboard />;
+  const briefingIsVisible = weeklyBriefingShouldRender(workspace.weeklyBriefing, workspace.weeklyBriefingState)
+    && workspace.weeklyBriefing?.id !== locallyDismissedBriefingId;
+  const briefingSurface = briefingIsVisible ? <WeeklyFamilyBriefing briefing={workspace.weeklyBriefing} state={workspace.weeklyBriefingState} students={workspace.students} selectedStudentId={studentId} familyTimezone={workspace.family.timezone} planningProposals={visiblePlanningProposals} onAsk={(request) => setAssistantPrefill((current) => ({ key: (current?.key ?? 0) + 1, request }))} onDismissed={() => setLocallyDismissedBriefingId(workspace.weeklyBriefing?.id ?? null)} /> : null;
+
+  function savedConflict(conflict: CalendarConflictDTO, work: ConflictAffectedWork, mode: "created" | "updated") {
+    setConflictOverrides((current) => [conflict, ...current.filter((item) => item.id !== conflict.id)]);
+    setConflictAffected({ conflict, work });
+    setConflictEditor(null);
+    setNotice(`${conflict.title} ${mode === "created" ? "was added" : "was updated"}. Existing lessons stayed where they were.`);
+  }
+
+  function deletedConflict(id: string) {
+    setDeletedConflictIds((current) => current.includes(id) ? current : [...current, id]);
+    setConflictOverrides((current) => current.filter((item) => item.id !== id));
+    setConflictEditor(null); setConflictAffected(null); setNotice("The conflict was deleted.");
+  }
+
+  function askKlioToReorganize() {
+    if (!conflictAffected) return;
+    const { conflict, work } = conflictAffected;
+    const learnerNames = work.affectedLearnerNames.length ? formatNames(work.affectedLearnerNames) : conflict.studentId ? workspace.students.find((student) => student.id === conflict.studentId)?.displayName ?? "this learner" : "the family";
+    const time = conflict.allDay ? "all day" : `from ${formatTime(conflict.startsAt!)}–${formatTime(conflict.endsAt!)}`;
+    const lessonDetail = work.directOverlapCount ? `${work.directOverlapCount} timed ${work.directOverlapCount === 1 ? "lesson is" : "lessons are"} affected${work.affectedLessonNames.length ? `: ${work.affectedLessonNames.join(", ")}` : ""}.` : work.overCapacity ? "The day is over its available teaching time." : "No timed lesson directly overlaps.";
+    setAssistantPrefill((current) => ({ key: (current?.key ?? 0) + 1, request: `Reorganize ${learnerNames}’s schedule around ${conflict.title} on ${longDate(conflict.conflictDate)} ${time}. ${lessonDetail} Preserve curriculum order and keep each day within available teaching time.` }));
+  }
 
   useEffect(() => {
     if (!initialArtifactId) { autoOpeningArtifactRef.current = null; return; }
@@ -180,9 +240,14 @@ export function OperationsWorkspace({ surface, workspace, initialSelectedDate, i
     const response = await fetch(`/api/assignments/${assignment.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ status }) });
     const result = await response.json();
     setBusy(null);
-    if (!response.ok) return setNotice(result.error ?? "Klio could not update that assignment.");
+    if (!response.ok) { setNotice(result.error ?? "Klio could not update that assignment."); return false; }
     setNotice(status === "completed" ? `${assignment.title} is done. Klio recorded it and is checking the follow-through.` : `${assignment.title} updated.`);
     router.refresh();
+    return true;
+  }
+
+  function attentionSaved(assignmentId: string, value: Partial<AssignmentDTO>) {
+    setAssignmentAttentionOverrides((current) => ({ ...current, [assignmentId]: { ...(current[assignmentId] ?? {}), ...value } }));
   }
 
   async function moveAssignment(assignmentId: string, scheduledDate: string) {
@@ -305,13 +370,24 @@ export function OperationsWorkspace({ surface, workspace, initialSelectedDate, i
         : `Klio planned ${names}’s week: ${subjectLabel} across ${result.totalAssignmentCount} lessons.`
       : `The week is already planned for ${names}.`;
     setNotice(`${planned}${adjusted ? " Lesson lengths were adjusted to fit each learner’s available time." : ""}${setupNames ? ` ${setupNames} still need subjects set up.` : ""}`);
-    router.refresh();
+    navigate(scheduleViewHref("week", result.weekStart, studentId));
   }
 
   function chooseLearner(id: string) {
     setStudentId(id);
-    setSelectedDate(initialDate(workspace.assignments, id, workspace.currentDate));
     if (id !== "all") document.cookie = `klio-learner=${encodeURIComponent(id)}; Path=/app; Max-Age=31536000; SameSite=Lax`;
+    if (surface === "today") return navigate(scheduleViewHref("today", selectedDate, id));
+    if (surface === "week") return navigate(scheduleViewHref(calendarMode, selectedDate, id));
+    if (surface === "assignments") {
+      const currentUnit = workspace.curriculumUnits.find((unit) => unit.id === workspace.selectedCurriculumUnitId);
+      const unitId = id === "all" || currentUnit?.studentId === id ? currentUnit?.id ?? null : null;
+      return navigate(assignmentsViewHref(id, unitId));
+    }
+    setSelectedDate(initialDate(workspace.assignments, id, workspace.currentDate));
+  }
+
+  function navigate(href: string) {
+    startNavigation(() => router.push(href));
   }
 
   return <div className="ops-workspace">
@@ -320,6 +396,7 @@ export function OperationsWorkspace({ surface, workspace, initialSelectedDate, i
       <label><span>View</span><select value={studentId} onChange={(event) => chooseLearner(event.target.value)}>{workspace.students.length > 1 ? <option value="all">Family</option> : null}{workspace.students.map((student) => <option value={student.id} key={student.id}>{student.displayName}</option>)}</select></label>
     </header> : null}
     {notice ? <p className="ops-notice" role="status"><Sparkles size={14} />{notice}<button type="button" onClick={() => setNotice(null)} aria-label="Dismiss"><X size={13} /></button></p> : null}
+    {conflictAffected && (conflictAffected.work.directOverlapCount > 0 || conflictAffected.work.overCapacity) ? <div className="conflict-affected-notice" role="status"><div><strong>{conflictAffected.work.directOverlapCount ? `${conflictAffected.work.directOverlapCount} timed ${conflictAffected.work.directOverlapCount === 1 ? "lesson overlaps" : "lessons overlap"}` : "The day is over available time"}</strong><span>{conflictAffected.work.affectedLearnerNames.length ? formatNames(conflictAffected.work.affectedLearnerNames) : "Teaching availability changed"}{conflictAffected.work.overCapacity ? " · over capacity" : ""}</span></div><button type="button" onClick={askKlioToReorganize}>Ask Klio to reorganize</button><button type="button" onClick={() => setConflictAffected(null)} aria-label="Dismiss affected work notice"><X size={13} /></button></div> : null}
 
     {surface === "today" ? <DaySurface key={`${studentId}-${selectedDate}`}
       assignments={assignments}
@@ -327,6 +404,8 @@ export function OperationsWorkspace({ surface, workspace, initialSelectedDate, i
       currentDate={workspace.currentDate}
       selectedDate={selectedDate}
       setSelectedDate={setSelectedDate}
+      navigateDate={(date) => navigate(scheduleViewHref("today", date, studentId))}
+      navigationPending={navigationPending}
       learner={learner}
       students={workspace.students}
       chooseLearner={chooseLearner}
@@ -336,10 +415,12 @@ export function OperationsWorkspace({ surface, workspace, initialSelectedDate, i
       submissions={workspace.submissions}
       evidence={workspace.evidence}
       proposals={proposals}
+      planningProposals={visiblePlanningProposals}
       acknowledgedProposalIds={acknowledgedProposalIds}
       artifacts={workspace.artifacts.filter((item) => studentId === "all" || !item.studentId || item.studentId === studentId)}
       practiceSessions={practiceSessions.filter((item) => studentId === "all" || item.studentId === studentId)}
       insights={liveInsights.filter((item) => studentId === "all" || !item.studentId || item.studentId === studentId)}
+      activeAgentTurn={liveAgentTurn}
       busy={busy}
       onUpdate={updateAssignment}
       onReorder={(orderedIds, movedId) => void reorderAssignments(orderedIds, movedId)}
@@ -353,18 +434,40 @@ export function OperationsWorkspace({ surface, workspace, initialSelectedDate, i
       onDismissPractice={(session, reason) => void dismissPractice(session, reason)}
       onPracticeFollowUp={(insight, action) => void practiceFollowUp(insight, action)}
       onApproveReview={(review) => void approveReview(review)}
+      onAttentionSaved={attentionSaved}
+      onAskKlio={(request) => setAssistantPrefill((current) => ({ key: (current?.key ?? 0) + 1, request }))}
       familyId={workspace.family.id}
       initialArtifactId={initialArtifactId}
       workspaceLayouts={workspace.workspaceLayouts}
+      briefing={briefingSurface}
       capture={captureWorkspace}
     /> : null}
-    {surface === "week" ? <WeekSurface familyId={workspace.family.id} workspaceLayouts={workspace.workspaceLayouts} scopeId={studentId} assignments={assignments} curricula={workspace.curriculumUnits.filter((unit) => (studentId === "all" || unit.studentId === studentId) && unit.status === "active")} learner={selectedLearner} students={workspace.students} chooseLearner={chooseLearner} days={days} currentDate={workspace.currentDate} selectedDate={selectedDate} setSelectedDate={setSelectedDate} capacity={learner?.dailyCapacityMinutes ?? 180} pendingReviews={pendingReviews} approvedReviews={workspace.assignmentReviews.filter((review) => review.status === "approved")} submissions={workspace.submissions} evidence={workspace.evidence} proposals={proposals} acknowledgedProposalIds={acknowledgedProposalIds} reminders={workspace.reminders.filter((item) => studentId === "all" || !item.studentId || item.studentId === studentId)} artifacts={workspace.artifacts.filter((item) => studentId === "all" || !item.studentId || item.studentId === studentId)} practiceSessions={practiceSessions.filter((item) => studentId === "all" || item.studentId === studentId)} insights={liveInsights.filter((item) => studentId === "all" || !item.studentId || item.studentId === studentId)} busy={busy} onBuildWeek={() => buildWeek()} onBuildNextWeek={() => buildWeek(addDays(days[0], 7))} onUpdate={updateAssignment} onMove={(assignmentId, date) => void moveAssignment(assignmentId, date)} onSubmit={setCaptureAssignment} onAdjust={(item) => void proposeAdjustments([item])} onDecide={(proposal, decision) => void decideAdjustment(proposal, decision)} onAcknowledge={acknowledgeAdjustment} onDismissInsight={dismissInsight} onStartPractice={(input) => void openPractice(input)} onDismissPractice={(session, reason) => void dismissPractice(session, reason)} onPracticeFollowUp={(insight, action) => void practiceFollowUp(insight, action)} onApproveReview={(review) => void approveReview(review)} capture={captureWorkspace} /> : null}
-    {surface === "assignments" ? <AssignmentsSurface familyId={workspace.family.id} studentId={studentId} students={workspace.students} enabledWeekdays={enabledWeekdays} units={workspace.curriculumUnits.filter((unit) => studentId === "all" || unit.studentId === studentId)} assignments={assignments} busy={busy} setBusy={setBusy} setNotice={setNotice} showCurriculum={showCurriculum} setShowCurriculum={setShowCurriculum} onSubmit={setSubmissionAssignment} onUpdate={updateAssignment} /> : null}
+    {surface === "week" ? <WeekSurface
+      familyId={workspace.family.id} familyLearningDays={workspace.family.available_days} workspaceLayouts={workspace.workspaceLayouts}
+      scopeId={studentId} mode={calendarMode} assignments={assignments}
+      conflicts={calendarConflicts.filter((conflict) => studentId === "all" || conflict.studentId === null || conflict.studentId === studentId)}
+      curricula={workspace.curriculumUnits.filter((unit) => (studentId === "all" || unit.studentId === studentId) && unit.status === "active")}
+      learner={selectedLearner} students={workspace.students} chooseLearner={chooseLearner} days={days} currentDate={workspace.currentDate} selectedDate={selectedDate} setSelectedDate={setSelectedDate}
+      navigateRange={(mode, date) => { setSelectedDate(date); navigate(scheduleViewHref(mode, date, studentId)); }} navigationPending={navigationPending}
+      capacity={learner?.dailyCapacityMinutes ?? 180} pendingReviews={pendingReviews} approvedReviews={workspace.assignmentReviews.filter((review) => review.status === "approved")}
+      submissions={workspace.submissions} evidence={workspace.evidence} proposals={proposals} planningProposals={visiblePlanningProposals} acknowledgedProposalIds={acknowledgedProposalIds}
+      reminders={workspace.reminders.filter((item) => studentId === "all" || !item.studentId || item.studentId === studentId)} artifacts={workspace.artifacts.filter((item) => studentId === "all" || !item.studentId || item.studentId === studentId)}
+      practiceSessions={practiceSessions.filter((item) => studentId === "all" || item.studentId === studentId)} insights={liveInsights.filter((item) => studentId === "all" || !item.studentId || item.studentId === studentId)} busy={busy}
+      activeAgentTurn={liveAgentTurn}
+      onBuildWeek={() => buildWeek()} onBuildNextWeek={() => buildWeek(addDays(days[0], 7))}
+      onAddConflict={(date, trigger) => setConflictEditor({ date, conflict: null, trigger })} onEditConflict={(conflict, trigger) => setConflictEditor({ date: conflict.conflictDate, conflict, trigger })}
+      onUpdate={updateAssignment} onMove={(assignmentId, date) => void moveAssignment(assignmentId, date)} onSubmit={setCaptureAssignment} onAdjust={(item) => void proposeAdjustments([item])}
+      onDecide={(proposal, decision) => void decideAdjustment(proposal, decision)} onAcknowledge={acknowledgeAdjustment} onDismissInsight={dismissInsight} onStartPractice={(input) => void openPractice(input)}
+      onDismissPractice={(session, reason) => void dismissPractice(session, reason)} onPracticeFollowUp={(insight, action) => void practiceFollowUp(insight, action)} onApproveReview={(review) => void approveReview(review)} briefing={briefingSurface} capture={captureWorkspace}
+      onAttentionSaved={attentionSaved} onAskKlio={(request) => setAssistantPrefill((current) => ({ key: (current?.key ?? 0) + 1, request }))}
+    /> : null}
+    {surface === "assignments" ? <AssignmentsSurface key={`${workspace.selectedCurriculumUnitId ?? "no-unit"}:${workspace.curriculumUnits.find((unit) => unit.id === workspace.selectedCurriculumUnitId)?.assignmentCount ?? 0}`} familyId={workspace.family.id} studentId={studentId} selectedUnitId={workspace.selectedCurriculumUnitId} nextCursor={workspace.assignmentPage?.nextCursor ?? null} navigationPending={navigationPending} navigate={navigate} students={workspace.students} enabledWeekdays={enabledWeekdays} units={workspace.curriculumUnits.filter((unit) => studentId === "all" || unit.studentId === studentId)} assignments={assignments} busy={busy} setBusy={setBusy} setNotice={setNotice} showCurriculum={showCurriculum} setShowCurriculum={setShowCurriculum} onSubmit={setSubmissionAssignment} onUpdate={updateAssignment} /> : null}
     {surface === "review" ? <ReviewSurface assignments={assignments} students={workspace.students} reviews={pendingReviews} submissions={workspace.submissions} legacyCount={workspace.pendingApprovals} busy={busy} setBusy={setBusy} setNotice={setNotice} /> : null}
-    {surface === "adjustments" ? <AdjustmentsSurface assignments={assignments} students={workspace.students} proposals={workspace.adjustments.filter((proposal) => studentId === "all" || proposal.studentId === studentId)} planningProposals={workspace.planningProposals.filter((proposal) => studentId === "all" || proposal.studentId === studentId)} busy={busy} setBusy={setBusy} setNotice={setNotice} /> : null}
+    {surface === "adjustments" ? <AdjustmentsSurface assignments={assignments} students={workspace.students} proposals={workspace.adjustments.filter((proposal) => studentId === "all" || proposal.studentId === studentId)} planningProposals={visiblePlanningProposals.filter((proposal) => studentId === "all" || proposal.studentId === studentId)} busy={busy} setBusy={setBusy} setNotice={setNotice} onUndo={(proposal) => void decideAdjustment(proposal, "undo")} onAcknowledge={acknowledgeAdjustment} /> : null}
 
     <AnimatePresence>{submissionAssignment ? <SubmissionPanel assignment={submissionAssignment} familyEvidence={workspace.evidence.filter((item) => item.studentIds.includes(submissionAssignment.studentId)).slice(0, 12)} busy={busy} setBusy={setBusy} setNotice={setNotice} close={() => setSubmissionAssignment(null)} /> : null}</AnimatePresence>
     <AnimatePresence>{activePracticeSession ? <PracticeOverlay session={activePracticeSession} title={workspace.artifacts.find((artifact) => artifact.id === activePracticeSession.artifactId)?.title} learnerName={workspace.students.find((student) => student.id === activePracticeSession.studentId)?.displayName ?? "Learner"} onClose={() => setActivePracticeSessionId(null)} onCompleted={(result) => practiceCompleted(activePracticeSession.id, result)} /> : null}</AnimatePresence>
+    {conflictEditor ? <CalendarConflictEditor familyId={workspace.family.id} conflict={conflictEditor.conflict} date={conflictEditor.date} scopeStudentId={studentId === "all" ? null : studentId} students={workspace.students} returnFocus={conflictEditor.trigger} onClose={() => setConflictEditor(null)} onSaved={savedConflict} onDeleted={deletedConflict} /> : null}
   </div>;
 }
 
@@ -372,11 +475,14 @@ function DaySurface(props: {
   familyId: string;
   initialArtifactId?: string;
   workspaceLayouts: WorkspaceLayoutDTO[];
+  briefing: React.ReactNode;
   assignments: AssignmentDTO[];
   scopeId: string;
   currentDate: string;
   selectedDate: string;
   setSelectedDate: (date: string) => void;
+  navigateDate: (date: string) => void;
+  navigationPending: boolean;
   learner: StudentDTO | undefined;
   students: StudentDTO[];
   chooseLearner: (id: string) => void;
@@ -386,10 +492,12 @@ function DaySurface(props: {
   submissions: SubmissionDTO[];
   evidence: EvidenceDTO[];
   proposals: AdjustmentDTO[];
+  planningProposals: PlanningProposalDTO[];
   acknowledgedProposalIds: string[];
   artifacts: ArtifactDTO[];
   practiceSessions: PracticeSessionDTO[];
   insights: KlioInsightDTO[];
+  activeAgentTurn: AgentTurnDTO | null;
   busy: string | null;
   onUpdate: (item: AssignmentDTO, status: "doing" | "completed" | "planned" | "skipped") => void;
   onReorder: (orderedIds: string[], movedId: string) => void;
@@ -403,17 +511,27 @@ function DaySurface(props: {
   onDismissPractice: (session: PracticeSessionDTO, reason: PracticeDismissalReason) => void;
   onPracticeFollowUp: (insight: KlioInsightDTO, action: "extend_time" | "create_more_practice") => void;
   onApproveReview: (review: AssignmentReviewDTO) => void;
+  onAttentionSaved: (assignmentId: string, value: Partial<AssignmentDTO>) => void;
+  onAskKlio: (request: string) => void;
   capture: React.ReactNode;
 }) {
   const dayAssignments = props.assignments.filter((item) => item.scheduledDate === props.selectedDate && item.status !== "skipped");
   const [selectedId, setSelectedId] = useState<string | null>(() => dayAssignments.find((item) => item.status !== "completed")?.id ?? dayAssignments[0]?.id ?? null);
   const [focusedId, setFocusedId] = useState<string | null>(null);
-  const minutes = dayAssignments.reduce((sum, item) => sum + (item.estimatedMinutes ?? 0), 0);
+  const parentConflicts = attentionConflicts(dayAssignments);
+  const primaryParentConflict = parentConflicts[0];
+  const primaryConflictItems = primaryParentConflict ? [primaryParentConflict.firstId, primaryParentConflict.secondId].map((id) => dayAssignments.find((item) => item.id === id)).filter((item): item is AssignmentDTO => Boolean(item)) : [];
+  const attentionConflictByAssignment = new Map<string, { start: number; end: number }>();
+  for (const conflict of parentConflicts) {
+    if (!attentionConflictByAssignment.has(conflict.firstId)) attentionConflictByAssignment.set(conflict.firstId, conflict.overlap);
+    if (!attentionConflictByAssignment.has(conflict.secondId)) attentionConflictByAssignment.set(conflict.secondId, conflict.overlap);
+  }
   const completed = dayAssignments.filter((item) => item.status === "completed").length;
   const activeReminders = props.reminders.filter((item) => item.status === "pending" && isParentFacingReminder(item)).slice(0, 1);
   const practices = props.artifacts.filter((item) => item.type === "practice" && practiceArtifactIsAvailable(item, props.practiceSessions)).slice(0, 3);
   const visibleInsights = rankWorkspaceInsights(props.insights)
     .filter((item) => item.kind !== "on_track" && isParentFacingWorkspaceInsight(item) && !isResolvedAdjustmentInsight(item, props.proposals))
+    .filter((item) => !isResolvedPlanningInsight(item, props.assignments, props.students, props.planningProposals))
     .slice(0, 2);
   const visibleProposal = props.proposals.find((proposal) => proposal.status === "proposed" && !visibleInsights.some((insight) => insight.actionRef.proposalId === proposal.id));
   const recentApplied = props.proposals.find((proposal) => proposal.status === "applied" && proposal.undoStatus === "available" && !proposal.acknowledgedAt && !props.acknowledgedProposalIds.includes(proposal.id) && !visibleInsights.some((insight) => insight.actionRef.proposalId === proposal.id));
@@ -424,16 +542,22 @@ function DaySurface(props: {
     if (next !== current) props.onReorder(next, movedId);
   }
   const schedule = <main className={`teacher-day-sheet ${isFamilyView ? "family-view" : ""}`}>
-        <header><div><span>{isFamilyView ? "Family work" : `${props.learner?.displayName ?? "Learner"}’s work`}</span><strong>{completed}/{dayAssignments.length} complete</strong></div><i><b style={{ width: `${dayAssignments.length ? completed / dayAssignments.length * 100 : 0}%` }} /></i><p className="day-order-hint"><GripVertical size={12} />Drag lessons to reorder or drop one on Klio</p></header>
+        <header><div><span>{isFamilyView ? "Your day" : `${props.learner?.displayName ?? "Learner"}’s day`}</span><strong>{completed} / {dayAssignments.length} complete</strong></div><i aria-hidden="true"><b style={{ width: `${dayAssignments.length ? completed / dayAssignments.length * 100 : 0}%` }} /></i><p className="day-order-hint"><GripVertical size={12} />Drag lessons to reorder or hand one to Klio</p></header>
         <div className="teacher-day-list">
-          {dayAssignments.length ? dayAssignments.map((item, index) => <DayAssignmentRow item={item} learnerName={isFamilyView ? props.students.find((student) => student.id === item.studentId)?.displayName : props.learner?.displayName} selected={selectedId === item.id} focused={focusedId === item.id} busy={props.busy === item.id || props.busy === props.reviews.find((review) => review.assignmentId === item.id)?.id} review={props.reviews.find((review) => review.assignmentId === item.id)} submission={props.submissions.find((submission) => submission.assignmentId === item.id)} evidence={props.evidence} onSelect={() => { setSelectedId(item.id); setFocusedId((current) => current === item.id ? null : item.id); }} onCollapse={() => setFocusedId((current) => current === item.id ? null : current)} onUpdate={props.onUpdate} onSubmit={props.onSubmit} onAdjust={props.onAdjust} onApproveReview={props.onApproveReview} onReorder={reorderByDrop} index={index} key={item.id} />) : <div className="day-empty"><CalendarDays size={25} /><strong>The page is open today.</strong><span>Leave it clear or ask Klio to plan from your curriculum.</span><Link href="/app/week">Plan this week <ArrowRight size={12} /></Link></div>}
+          {primaryParentConflict && primaryConflictItems.length === 2 ? <aside className="parent-attention-collision" role="alert"><Clock3 size={14} aria-hidden="true" /><span>Both need you · {formatTimeFromMinutes(primaryParentConflict.overlap.start)}–{formatTimeFromMinutes(primaryParentConflict.overlap.end)}</span><strong>{dayConflictLabel(primaryConflictItems[0], props.students, isFamilyView)}</strong><small>overlaps {dayConflictLabel(primaryConflictItems[1], props.students, isFamilyView)}</small></aside> : null}
+          {dayAssignments.length ? dayAssignments.map((item, index) => <DayAssignmentRow item={item} learnerName={isFamilyView ? props.students.find((student) => student.id === item.studentId)?.displayName : props.learner?.displayName} attentionConflict={attentionConflictByAssignment.get(item.id)} selected={selectedId === item.id} focused={focusedId === item.id} busy={props.busy === item.id || props.busy === props.reviews.find((review) => review.assignmentId === item.id)?.id} review={props.reviews.find((review) => review.assignmentId === item.id)} submission={props.submissions.find((submission) => submission.assignmentId === item.id)} evidence={props.evidence} onSelect={() => setSelectedId(item.id)} onToggleDetail={() => { setSelectedId(item.id); setFocusedId((current) => current === item.id ? null : item.id); }} onCollapse={() => setFocusedId((current) => current === item.id ? null : current)} onUpdate={props.onUpdate} onSubmit={props.onSubmit} onAdjust={props.onAdjust} onStartPractice={props.onStartPractice} onApproveReview={props.onApproveReview} onAttentionSaved={props.onAttentionSaved} onAskKlio={props.onAskKlio} onReorder={reorderByDrop} index={index} key={item.id} />) : <div className="day-empty"><CalendarDays size={25} /><strong>The page is open today.</strong><span>Leave it clear or ask Klio to plan from your curriculum.</span><Link href="/app/week">Plan this week <ArrowRight size={12} /></Link></div>}
         </div>
       </main>;
   const items: SpatialWorkspaceItem[] = [
     { id: "schedule", label: "Schedule", title: longDate(props.selectedDate), x: 730, y: 470, width: 720, focusZoom: .92, minFocusZoom: .78, className: "spatial-day-schedule", children: schedule },
     ...(props.reviews.length ? [{ id: "review", label: "Review ready", title: `${props.reviews.length} ${props.reviews.length === 1 ? "assignment" : "assignments"}`, x: 260, y: 520, width: 350, focusZoom: 1, className: "spatial-note-object", children: <Link className="teacher-note note-lilac" href="/app/review"><span><ClipboardCheck size={15} />Klio checked the work</span><strong>{props.reviews.length} {props.reviews.length === 1 ? "review is" : "reviews are"} ready</strong><small>Approve the grounded feedback when you are ready.</small><ArrowRight size={15} /></Link> }] : []),
     ...(recentApplied ? [{ id: `adjusted:${recentApplied.id}`, label: "Klio adjusted", title: recentApplied.summary, x: 1500, y: 480, width: 390, focusZoom: 1, className: "spatial-note-object", children: <AdjustmentNote proposal={recentApplied} busy={props.busy === recentApplied.id} onUndo={() => props.onDecide(recentApplied, "undo")} onAcknowledge={() => props.onAcknowledge(recentApplied)} /> }] : []),
-    ...visibleInsights.map((insight, index) => ({ id: `insight:${insight.id}`, label: insightLabel(insight.kind), title: insight.title, x: index === 0 ? 1500 : 260, y: 500 + index * 260, width: 390, focusZoom: 1, className: "spatial-note-object", children: <InsightNote insight={insight} proposals={props.proposals} busy={props.busy} onDecide={props.onDecide} onAcknowledge={props.onAcknowledge} onDismiss={props.onDismissInsight} onStartPractice={props.onStartPractice} onPracticeFollowUp={props.onPracticeFollowUp} /> })),
+    ...visibleInsights.map((insight, index) => {
+      const presentation = buildScheduleDecisionPresentation(insight, props.assignments, props.students);
+      const planningState = presentation ? scheduleDecisionProposalState(presentation, props.planningProposals) : null;
+      const turnState = presentation && !planningState ? scheduleDecisionTurnState(presentation, props.activeAgentTurn) : null;
+      return { id: `insight:${insight.id}`, label: planningState?.status === "proposed" ? "Schedule ready" : turnState === "working" ? "Klio is working" : turnState === "needs_input" ? "Klio needs one detail" : insightLabel(insight.kind), title: planningState?.status === "proposed" ? "A schedule change is ready" : turnState ? presentation?.workingTitle ?? insight.title : presentation?.title ?? insight.title, x: index === 0 ? 1500 : 260, y: 500 + index * 260, width: 390, focusZoom: 1, className: "spatial-note-object", children: <InsightNote insight={insight} assignments={props.assignments} students={props.students} proposals={props.proposals} planningProposals={props.planningProposals} activeAgentTurn={props.activeAgentTurn} busy={props.busy} onDecide={props.onDecide} onAcknowledge={props.onAcknowledge} onDismiss={props.onDismissInsight} onStartPractice={props.onStartPractice} onPracticeFollowUp={props.onPracticeFollowUp} onAskKlio={props.onAskKlio} /> };
+    }),
     ...(visibleProposal ? [{ id: `adjustment:${visibleProposal.id}`, label: "Schedule ready", title: visibleProposal.summary, x: 1500, y: 760, width: 390, focusZoom: 1, className: "spatial-note-object", children: <div className="teacher-note teacher-note-decision note-yellow"><span><RotateCcw size={15} />Needs your approval</span><strong>{visibleProposal.summary}</strong><small>This family policy asks before applying the change.</small><div className="teacher-note-actions"><button type="button" onClick={() => props.onDecide(visibleProposal, "approve")} disabled={props.busy === visibleProposal.id}><Check size={12} />{props.busy === visibleProposal.id ? "Applying…" : "Accept changes"}</button><Link href="/app/adjustments">Review <ArrowRight size={12} /></Link></div></div> }] : []),
     ...practices.map((practice, index) => {
       const practiceSession = props.practiceSessions.find((item) => item.artifactId === practice.id && ["ready", "in_progress"].includes(item.status));
@@ -442,43 +566,48 @@ function DaySurface(props: {
     }),
     ...(activeReminders[0] ? [{ id: `reminder:${activeReminders[0].id}`, label: "Reminder", title: activeReminders[0].title, x: 260, y: 1020, width: 350, focusZoom: 1, className: "spatial-note-object", children: <div className="teacher-note note-cream"><span><Clock3 size={15} />Reminder</span><strong>{activeReminders[0].title}</strong><small>{activeReminders[0].dueAt ? dueLabel(activeReminders[0].dueAt) : "No due date"}</small></div> }] : []),
   ];
-  const toolbar = <div className="spatial-canvas-toolbar spatial-day-toolbar">
-    <div className="teacher-canvas-nav"><button type="button" onClick={() => props.setSelectedDate(addDays(props.selectedDate, -1))} aria-label="Previous day"><ArrowLeft size={15} /></button><button type="button" className="teacher-canvas-today" onClick={() => props.setSelectedDate(props.currentDate)} disabled={props.selectedDate === props.currentDate}>Today</button><button type="button" onClick={() => props.setSelectedDate(addDays(props.selectedDate, 1))} aria-label="Next day"><ArrowRight size={15} /></button></div>
-    <div className="teacher-canvas-heading"><span>Daily plan</span><h1>{longDate(props.selectedDate)}</h1><p>{dayAssignments.length} {dayAssignments.length === 1 ? "lesson" : "lessons"} · {formatMinutes(minutes)}</p></div>
-    <div className="teacher-toolbar-actions"><Link href="/app/week"><CalendarDays size={14} />Week</Link><label><span>View</span><select aria-label="View day plan for" value={props.scopeId} onChange={(event) => props.chooseLearner(event.target.value)}>{props.students.length > 1 ? <option value="all">Family</option> : null}{props.students.map((student) => <option value={student.id} key={student.id}>{student.displayName}</option>)}</select></label></div>
+  const toolbar = <div className="spatial-canvas-toolbar spatial-day-toolbar spatial-calendar-toolbar">
+    <div className="teacher-canvas-nav"><button type="button" onClick={() => props.navigateDate(addDays(props.selectedDate, -1))} aria-label="Previous day" disabled={props.navigationPending}><ArrowLeft size={16} /></button><h1>{longDate(props.selectedDate)}</h1><button type="button" onClick={() => props.navigateDate(addDays(props.selectedDate, 1))} aria-label="Next day" disabled={props.navigationPending}><ArrowRight size={16} /></button></div>
+    <div className="teacher-toolbar-actions teacher-week-actions"><div className="calendar-view-toggle" role="group" aria-label="Schedule view"><button type="button" aria-pressed="true" onClick={() => props.navigateDate(props.currentDate)} disabled={props.navigationPending}>Today</button><Link href={scheduleViewHref("week", props.selectedDate, props.scopeId)}>Week</Link><Link href={scheduleViewHref("month", props.selectedDate, props.scopeId)}>Month</Link></div><button type="button" className="teacher-plan-next calendar-action-placeholder" aria-hidden="true" tabIndex={-1} disabled>Plan next week</button><label><span>View</span><select aria-label="View day plan for" value={props.scopeId} onChange={(event) => props.chooseLearner(event.target.value)} disabled={props.navigationPending}>{props.students.length > 1 ? <option value="all">Family</option> : null}{props.students.map((student) => <option value={student.id} key={student.id}>{student.displayName}</option>)}</select></label></div>
   </div>;
 
   const layout = props.workspaceLayouts.find((item) => item.surface === "day" && item.scopeKey === props.scopeId);
   const focusedPractice = practices.find((practice) => practice.id === props.initialArtifactId);
-  return <SpatialWorkspace ariaLabel="Daily homeschool teaching board" persistenceKey={`day:${props.scopeId}`} items={items} initialView={{ x: -385, y: -270, zoom: .86 }} overviewView={{ x: 20, y: -90, zoom: .52 }} homeItemId="schedule" focusRequest={focusedPractice ? { id: `practice:${focusedPractice.id}`, key: 1 } : null} layoutPersistence={{ familyId: props.familyId, surface: "day", scopeKey: props.scopeId, layoutVersion: 2, positions: layout?.layoutVersion === 2 ? layout.positions : undefined }} onCameraChange={(camera) => { if (camera.level !== "nested") setFocusedId(null); }} toolbar={toolbar} assistant={<div className="spatial-assistant-surface">{props.capture}</div>} />;
+  return <SpatialWorkspace ariaLabel="Daily homeschool teaching board" persistenceKey={`day:${props.scopeId}`} items={items} initialView={{ x: -385, y: -270, zoom: .86 }} overviewView={{ x: 20, y: -90, zoom: .52 }} homeItemId="schedule" focusRequest={focusedPractice ? { id: `practice:${focusedPractice.id}`, key: 1 } : null} layoutPersistence={{ familyId: props.familyId, surface: "day", scopeKey: props.scopeId, layoutVersion: 2, positions: layout?.layoutVersion === 2 ? layout.positions : undefined }} onCameraChange={(camera) => { if (camera.level !== "nested") setFocusedId(null); }} toolbar={toolbar} briefing={props.briefing} assistant={<div className="spatial-assistant-surface">{props.capture}</div>} />;
 }
 
-function DayAssignmentRow(props: { item: AssignmentDTO; learnerName?: string; selected: boolean; focused: boolean; busy: boolean; review?: AssignmentReviewDTO; submission?: SubmissionDTO; evidence: EvidenceDTO[]; index: number; onSelect: () => void; onCollapse: () => void; onUpdate: (item: AssignmentDTO, status: "doing" | "completed" | "planned" | "skipped") => void; onSubmit: (item: AssignmentDTO) => void; onAdjust: (item: AssignmentDTO) => void; onApproveReview: (review: AssignmentReviewDTO) => void; onReorder: (movedId: string, targetId: string, placeAfter: boolean) => void }) {
+function DayAssignmentRow(props: { item: AssignmentDTO; learnerName?: string; attentionConflict?: { start: number; end: number }; selected: boolean; focused: boolean; busy: boolean; review?: AssignmentReviewDTO; submission?: SubmissionDTO; evidence: EvidenceDTO[]; index: number; onSelect: () => void; onToggleDetail: () => void; onCollapse: () => void; onUpdate: (item: AssignmentDTO, status: "doing" | "completed" | "planned" | "skipped") => void; onSubmit: (item: AssignmentDTO) => void; onAdjust: (item: AssignmentDTO) => void; onStartPractice: (input: { artifactId?: string }) => void; onApproveReview: (review: AssignmentReviewDTO) => void; onAttentionSaved: (assignmentId: string, value: Partial<AssignmentDTO>) => void; onAskKlio: (request: string) => void; onReorder: (movedId: string, targetId: string, placeAfter: boolean) => void }) {
   const complete = props.item.status === "completed";
-  return <article className={`day-assignment ${props.selected ? "selected" : ""} ${props.focused ? "focused" : ""} ${complete ? "completed" : ""}`} data-spatial-focus-target data-spatial-focus-id={props.item.id} data-spatial-focus-label={props.item.title} data-spatial-focus-zoom="1.14" draggable title={complete ? "Completed. Select to view details or drag to Klio." : "Drag to reorder or hand this lesson to Klio"} onDragStart={(event) => startAssignmentDrag(event, props.item)} onDragEnd={() => document.querySelectorAll(".day-drop-before,.day-drop-after").forEach((element) => element.classList.remove("day-drop-before", "day-drop-after"))} onDragOver={(event) => { if (!event.dataTransfer.types.includes("application/x-klio-assignment")) return; event.preventDefault(); const after = event.clientY > event.currentTarget.getBoundingClientRect().top + event.currentTarget.getBoundingClientRect().height / 2; event.currentTarget.classList.toggle("day-drop-before", !after); event.currentTarget.classList.toggle("day-drop-after", after); }} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) event.currentTarget.classList.remove("day-drop-before", "day-drop-after"); }} onDrop={(event) => { event.preventDefault(); const movedId = event.dataTransfer.getData("application/x-klio-assignment"); const after = event.clientY > event.currentTarget.getBoundingClientRect().top + event.currentTarget.getBoundingClientRect().height / 2; event.currentTarget.classList.remove("day-drop-before", "day-drop-after"); if (movedId) props.onReorder(movedId, props.item.id, after); }} onClick={props.onSelect}>
+  const runnablePractice = props.item.sourceKind === "practice" && Boolean(props.item.artifactId);
+  return <article className={`day-assignment ${props.selected ? "selected" : ""} ${props.focused ? "focused" : ""} ${complete ? "completed" : ""} ${props.attentionConflict ? "attention-conflict" : ""}`} data-spatial-focus-target data-spatial-focus-id={props.item.id} data-spatial-focus-label={props.item.title} data-spatial-focus-zoom="1.14" draggable title={complete ? "Completed. Select to view details or drag to Klio." : "Drag to reorder or hand this lesson to Klio"} onDragStart={(event) => startAssignmentDrag(event, props.item)} onDragEnd={() => document.querySelectorAll(".day-drop-before,.day-drop-after").forEach((element) => element.classList.remove("day-drop-before", "day-drop-after"))} onDragOver={(event) => { if (!event.dataTransfer.types.includes("application/x-klio-assignment")) return; event.preventDefault(); const after = event.clientY > event.currentTarget.getBoundingClientRect().top + event.currentTarget.getBoundingClientRect().height / 2; event.currentTarget.classList.toggle("day-drop-before", !after); event.currentTarget.classList.toggle("day-drop-after", after); }} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) event.currentTarget.classList.remove("day-drop-before", "day-drop-after"); }} onDrop={(event) => { event.preventDefault(); const movedId = event.dataTransfer.getData("application/x-klio-assignment"); const after = event.clientY > event.currentTarget.getBoundingClientRect().top + event.currentTarget.getBoundingClientRect().height / 2; event.currentTarget.classList.remove("day-drop-before", "day-drop-after"); if (movedId) props.onReorder(movedId, props.item.id, after); }} onClick={props.onSelect}>
     <span className="day-drag-grip" aria-hidden="true"><GripVertical size={14} /></span>
     <time>{props.item.scheduledTime ? formatTime(props.item.scheduledTime) : props.index === 0 ? "Start here" : "Next"}</time>
     <span className="day-subject-mark">{props.item.subject.slice(0, 1).toUpperCase()}</span>
-    <div><small>{props.learnerName ? `${props.learnerName} · ${props.item.subject}` : props.item.subject}</small><strong>{props.item.title}</strong>{props.item.instructions ? <p>{props.item.instructions}</p> : null}</div>
-    <span className="day-duration">{props.item.estimatedMinutes ? `${props.item.estimatedMinutes} min` : "Flexible"}</span>
-    {complete ? <button type="button" className="day-state day-completed-open" aria-expanded={props.focused} aria-label={`${props.focused ? "Hide" : "View"} details for ${props.item.title}`} onClick={(event) => { event.stopPropagation(); props.onSelect(); }}><Check size={15} />Done</button> : props.item.status !== "planned" ? <span className="day-state">{statusLabel(props.item.status)}</span> : null}
-    {props.selected && !complete ? <div className="day-row-actions" onClick={(event) => event.stopPropagation()}>
-      <button type="button" onClick={() => { props.onUpdate(props.item, "completed"); props.onCollapse(); }} disabled={props.busy}><Check size={12} />Done</button>
-      <button type="button" onClick={() => props.onSubmit(props.item)}><Sparkles size={12} />Hand to Klio</button>
-      <button type="button" onClick={() => props.onAdjust(props.item)} disabled={props.busy}><RotateCcw size={12} />Not finished</button>
-    </div> : null}
-    {props.focused ? <LessonDetail assignment={props.item} learnerName={props.learnerName} review={props.review} submission={props.submission} evidence={props.evidence} busy={props.busy} onUpdate={props.onUpdate} onSubmit={props.onSubmit} onAdjust={props.onAdjust} onApproveReview={props.onApproveReview} hideActions={!complete} /> : null}
+    <div><small>{props.learnerName ? `${props.learnerName} · ${props.item.subject}` : props.item.subject}</small><strong>{props.item.title}</strong>{props.item.instructions ? <p>{props.item.instructions}</p> : null}{props.attentionConflict ? <span className="day-attention-conflict">Needs you {formatTimeFromMinutes(props.attentionConflict.start)}–{formatTimeFromMinutes(props.attentionConflict.end)}</span> : null}</div>
+    <span className="day-duration">{props.item.estimatedMinutes ? `${props.item.estimatedMinutes} min` : "Flexible"}<ParentSupportLabel assignment={props.item} /></span>
+    {complete ? <span className="day-state"><Check size={14} />Done</span> : props.item.status !== "planned" ? <span className="day-state">{statusLabel(props.item.status)}</span> : null}
+    {!complete && !runnablePractice ? <button type="button" className="day-complete-action" aria-label={`Mark ${props.item.title} done`} title="Mark done" onClick={(event) => { event.stopPropagation(); props.onUpdate(props.item, "completed"); props.onCollapse(); }} disabled={props.busy}><Check size={13} aria-hidden="true" /><span>Done</span></button> : null}
+    <details className="day-row-menu" onClick={(event) => event.stopPropagation()} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.open = false; }} onKeyDown={(event) => { if (event.key !== "Escape") return; event.preventDefault(); event.currentTarget.open = false; event.currentTarget.querySelector("summary")?.focus(); }}>
+      <summary aria-label={`Actions for ${props.item.title}`} aria-haspopup="menu"><Ellipsis size={17} /></summary>
+      <div role="menu">
+        <button type="button" role="menuitem" aria-label={`${props.focused ? "Hide" : "View"} details for ${props.item.title}`} aria-expanded={props.focused} onClick={props.onToggleDetail}>{props.focused ? "Hide details" : "View details"}</button>
+        {runnablePractice ? <button type="button" role="menuitem" onClick={() => props.onStartPractice({ artifactId: props.item.artifactId! })} disabled={props.busy}>Start practice</button> : !complete ? <button type="button" role="menuitem" onClick={() => props.onSubmit(props.item)}>Hand to Klio</button> : null}
+        <button type="button" role="menuitem" onClick={() => props.onAdjust(props.item)} disabled={props.busy}>Not finished</button>
+      </div>
+    </details>
+    {props.focused ? <LessonDetail assignment={props.item} learnerName={props.learnerName} review={props.review} submission={props.submission} evidence={props.evidence} busy={props.busy} onUpdate={props.onUpdate} onSubmit={props.onSubmit} onAdjust={props.onAdjust} onStartPractice={props.onStartPractice} onApproveReview={props.onApproveReview} onAttentionSaved={props.onAttentionSaved} onAskKlio={props.onAskKlio} hideActions={!complete} /> : null}
   </article>;
 }
 
-function LessonDetail(props: { assignment: AssignmentDTO; learnerName?: string; review?: AssignmentReviewDTO; submission?: SubmissionDTO; evidence: EvidenceDTO[]; busy: boolean; onUpdate: (item: AssignmentDTO, status: "doing" | "completed" | "planned" | "skipped") => void; onSubmit: (item: AssignmentDTO) => void; onAdjust: (item: AssignmentDTO) => void; onApproveReview: (review: AssignmentReviewDTO) => void; hideActions?: boolean }) {
+function LessonDetail(props: { assignment: AssignmentDTO; learnerName?: string; review?: AssignmentReviewDTO; submission?: SubmissionDTO; evidence: EvidenceDTO[]; busy: boolean; onUpdate: (item: AssignmentDTO, status: "doing" | "completed" | "planned" | "skipped") => void; onSubmit: (item: AssignmentDTO) => void; onAdjust: (item: AssignmentDTO) => void; onStartPractice?: (input: { artifactId?: string }) => void; onApproveReview: (review: AssignmentReviewDTO) => void; onAttentionSaved: (assignmentId: string, value: Partial<AssignmentDTO>) => void; onAskKlio: (request: string) => void; hideActions?: boolean }) {
   const sources = props.submission ? props.evidence.filter((item) => props.submission?.evidenceIds.includes(item.id)) : [];
   return <div className="lesson-focus-detail" onClick={(event) => event.stopPropagation()}>
     <header><div><span>{props.learnerName ? `${props.learnerName} · ` : ""}{props.assignment.subject}</span><h2>{props.assignment.title}</h2></div><span className={`lesson-focus-status ${props.assignment.status}`}>{statusLabel(props.assignment.status)}</span></header>
     <div className="lesson-focus-meta"><span>{props.assignment.scheduledDate ? longDate(props.assignment.scheduledDate) : "Not scheduled"}</span><span>{props.assignment.estimatedMinutes ? `${props.assignment.estimatedMinutes} minutes` : "Flexible length"}</span><span>{props.assignment.sourceKind === "practice" ? "Supplemental practice" : "Curriculum work"}</span></div>
     {props.assignment.instructions ? <p>{props.assignment.instructions}</p> : <p className="lesson-focus-empty">No additional lesson directions were added.</p>}
+    <ParentSupportControl assignment={props.assignment} onSaved={(value) => props.onAttentionSaved(props.assignment.id, value)} onAskKlio={props.onAskKlio} />
     {sources.length ? <div className="lesson-focus-sources"><span>Submitted work</span>{sources.map((source) => <a href={source.mimeType ? `/api/evidence/${source.id}/download` : `/app/records?q=${encodeURIComponent(source.title ?? source.rawText?.slice(0, 50) ?? "")}`} key={source.id}>{source.title ?? source.kind}<ArrowRight size={11} /></a>)}</div> : null}
-    {props.review ? <CanvasReview review={props.review} assignment={props.assignment} submission={props.submission} evidence={props.evidence} learnerName={props.learnerName} busy={props.busy} onApprove={props.onApproveReview} compact /> : props.hideActions ? null : <div className="lesson-focus-actions"><button type="button" onClick={() => props.onUpdate(props.assignment, props.assignment.status === "completed" ? "planned" : "completed")} disabled={props.busy}><Check size={13} />{props.assignment.status === "completed" ? "Reopen lesson" : "Mark done"}</button><button type="button" onClick={() => props.onSubmit(props.assignment)}><FileCheck2 size={13} />Hand to Klio</button>{props.assignment.status !== "completed" ? <button type="button" onClick={() => props.onAdjust(props.assignment)} disabled={props.busy}><RotateCcw size={13} />Not finished</button> : null}</div>}
+    {props.review ? <CanvasReview review={props.review} assignment={props.assignment} submission={props.submission} evidence={props.evidence} learnerName={props.learnerName} busy={props.busy} onApprove={props.onApproveReview} compact /> : props.assignment.sourceKind === "practice" && props.assignment.artifactId && props.onStartPractice ? <div className="lesson-focus-actions"><button type="button" onClick={() => props.onStartPractice?.({ artifactId: props.assignment.artifactId! })} disabled={props.busy}><ArrowRight size={13} />Start practice</button>{props.assignment.status !== "completed" ? <button type="button" onClick={() => props.onAdjust(props.assignment)} disabled={props.busy}><RotateCcw size={13} />Not finished</button> : null}</div> : props.hideActions ? null : <div className="lesson-focus-actions"><button type="button" onClick={() => props.onUpdate(props.assignment, props.assignment.status === "completed" ? "planned" : "completed")} disabled={props.busy}><Check size={13} />{props.assignment.status === "completed" ? "Reopen lesson" : "Mark done"}</button><button type="button" onClick={() => props.onSubmit(props.assignment)}><FileCheck2 size={13} />Hand to Klio</button>{props.assignment.status !== "completed" ? <button type="button" onClick={() => props.onAdjust(props.assignment)} disabled={props.busy}><RotateCcw size={13} />Not finished</button> : null}</div>}
   </div>;
 }
 
@@ -552,7 +681,7 @@ function insightLabel(kind: string) {
   if (kind === "adjusted") return "Klio adjusted";
   if (kind === "practice_ready") return "Practice ready";
   if (kind === "review_ready") return "Review ready";
-  if (kind === "needs_detail") return "Needs one detail";
+  if (kind === "needs_detail") return "Schedule decision";
   return "Klio noticed";
 }
 
@@ -581,10 +710,18 @@ function isResolvedAdjustmentInsight(insight: KlioInsightDTO, proposals: Adjustm
   return proposalId ? proposals.some((proposal) => proposal.id === proposalId && ["undone", "rejected", "stale"].includes(proposal.status)) : false;
 }
 
-function InsightNote({ insight, proposals, busy, onDecide, onAcknowledge, onDismiss, onStartPractice, onPracticeFollowUp }: { insight: KlioInsightDTO; proposals: AdjustmentDTO[]; busy: string | null; onDecide: (proposal: AdjustmentDTO, decision: "approve" | "reject" | "undo") => void; onAcknowledge: (proposal: AdjustmentDTO) => Promise<boolean>; onDismiss: (insight: KlioInsightDTO) => Promise<boolean>; onStartPractice: (input: { sessionId?: string; artifactId?: string }) => void; onPracticeFollowUp: (insight: KlioInsightDTO, action: "extend_time" | "create_more_practice") => void }) {
+function isResolvedPlanningInsight(insight: KlioInsightDTO, assignments: AssignmentDTO[], students: StudentDTO[], proposals: PlanningProposalDTO[]) {
+  const presentation = buildScheduleDecisionPresentation(insight, assignments, students);
+  return presentation ? scheduleDecisionProposalState(presentation, proposals)?.status === "applied" : false;
+}
+
+export function InsightNote({ insight, assignments, students, proposals, planningProposals, activeAgentTurn, busy, onDecide, onAcknowledge, onDismiss, onStartPractice, onPracticeFollowUp, onAskKlio }: { insight: KlioInsightDTO; assignments: AssignmentDTO[]; students: StudentDTO[]; proposals: AdjustmentDTO[]; planningProposals: PlanningProposalDTO[]; activeAgentTurn: AgentTurnDTO | null; busy: string | null; onDecide: (proposal: AdjustmentDTO, decision: "approve" | "reject" | "undo") => void; onAcknowledge: (proposal: AdjustmentDTO) => Promise<boolean>; onDismiss: (insight: KlioInsightDTO) => Promise<boolean>; onStartPractice: (input: { sessionId?: string; artifactId?: string }) => void; onPracticeFollowUp: (insight: KlioInsightDTO, action: "extend_time" | "create_more_practice") => void; onAskKlio: (request: string) => void }) {
   const router = useRouter();
   const [undoing, setUndoing] = useState(false);
   const [dismissing, setDismissing] = useState(false);
+  const scheduleDecision = buildScheduleDecisionPresentation(insight, assignments, students);
+  const scheduleProposal = scheduleDecision ? scheduleDecisionProposalState(scheduleDecision, planningProposals) : null;
+  const scheduleTurnState = scheduleDecision && !scheduleProposal ? scheduleDecisionTurnState(scheduleDecision, activeAgentTurn) : null;
   const proposalId = typeof insight.actionRef.proposalId === "string" ? insight.actionRef.proposalId : null;
   const artifactId = typeof insight.actionRef.artifactId === "string" ? insight.actionRef.artifactId : null;
   const practiceSessionId = typeof insight.actionRef.practiceSessionId === "string" ? insight.actionRef.practiceSessionId : null;
@@ -601,19 +738,22 @@ function InsightNote({ insight, proposals, busy, onDecide, onAcknowledge, onDism
   }
   const acknowledgesAdjustment = insight.kind === "adjusted" && proposal?.status === "applied";
   async function dismiss() { setDismissing(true); if (acknowledgesAdjustment && proposal) await onAcknowledge(proposal); else await onDismiss(insight); setDismissing(false); }
-  const tone = insight.kind === "adjusted" ? "note-green" : insight.kind === "practice_ready" ? "note-blue" : insight.kind === "needs_detail" ? "note-yellow" : "note-lilac";
-  return <div className={`teacher-note teacher-note-insight ${tone} note-tilt-right`}>
-    <span><Sparkles size={15} />{insight.kind === "adjusted" ? "Klio adjusted" : insight.kind === "practice_ready" ? "Practice ready" : insight.kind === "needs_detail" ? "Needs one detail" : "Klio noticed"}</span>
-    <strong>{insight.title}</strong><small>{insight.summary}</small>
+  const scheduleReady = scheduleProposal?.status === "proposed";
+  const tone = scheduleTurnState === "working" || scheduleReady ? "note-green" : insight.kind === "adjusted" ? "note-green" : insight.kind === "practice_ready" ? "note-blue" : insight.kind === "needs_detail" ? "note-yellow" : "note-lilac";
+  return <div className={`teacher-note teacher-note-insight ${tone} note-tilt-right ${scheduleDecision ? "teacher-note-schedule-decision" : ""}`}>
+    <span>{scheduleTurnState === "working" ? <LoaderCircle className="spin" size={15} /> : scheduleReady ? <Check size={15} /> : scheduleDecision ? <CalendarDays size={15} /> : <Sparkles size={15} />}{scheduleReady ? "Schedule ready" : scheduleTurnState === "working" ? "Klio is working" : scheduleTurnState === "needs_input" ? "Klio needs one detail" : scheduleDecision?.label ?? insightLabel(insight.kind)}</span>
+    <strong>{scheduleReady ? "Klio prepared a change" : scheduleTurnState ? scheduleDecision?.workingTitle : scheduleDecision?.title ?? insight.title}</strong><small>{scheduleReady ? scheduleProposal.summary : scheduleTurnState === "needs_input" ? "Klio paused before changing anything. Open the conversation to answer one detail." : scheduleTurnState === "working" ? scheduleDecision?.workingSummary : scheduleDecision?.summary ?? insight.summary}</small>
+    {scheduleDecision && scheduleDecision.assignments.length > 1 ? <ul className="insight-affected-work" aria-label="Affected lessons">{scheduleDecision.assignments.slice(0, 3).map((assignment) => <li key={assignment.id}><span>{assignment.title}</span>{assignment.estimatedMinutes ? <small>{assignment.estimatedMinutes} min</small> : null}</li>)}{scheduleDecision.assignments.length > 3 ? <li><span>And {scheduleDecision.assignments.length - 3} more</span></li> : null}</ul> : null}
     <div className="teacher-note-actions">
+      {scheduleReady ? <Link className="note-action-primary" href={`/app/adjustments?proposal=${encodeURIComponent(scheduleProposal.id)}`}>Review or edit <ArrowRight size={12} /></Link> : scheduleDecision && scheduleTurnState ? <div className={`note-working-status ${scheduleTurnState}`} role="status" aria-live="polite">{scheduleTurnState === "working" ? <LoaderCircle className="spin" size={13} /> : <Sparkles size={13} />}{scheduleTurnState === "working" ? "Working on this" : "Waiting for your answer"}</div> : scheduleDecision ? <button className="note-action-primary" type="button" onClick={() => onAskKlio(scheduleDecision.request)} disabled={Boolean(busy)}>Ask Klio to make room <ArrowRight size={12} /></button> : null}
       {practiceSessionId && practiceOutcome !== "needs_support" && practiceOutcome !== "understood" && practiceOutcome !== "checking" ? <button className="note-action-primary" type="button" onClick={() => onStartPractice({ sessionId: practiceSessionId, artifactId: artifactId ?? undefined })}>Start practice <ArrowRight size={12} /></button> : artifactId && !practiceOutcome ? <button className="note-action-primary" type="button" onClick={() => onStartPractice({ artifactId })}>Start practice <ArrowRight size={12} /></button> : null}
       {practiceOutcome === "needs_support" ? <>
         <button className="note-action-primary" type="button" onClick={() => onPracticeFollowUp(insight, "extend_time")} disabled={busy === insight.id}><Clock3 size={12} />Add 10 minutes</button>
         <button className="note-action-secondary" type="button" onClick={() => onPracticeFollowUp(insight, "create_more_practice")} disabled={busy === insight.id}><Plus size={12} />Make follow-up</button>
       </> : null}
       {undoAvailable && proposalId ? <button className="note-action-secondary" type="button" aria-label="Undo" onClick={() => void undo()} disabled={undoing || busy === proposalId}><RotateCcw size={12} />{undoing || busy === proposalId ? "Undoing…" : "Undo change"}</button> : null}
-      {insight.evidenceRefs.length ? <Link className="note-action-quiet" href="/app/activity">Show evidence</Link> : null}
-      <button className="note-action-dismiss" type="button" onClick={() => void dismiss()} disabled={dismissing}>{acknowledgesAdjustment ? <Check size={12} /> : <X size={12} />}{dismissing ? (acknowledgesAdjustment ? "Acknowledging…" : "Dismissing…") : (acknowledgesAdjustment ? "Acknowledge" : "Dismiss")}</button>
+      {!scheduleReady && insight.evidenceRefs.length ? <Link className="note-action-quiet" href="/app/activity">Show evidence</Link> : null}
+      {!scheduleReady && !scheduleTurnState ? <button className="note-action-dismiss" type="button" onClick={() => void dismiss()} disabled={dismissing}>{acknowledgesAdjustment ? <Check size={12} /> : <X size={12} />}{dismissing ? (acknowledgesAdjustment ? "Acknowledging…" : "Dismissing…") : (acknowledgesAdjustment ? "Acknowledge" : "Dismiss")}</button> : null}
     </div>
   </div>;
 }
@@ -633,7 +773,58 @@ function AdjustmentNote({ proposal, busy, onUndo, onAcknowledge }: { proposal: A
   </div>;
 }
 
-function WeekSurface(props: { familyId: string; workspaceLayouts: WorkspaceLayoutDTO[]; scopeId: string; assignments: AssignmentDTO[]; curricula: CurriculumUnitDTO[]; learner: StudentDTO | undefined; students: StudentDTO[]; chooseLearner: (id: string) => void; days: string[]; currentDate: string; selectedDate: string; setSelectedDate: (date: string) => void; capacity: number; pendingReviews: AssignmentReviewDTO[]; approvedReviews: AssignmentReviewDTO[]; submissions: SubmissionDTO[]; evidence: EvidenceDTO[]; proposals: AdjustmentDTO[]; acknowledgedProposalIds: string[]; reminders: ReminderDTO[]; artifacts: ArtifactDTO[]; practiceSessions: PracticeSessionDTO[]; insights: KlioInsightDTO[]; busy: string | null; onBuildWeek: () => void; onBuildNextWeek: () => void; onUpdate: (item: AssignmentDTO, status: "doing" | "completed" | "planned" | "skipped") => void; onMove: (assignmentId: string, date: string) => void; onSubmit: (item: AssignmentDTO) => void; onAdjust: (item: AssignmentDTO) => void; onDecide: (proposal: AdjustmentDTO, decision: "approve" | "reject" | "undo") => void; onAcknowledge: (proposal: AdjustmentDTO) => Promise<boolean>; onDismissInsight: (insight: KlioInsightDTO) => Promise<boolean>; onStartPractice: (input: { sessionId?: string; artifactId?: string }) => void; onDismissPractice: (session: PracticeSessionDTO, reason: PracticeDismissalReason) => void; onPracticeFollowUp: (insight: KlioInsightDTO, action: "extend_time" | "create_more_practice") => void; onApproveReview: (review: AssignmentReviewDTO) => void; capture: React.ReactNode }) {
+function WeekSurface(props: {
+  familyId: string;
+  familyLearningDays: unknown;
+  workspaceLayouts: WorkspaceLayoutDTO[];
+  scopeId: string;
+  mode: "week" | "month";
+  assignments: AssignmentDTO[];
+  conflicts: CalendarConflictDTO[];
+  curricula: CurriculumUnitDTO[];
+  learner: StudentDTO | undefined;
+  students: StudentDTO[];
+  chooseLearner: (id: string) => void;
+  days: string[];
+  currentDate: string;
+  selectedDate: string;
+  setSelectedDate: (date: string) => void;
+  navigateRange: (mode: "week" | "month", date: string) => void;
+  navigationPending: boolean;
+  capacity: number;
+  pendingReviews: AssignmentReviewDTO[];
+  approvedReviews: AssignmentReviewDTO[];
+  submissions: SubmissionDTO[];
+  evidence: EvidenceDTO[];
+  proposals: AdjustmentDTO[];
+  planningProposals: PlanningProposalDTO[];
+  acknowledgedProposalIds: string[];
+  reminders: ReminderDTO[];
+  artifacts: ArtifactDTO[];
+  practiceSessions: PracticeSessionDTO[];
+  insights: KlioInsightDTO[];
+  activeAgentTurn: AgentTurnDTO | null;
+  busy: string | null;
+  onBuildWeek: () => void;
+  onBuildNextWeek: () => void;
+  onAddConflict: (date: string, trigger: HTMLElement) => void;
+  onEditConflict: (conflict: CalendarConflictDTO, trigger: HTMLElement) => void;
+  onUpdate: (item: AssignmentDTO, status: "doing" | "completed" | "planned" | "skipped") => void;
+  onMove: (assignmentId: string, date: string) => void;
+  onSubmit: (item: AssignmentDTO) => void;
+  onAdjust: (item: AssignmentDTO) => void;
+  onDecide: (proposal: AdjustmentDTO, decision: "approve" | "reject" | "undo") => void;
+  onAcknowledge: (proposal: AdjustmentDTO) => Promise<boolean>;
+  onDismissInsight: (insight: KlioInsightDTO) => Promise<boolean>;
+  onStartPractice: (input: { sessionId?: string; artifactId?: string }) => void;
+  onDismissPractice: (session: PracticeSessionDTO, reason: PracticeDismissalReason) => void;
+  onPracticeFollowUp: (insight: KlioInsightDTO, action: "extend_time" | "create_more_practice") => void;
+  onApproveReview: (review: AssignmentReviewDTO) => void;
+  onAttentionSaved: (assignmentId: string, value: Partial<AssignmentDTO>) => void;
+  onAskKlio: (request: string) => void;
+  briefing: React.ReactNode;
+  capture: React.ReactNode;
+}) {
   const isFamilyView = props.scopeId === "all";
   const [focusedLesson, setFocusedLesson] = useState<AssignmentDTO | null>(null);
   const [focusKey, setFocusKey] = useState(0);
@@ -642,31 +833,51 @@ function WeekSurface(props: { familyId: string; workspaceLayouts: WorkspaceLayou
   const practices = props.artifacts.filter((item) => item.type === "practice" && practiceArtifactIsAvailable(item, props.practiceSessions)).slice(0, 3);
   const visibleInsights = rankWorkspaceInsights(props.insights)
     .filter((item) => item.kind !== "on_track" && isParentFacingWorkspaceInsight(item) && !isResolvedAdjustmentInsight(item, props.proposals))
+    .filter((item) => !isResolvedPlanningInsight(item, props.assignments, props.students, props.planningProposals))
     .slice(0, 2);
   const visibleProposal = props.proposals.find((proposal) => proposal.status === "proposed" && !visibleInsights.some((insight) => insight.actionRef.proposalId === proposal.id));
   const recentApplied = props.proposals.find((proposal) => proposal.status === "applied" && proposal.undoStatus === "available" && !proposal.acknowledgedAt && !props.acknowledgedProposalIds.includes(proposal.id) && !visibleInsights.some((insight) => insight.actionRef.proposalId === proposal.id));
-  const totalFinished = weekAssignments.filter((item) => item.status === "completed").length;
-  const scheduledLearners = new Set(weekAssignments.map((item) => item.studentId));
-  const learnerCoverage = props.students.filter((student) => scheduledLearners.has(student.id));
-  const schedule = weekAssignments.length ? <main className={`teacher-week-sheet ${isFamilyView ? "family-view" : ""}`} aria-label="Weekly schedule">
+  const weekConflicts = props.conflicts.filter((conflict) => props.days.includes(conflict.conflictDate));
+  const weekSchedule = weekAssignments.length || weekConflicts.length ? <main className={`teacher-week-sheet ${isFamilyView ? "family-view" : ""}`} aria-label="Weekly schedule">
         {props.days.map((date) => {
           const items = weekAssignments.filter((item) => item.scheduledDate === date);
+          const conflicts = weekConflicts.filter((conflict) => conflict.conflictDate === date);
           const done = items.filter((item) => item.status === "completed").length;
-          return <section className={date === props.selectedDate ? "selected" : ""} onDragOver={(event) => { if (event.dataTransfer.types.includes("application/x-klio-assignment")) { event.preventDefault(); event.dataTransfer.dropEffect = "move"; } }} onDrop={(event) => { event.preventDefault(); const assignmentId = event.dataTransfer.getData("application/x-klio-assignment"); if (assignmentId) props.onMove(assignmentId, date); }} key={date}>
-            <button type="button" className="teacher-week-day-head" onClick={() => props.setSelectedDate(date)}><span>{weekday(date)}</span><strong>{dayNumber(date)}</strong><small>{done}/{items.length}</small></button>
+          const visibleStudents = isFamilyView ? props.students : props.learner ? [props.learner] : [];
+          const analyses = visibleStudents.map((student) => {
+            const availability = effectiveAvailability({ date, studentId: student.id, dailyCapacityMinutes: student.dailyCapacityMinutes ?? 180, schedulePreferences: student.schedulePreferences, familyLearningDays: props.familyLearningDays, conflicts: props.conflicts });
+            const plannedMinutes = items.filter((item) => item.studentId === student.id).reduce((sum, item) => sum + (item.estimatedMinutes ?? 0), 0);
+            return { student, availability, plannedMinutes, overCapacity: plannedMinutes > availability.availableMinutes };
+          });
+          const overCapacity = analyses.some((analysis) => analysis.overCapacity);
+          const dailyParentMinutes = items.reduce((sum, item) => sum + item.resolvedParentMinutes, 0);
+          const dailyParentConflicts = attentionConflicts(items);
+          const allDayBlocked = isFamilyView ? conflicts.some((conflict) => conflict.allDay && conflict.studentId === null) : analyses.some((analysis) => analysis.availability.allDayBlocked);
+          return <section className={`${date === props.selectedDate ? "selected" : ""} ${allDayBlocked ? "has-all-day-conflict" : ""} ${overCapacity ? "is-over-capacity" : ""}`} onDragOver={(event) => { if (event.dataTransfer.types.includes("application/x-klio-assignment")) { event.preventDefault(); event.dataTransfer.dropEffect = "move"; } }} onDrop={(event) => { event.preventDefault(); const assignmentId = event.dataTransfer.getData("application/x-klio-assignment"); if (assignmentId) props.onMove(assignmentId, date); }} key={date}>
+            <header className="teacher-week-day-header"><button type="button" className="teacher-week-day-head" onClick={() => props.setSelectedDate(date)}><span>{weekday(date)}</span><strong>{dayNumber(date)}</strong><small>{done}/{items.length}</small></button><button type="button" className="teacher-week-add-conflict" onClick={(event) => props.onAddConflict(date, event.currentTarget)} aria-label={`Add conflict on ${shortDate(date)}`}><Plus size={13} />Conflict</button></header>
+            {conflicts.length ? <div className="teacher-week-conflicts" aria-label={`Conflicts on ${shortDate(date)}`}>{conflicts.map((conflict) => <button type="button" className={conflict.allDay ? "all-day" : "timed"} onClick={(event) => props.onEditConflict(conflict, event.currentTarget)} key={conflict.id}><span>{conflict.title}</span><small>{conflict.allDay ? "All day" : `${formatTime(conflict.startsAt!)}–${formatTime(conflict.endsAt!)}`}{isFamilyView && conflict.studentId ? ` · ${props.students.find((student) => student.id === conflict.studentId)?.displayName ?? "Learner"}` : isFamilyView ? " · Everyone" : ""}</small></button>)}</div> : null}
+            {allDayBlocked || overCapacity || analyses.some((analysis) => analysis.availability.blockedMinutes > 0) ? <p className={`teacher-week-capacity ${overCapacity ? "over" : ""}`}>{allDayBlocked ? "Teaching unavailable" : overCapacity ? "Over available teaching time" : isFamilyView ? "Teaching time reduced" : `${analyses[0]?.availability.availableMinutes ?? 0} min available`}</p> : null}
+            <p className={`teacher-week-parent-total ${dailyParentConflicts.length ? "collision" : ""}`}>{dailyParentMinutes} min with you{dailyParentConflicts.length ? ` · overlap at ${formatTimeFromMinutes(dailyParentConflicts[0].overlap.start)}` : ""}</p>
             <div className="teacher-week-day-body">{isFamilyView ? props.students.map((student) => {
               const learnerItems = items.filter((item) => item.studentId === student.id);
-              return learnerItems.length ? <div className="teacher-week-learner-lane" key={student.id}><small>{student.displayName}</small>{learnerItems.map((item) => <WeekItem item={item} onOpen={() => { setFocusedLesson(item); setFocusKey((value) => value + 1); }} key={item.id} />)}</div> : null;
-            }) : items.map((item) => <WeekItem item={item} onOpen={() => { setFocusedLesson(item); setFocusKey((value) => value + 1); }} key={item.id} />)}</div>
+              return learnerItems.length ? <div className="teacher-week-learner-lane" key={student.id}><small>{student.displayName}</small><WeekItems items={learnerItems} onOpen={(item) => { setFocusedLesson(item); setFocusKey((value) => value + 1); }} /></div> : null;
+            }) : <WeekItems items={items} onOpen={(item) => { setFocusedLesson(item); setFocusKey((value) => value + 1); }} />}</div>
           </section>;
         })}
       </main> : <div className="teacher-week-empty"><Sparkles size={25} /><span>{isFamilyView ? "Your family is ready" : `${props.learner?.displayName ?? "This learner"} is ready`}</span><h2>Turn the learning setup into this week.</h2><p>{props.curricula.length ? isFamilyView ? `Klio will plan ${formatNames(props.students.map((student) => student.displayName))} together, using each learner’s subjects, teaching rhythm, learning days, and daily limit.` : `${props.curricula.length} ${props.curricula.length === 1 ? "subject is" : "subjects are"} ready: ${props.curricula.slice(0, 4).map((unit) => unit.subject).join(", ")}${props.curricula.length > 4 ? `, and ${props.curricula.length - 4} more` : ""}.` : "Set up subjects for your learners, then Klio can build a realistic family week."}</p>{props.curricula.length ? <button type="button" onClick={props.onBuildWeek} disabled={props.busy === "build-week"}>{props.busy === "build-week" ? "Building the family week…" : props.students.length > 1 ? "Build the family week" : "Build this week"}<ArrowRight size={13} /></button> : <Link href="/app/settings">Set up learners <ArrowRight size={13} /></Link>}</div>;
 
+  const schedule = props.mode === "month" ? <CalendarMonthView anchorDate={props.selectedDate} selectedDate={props.selectedDate} currentDate={props.currentDate} scopeStudentId={props.scopeId} familyLearningDays={props.familyLearningDays} students={props.students} assignments={props.assignments} conflicts={props.conflicts} onSelectDate={props.setSelectedDate} onViewWeek={() => props.navigateRange("week", props.selectedDate)} onAddConflict={props.onAddConflict} onEditConflict={props.onEditConflict} /> : weekSchedule;
+
   const items: SpatialWorkspaceItem[] = [
-    { id: "schedule", label: "Schedule", title: weekRangeLabel(props.days), x: 650, y: 470, width: 1240, focusZoom: .9, minFocusZoom: .72, className: "spatial-week-schedule", children: schedule },
+    { id: "schedule", label: "Schedule", title: props.mode === "month" ? monthLabel(props.selectedDate) : weekRangeLabel(props.days), x: 650, y: 470, width: 1240, focusZoom: .9, minFocusZoom: .72, className: `spatial-week-schedule ${props.mode === "month" ? "spatial-month-schedule" : ""}`, children: schedule },
     ...(props.pendingReviews.length ? [{ id: "review", label: "Review ready", title: "Klio checked this work", x: 240, y: 540, width: 500, focusZoom: 1.02, className: "spatial-summary-object", children: <CanvasReview review={props.pendingReviews[0]} assignment={props.assignments.find((item) => item.id === props.pendingReviews[0].assignmentId)} submission={props.submissions.find((item) => item.id === props.pendingReviews[0].submissionId)} evidence={props.evidence} learnerName={props.students.find((student) => student.id === props.assignments.find((item) => item.id === props.pendingReviews[0].assignmentId)?.studentId)?.displayName} busy={props.busy === props.pendingReviews[0].id} onApprove={props.onApproveReview} /> }] : []),
     ...(recentApplied ? [{ id: `adjusted:${recentApplied.id}`, label: "Klio adjusted", title: recentApplied.summary, x: 1980, y: 500, width: 390, focusZoom: 1, className: "spatial-note-object", children: <AdjustmentNote proposal={recentApplied} busy={props.busy === recentApplied.id} onUndo={() => props.onDecide(recentApplied, "undo")} onAcknowledge={() => props.onAcknowledge(recentApplied)} /> }] : []),
-    ...visibleInsights.map((insight, index) => ({ id: `insight:${insight.id}`, label: insightLabel(insight.kind), title: insight.title, x: index === 0 ? 1980 : 240, y: 560 + index * 300, width: 390, focusZoom: 1, className: "spatial-note-object", children: <InsightNote insight={insight} proposals={props.proposals} busy={props.busy} onDecide={props.onDecide} onAcknowledge={props.onAcknowledge} onDismiss={props.onDismissInsight} onStartPractice={props.onStartPractice} onPracticeFollowUp={props.onPracticeFollowUp} /> })),
+    ...visibleInsights.map((insight, index) => {
+      const presentation = buildScheduleDecisionPresentation(insight, props.assignments, props.students);
+      const planningState = presentation ? scheduleDecisionProposalState(presentation, props.planningProposals) : null;
+      const turnState = presentation && !planningState ? scheduleDecisionTurnState(presentation, props.activeAgentTurn) : null;
+      return { id: `insight:${insight.id}`, label: planningState?.status === "proposed" ? "Schedule ready" : turnState === "working" ? "Klio is working" : turnState === "needs_input" ? "Klio needs one detail" : insightLabel(insight.kind), title: planningState?.status === "proposed" ? "A schedule change is ready" : turnState ? presentation?.workingTitle ?? insight.title : presentation?.title ?? insight.title, x: index === 0 ? 1980 : 240, y: 560 + index * 300, width: 390, focusZoom: 1, className: "spatial-note-object", children: <InsightNote insight={insight} assignments={props.assignments} students={props.students} proposals={props.proposals} planningProposals={props.planningProposals} activeAgentTurn={props.activeAgentTurn} busy={props.busy} onDecide={props.onDecide} onAcknowledge={props.onAcknowledge} onDismiss={props.onDismissInsight} onStartPractice={props.onStartPractice} onPracticeFollowUp={props.onPracticeFollowUp} onAskKlio={props.onAskKlio} /> };
+    }),
     ...(visibleProposal ? [{ id: `adjustment:${visibleProposal.id}`, label: "Schedule ready", title: visibleProposal.summary, x: 1980, y: 910, width: 390, focusZoom: 1, className: "spatial-note-object", children: <div className="teacher-note teacher-note-decision note-yellow"><span><RotateCcw size={15} />Needs your approval</span><strong>{visibleProposal.summary}</strong><small>This family policy asks before applying the change.</small><div className="teacher-note-actions"><button type="button" onClick={() => props.onDecide(visibleProposal, "approve")} disabled={props.busy === visibleProposal.id}><Check size={12} />{props.busy === visibleProposal.id ? "Applying…" : "Accept changes"}</button><Link href="/app/adjustments">Review <ArrowRight size={12} /></Link></div></div> }] : []),
     ...practices.map((practice, index) => {
       const practiceSession = props.practiceSessions.find((item) => item.artifactId === practice.id && ["ready", "in_progress"].includes(item.status));
@@ -674,48 +885,81 @@ function WeekSurface(props: { familyId: string; workspaceLayouts: WorkspaceLayou
       return { id: `practice:${practice.id}`, label: "Practice", title: `${practiceLearnerName ? `${practiceLearnerName} · ` : ""}${practice.title}`, x: 1980, y: 1110 + index * 320, width: 420, focusZoom: 1.02, className: "spatial-practice-object", children: <CanvasPractice familyId={props.familyId} artifact={practice} learnerName={practiceLearnerName} session={practiceSession} busy={props.busy === practice.id || props.busy === practiceSession?.id} onStart={props.onStartPractice} onDismiss={props.onDismissPractice} /> };
     }),
     ...(activeReminder ? [{ id: `reminder:${activeReminder.id}`, label: "Reminder", title: activeReminder.title, x: 240, y: 1180, width: 350, focusZoom: 1, className: "spatial-note-object", children: <div className="teacher-note note-cream"><span><Clock3 size={15} />Reminder</span><strong>{activeReminder.title}</strong><small>{activeReminder.dueAt ? dueLabel(activeReminder.dueAt) : "No due date"}</small></div> }] : []),
-    ...(focusedLesson ? [{ id: "lesson", parentId: "schedule", label: "Lesson", title: focusedLesson.title, x: 1990, y: 390, width: 520, focusZoom: 1.05, hideLandmark: true, movable: false, persistPosition: false, className: "spatial-lesson-object", children: <LessonDetail assignment={focusedLesson} learnerName={props.students.find((student) => student.id === focusedLesson.studentId)?.displayName} review={props.pendingReviews.find((item) => item.assignmentId === focusedLesson.id)} submission={props.submissions.find((item) => item.assignmentId === focusedLesson.id)} evidence={props.evidence} busy={props.busy === focusedLesson.id || props.busy === props.pendingReviews.find((item) => item.assignmentId === focusedLesson.id)?.id} onUpdate={props.onUpdate} onSubmit={props.onSubmit} onAdjust={props.onAdjust} onApproveReview={props.onApproveReview} /> }] : []),
+    ...(focusedLesson && props.mode === "week" ? [{ id: "lesson", parentId: "schedule", label: "Lesson", title: focusedLesson.title, x: 1990, y: 390, width: 520, focusZoom: 1.05, hideLandmark: true, movable: false, persistPosition: false, className: "spatial-lesson-object", children: <LessonDetail assignment={focusedLesson} learnerName={props.students.find((student) => student.id === focusedLesson.studentId)?.displayName} review={props.pendingReviews.find((item) => item.assignmentId === focusedLesson.id)} submission={props.submissions.find((item) => item.assignmentId === focusedLesson.id)} evidence={props.evidence} busy={props.busy === focusedLesson.id || props.busy === props.pendingReviews.find((item) => item.assignmentId === focusedLesson.id)?.id} onUpdate={props.onUpdate} onSubmit={props.onSubmit} onAdjust={props.onAdjust} onStartPractice={props.onStartPractice} onApproveReview={props.onApproveReview} onAttentionSaved={props.onAttentionSaved} onAskKlio={props.onAskKlio} /> }] : []),
   ];
 
-  const toolbar = <div className="spatial-canvas-toolbar">
-    <div className="teacher-canvas-nav"><button type="button" onClick={() => props.setSelectedDate(addDays(props.days[0], -7))} aria-label="Previous week"><ArrowLeft size={15} /></button><button type="button" className="teacher-canvas-today" onClick={() => props.setSelectedDate(props.currentDate)}>Today</button><button type="button" onClick={() => props.setSelectedDate(addDays(props.days[0], 7))} aria-label="Next week"><ArrowRight size={15} /></button></div>
-    <div className="teacher-canvas-heading"><span>Weekly plan</span><h1>{weekRangeLabel(props.days)}</h1><p>{weekAssignments.length} lessons · {totalFinished} complete{isFamilyView ? ` · ${learnerCoverage.length} of ${props.students.length} learners scheduled` : ""}</p></div>
-    <div className="teacher-week-actions"><button type="button" className="teacher-plan-next" onClick={props.onBuildNextWeek} disabled={props.busy === "build-week"}>{props.busy === "build-week" ? "Planning…" : "Plan next week"}</button><label><span>View</span><select aria-label="View schedule for" value={props.scopeId} onChange={(event) => props.chooseLearner(event.target.value)}>{props.students.length > 1 ? <option value="all">Family</option> : null}{props.students.map((student) => <option value={student.id} key={student.id}>{student.displayName}</option>)}</select></label></div>
+  const toolbar = <div className="spatial-canvas-toolbar spatial-day-toolbar spatial-calendar-toolbar">
+    <div className="teacher-canvas-nav"><button type="button" onClick={() => props.navigateRange(props.mode, props.mode === "month" ? shiftMonth(props.selectedDate, -1) : addDays(props.days[0], -7))} aria-label={props.mode === "month" ? "Previous month" : "Previous week"} disabled={props.navigationPending}><ArrowLeft size={16} /></button><h1>{props.mode === "month" ? monthLabel(props.selectedDate) : weekRangeLabel(props.days)}</h1><button type="button" onClick={() => props.navigateRange(props.mode, props.mode === "month" ? shiftMonth(props.selectedDate, 1) : addDays(props.days[0], 7))} aria-label={props.mode === "month" ? "Next month" : "Next week"} disabled={props.navigationPending}><ArrowRight size={16} /></button></div>
+    <div className="teacher-toolbar-actions teacher-week-actions"><div className="calendar-view-toggle" role="group" aria-label="Schedule view"><Link href={scheduleViewHref("today", props.selectedDate, props.scopeId)}>Today</Link><button type="button" aria-pressed={props.mode === "week"} onClick={() => props.navigateRange("week", props.selectedDate)} disabled={props.navigationPending}>Week</button><button type="button" aria-pressed={props.mode === "month"} onClick={() => props.navigateRange("month", props.selectedDate)} disabled={props.navigationPending}>Month</button></div><button type="button" className={`teacher-plan-next ${props.mode === "month" ? "calendar-action-placeholder" : ""}`} onClick={props.onBuildNextWeek} disabled={props.mode === "month" || props.busy === "build-week"} aria-hidden={props.mode === "month"} tabIndex={props.mode === "month" ? -1 : undefined}>{props.busy === "build-week" && props.mode === "week" ? "Planning…" : "Plan next week"}</button><label><span>View</span><select aria-label="View schedule for" value={props.scopeId} onChange={(event) => props.chooseLearner(event.target.value)} disabled={props.navigationPending}>{props.students.length > 1 ? <option value="all">Family</option> : null}{props.students.map((student) => <option value={student.id} key={student.id}>{student.displayName}</option>)}</select></label></div>
   </div>;
 
   const layout = props.workspaceLayouts.find((item) => item.surface === "week" && item.scopeKey === props.scopeId);
-  return <SpatialWorkspace ariaLabel="Weekly homeschool teaching board" persistenceKey={`week:${props.scopeId}`} items={items} initialView={{ x: -415, y: -160, zoom: .76 }} overviewView={{ x: -25, y: -105, zoom: .48 }} homeItemId="schedule" focusRequest={focusedLesson ? { id: "lesson", key: focusKey } : null} layoutPersistence={{ familyId: props.familyId, surface: "week", scopeKey: props.scopeId, layoutVersion: 2, positions: layout?.layoutVersion === 2 ? layout.positions : undefined }} onCameraChange={(camera: SpatialCameraState) => { if (camera.level !== "item" || camera.id !== "lesson") setFocusedLesson(null); }} toolbar={toolbar} assistant={<div className="spatial-assistant-surface">{props.capture}</div>} />;
+  return <SpatialWorkspace ariaLabel={`${props.mode === "month" ? "Monthly" : "Weekly"} homeschool teaching board`} persistenceKey={`${props.mode}:${props.scopeId}`} items={items} initialView={{ x: -415, y: -160, zoom: .76 }} overviewView={{ x: -25, y: -105, zoom: .48 }} homeItemId="schedule" focusRequest={focusedLesson && props.mode === "week" ? { id: "lesson", key: focusKey } : null} layoutPersistence={{ familyId: props.familyId, surface: "week", scopeKey: props.scopeId, layoutVersion: 2, positions: layout?.layoutVersion === 2 ? layout.positions : undefined }} onCameraChange={(camera: SpatialCameraState) => { if (camera.level !== "item" || camera.id !== "lesson") setFocusedLesson(null); }} toolbar={toolbar} briefing={props.briefing} assistant={<div className="spatial-assistant-surface">{props.capture}</div>} />;
 }
 
 function WeekItem({ item, onOpen }: { item: AssignmentDTO; onOpen: () => void }) {
-  return <button type="button" draggable onDragStart={(event) => startAssignmentDrag(event, item)} className={`teacher-week-item subject-${subjectTone(item.subject)} ${item.sourceKind === "practice" ? "supplemental" : ""} ${item.status === "completed" ? "completed" : ""}`} onClick={onOpen}><span>{item.subject}</span><strong>{item.title}</strong><small>{item.sourceKind === "practice" ? "Practice · " : ""}{item.estimatedMinutes ?? 0} min</small>{item.status === "completed" ? <Check size={12} /> : null}</button>;
+  return <button type="button" draggable onDragStart={(event) => startAssignmentDrag(event, item)} className={`teacher-week-item subject-${subjectTone(item.subject)} ${item.sourceKind === "practice" ? "supplemental" : ""} ${item.status === "completed" ? "completed" : ""}`} onClick={onOpen}><span>{item.subject}</span><strong>{item.title}</strong><small>{item.sourceKind === "practice" ? "Practice · " : ""}{item.estimatedMinutes ?? 0} min</small><ParentSupportLabel assignment={item} />{item.status === "completed" ? <Check size={12} /> : null}</button>;
+}
+
+function WeekItems({ items, onOpen }: { items: AssignmentDTO[]; onOpen: (item: AssignmentDTO) => void }) {
+  const active = items.filter((item) => item.status !== "completed");
+  const completed = items.filter((item) => item.status === "completed");
+  return <>{active.map((item) => <WeekItem item={item} onOpen={() => onOpen(item)} key={item.id} />)}{completed.length ? <details className="teacher-week-completed"><summary><Check size={12} />{completed.length} complete</summary><div>{completed.map((item) => <WeekItem item={item} onOpen={() => onOpen(item)} key={item.id} />)}</div></details> : null}</>;
 }
 
 function AssignmentRow({ item, busy, onUpdate, onSubmit, onAdjust }: { item: AssignmentDTO; busy: boolean; onUpdate: (item: AssignmentDTO, status: "doing" | "completed" | "planned" | "skipped") => void; onSubmit: (item: AssignmentDTO) => void; onAdjust?: (item: AssignmentDTO) => void }) {
   return <motion.article layout className={`ops-assignment ${item.status}`}>
     <button type="button" className="assignment-state" onClick={() => onUpdate(item, item.status === "completed" ? "planned" : "completed")} disabled={busy} aria-label={item.status === "completed" ? `Reopen ${item.title}` : `Complete ${item.title}`}>{item.status === "completed" ? <Check size={15} /> : <span />}</button>
-    <div><p><span>{item.subject}</span>{item.scheduledTime ? <small>{formatTime(item.scheduledTime)}</small> : null}{item.estimatedMinutes ? <small>{item.estimatedMinutes} min</small> : null}</p><strong>{item.title}</strong>{item.instructions ? <em>{item.instructions}</em> : null}</div>
+    <div><p><span>{item.subject}</span>{item.scheduledTime ? <small>{formatTime(item.scheduledTime)}</small> : null}{item.estimatedMinutes ? <small>{item.estimatedMinutes} min</small> : null}<ParentSupportLabel assignment={item} /></p><strong>{item.title}</strong>{item.instructions ? <em>{item.instructions}</em> : null}</div>
     <span className={`status-word ${item.status}`}>{statusLabel(item.status)}</span>
     <div className="assignment-actions">{item.status !== "needs_review" && item.status !== "submitted" ? <button type="button" onClick={() => onSubmit(item)}><FileCheck2 size={12} />Add work</button> : null}{onAdjust && (item.status === "planned" || item.status === "doing") ? <button type="button" onClick={() => onAdjust(item)} disabled={busy}><RotateCcw size={12} />Not finished</button> : null}</div>
   </motion.article>;
 }
 
-function AssignmentsSurface(props: { familyId: string; studentId: string; students: StudentDTO[]; enabledWeekdays: number[]; units: CurriculumUnitDTO[]; assignments: AssignmentDTO[]; busy: string | null; setBusy: (value: string | null) => void; setNotice: (value: string | null) => void; showCurriculum: boolean; setShowCurriculum: (value: boolean) => void; onSubmit: (item: AssignmentDTO) => void; onUpdate: (item: AssignmentDTO, status: "doing" | "completed" | "planned" | "skipped") => void }) {
+function AssignmentsSurface(props: { familyId: string; studentId: string; selectedUnitId: string | null; nextCursor: string | null; navigationPending: boolean; navigate: (href: string) => void; students: StudentDTO[]; enabledWeekdays: number[]; units: CurriculumUnitDTO[]; assignments: AssignmentDTO[]; busy: string | null; setBusy: (value: string | null) => void; setNotice: (value: string | null) => void; showCurriculum: boolean; setShowCurriculum: (value: boolean) => void; onSubmit: (item: AssignmentDTO) => void; onUpdate: (item: AssignmentDTO, status: "doing" | "completed" | "planned" | "skipped") => Promise<boolean> }) {
   const router = useRouter();
   const isFamilyView = props.studentId === "all";
   const [draftUnit, setDraftUnit] = useState<CurriculumUnitDTO | null>(null);
-  const [selectedUnitId, setSelectedUnitId] = useState<string | null>(props.units[0]?.id ?? null);
   const [frequencyOverrides, setFrequencyOverrides] = useState<Record<string, number>>({});
-  const selectedUnit = props.units.find((unit) => unit.id === selectedUnitId) ?? props.units[0] ?? null;
-  const visibleAssignments = selectedUnit ? props.assignments.filter((item) => item.curriculumUnitId === selectedUnit.id) : props.assignments.filter((item) => !item.curriculumUnitId);
+  const [visibleAssignments, setVisibleAssignments] = useState(() => dedupeAssignmentsById(props.assignments));
+  const [statusOverrides, setStatusOverrides] = useState<Record<string, AssignmentDTO["status"]>>({});
+  const [nextCursor, setNextCursor] = useState(props.nextCursor);
+  const [pageState, setPageState] = useState<"idle" | "loading" | "error">("idle");
+  const selectedUnit = props.units.find((unit) => unit.id === props.selectedUnitId) ?? null;
+  const displayedAssignments = reconcileAssignmentPage(visibleAssignments, props.assignments).map((item) => statusOverrides[item.id] ? { ...item, status: statusOverrides[item.id] } : item);
   function openCurriculum(unit: CurriculumUnitDTO | null) { setDraftUnit(unit); props.setShowCurriculum(true); }
   function closeCurriculum() { props.setShowCurriculum(false); setDraftUnit(null); }
+  function selectUnit(unit: CurriculumUnitDTO) { props.navigate(assignmentsViewHref(props.studentId, unit.id)); }
+  async function loadMore() {
+    if (!selectedUnit || !nextCursor || pageState === "loading") return;
+    setPageState("loading");
+    const params = new URLSearchParams({ familyId: props.familyId, curriculumUnitId: selectedUnit.id, cursor: nextCursor, limit: "50" });
+    try {
+      const response = await fetch(`/api/assignments?${params.toString()}`);
+      const result = await response.json() as { assignments?: AssignmentDTO[]; nextCursor?: string | null; error?: string };
+      if (!response.ok || !result.assignments || !("nextCursor" in result)) throw new Error(result.error ?? "Klio could not load more lessons.");
+      setVisibleAssignments((current) => dedupeAssignmentsById([...reconcileAssignmentPage(current, props.assignments), ...result.assignments!]));
+      setNextCursor(result.nextCursor ?? null);
+      setPageState("idle");
+    } catch {
+      setPageState("error");
+    }
+  }
+  async function updateCourseAssignment(item: AssignmentDTO, status: "doing" | "completed" | "planned" | "skipped") {
+    setStatusOverrides((current) => ({ ...current, [item.id]: status }));
+    const saved = await props.onUpdate(item, status);
+    if (!saved) setStatusOverrides((current) => { const next = { ...current }; delete next[item.id]; return next; });
+  }
   async function addCurriculum(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault(); const form = event.currentTarget; const data = new FormData(form); props.setBusy("curriculum");
     const response = await fetch("/api/curriculum", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ curriculumUnitId: draftUnit?.id ?? null, familyId: props.familyId, studentId: draftUnit?.studentId ?? props.studentId, subject: data.get("subject"), title: data.get("title"), sequenceLabel: data.get("sequenceLabel"), startSequence: Number(data.get("startSequence")), count: Number(data.get("count")), startDate: data.get("startDate"), weekdays: data.getAll("weekdays").map(Number), scheduledTime: data.get("scheduledTime") || null, estimatedMinutes: Number(data.get("estimatedMinutes")), weeklyFrequency: Number(data.get("weeklyFrequency")), curriculumUrl: data.get("curriculumUrl") || null }) });
-    const result = await response.json(); props.setBusy(null);
+    const result = await response.json() as { assignments?: AssignmentDTO[]; unit?: { id: string; subject: string }; error?: string }; props.setBusy(null);
     if (!response.ok) return props.setNotice(result.error ?? "Klio could not add that curriculum.");
-    closeCurriculum(); props.setNotice(`${result.assignments.length} ${result.unit.subject} assignments added.`); router.refresh(); form.reset();
+    if (!result.unit || !result.assignments) return props.setNotice("Klio could not confirm the curriculum that was added.");
+    closeCurriculum(); props.setNotice(`${result.assignments.length} ${result.unit.subject} assignments added.`);
+    if (selectedUnit?.id === result.unit.id) router.refresh();
+    else props.navigate(assignmentsViewHref(props.studentId, result.unit.id));
+    form.reset();
   }
   async function updateFrequency(unit: CurriculumUnitDTO, weeklyFrequency: number) {
     props.setBusy(`rhythm-${unit.id}`); props.setNotice(null);
@@ -727,21 +971,19 @@ function AssignmentsSurface(props: { familyId: string; studentId: string; studen
   }
   return <div className="assignments-layout">
     <aside className="curriculum-index"><header><span>Curriculum</span>{!isFamilyView ? <button type="button" onClick={() => openCurriculum(null)}><Plus size={13} />Add once</button> : null}</header>{props.units.length ? props.units.map((unit) => {
-      const items = props.assignments.filter((item) => item.curriculumUnitId === unit.id);
-      const completed = items.filter((item) => item.status === "completed").length;
       const active = selectedUnit?.id === unit.id;
       return <section className={active ? "active" : ""} key={unit.id}>
         <p>{isFamilyView ? `${props.students.find((student) => student.id === unit.studentId)?.displayName ?? "Learner"} · ${unit.subject}` : unit.subject}</p>
-        <button className="curriculum-unit-select" type="button" onClick={() => setSelectedUnitId(unit.id)}>{unit.title}<ChevronRight size={11} /></button>
+        <button className="curriculum-unit-select" type="button" onClick={() => selectUnit(unit)} disabled={props.navigationPending} aria-current={active ? "page" : undefined}>{unit.title}<ChevronRight size={11} /></button>
         {active ? <div className="curriculum-unit-detail">
           <label className="curriculum-rhythm"><span>Teach</span><select aria-label={`${unit.subject} times per week`} value={frequencyOverrides[unit.id] ?? unit.weeklyFrequency} onChange={(event) => void updateFrequency(unit, Number(event.target.value))} disabled={props.busy === `rhythm-${unit.id}`}>{[1,2,3,4,5,6,7].map((frequency) => <option value={frequency} key={frequency}>{frequency}× / week</option>)}</select></label>
-          <span>{items.length ? `${completed} of ${items.length} completed` : "Ready for Klio to plan"}</span>
-          <i><b style={{ width: `${items.length ? completed / items.length * 100 : 0}%` }} /></i>
-          <button type="button" onClick={() => openCurriculum(unit)}>{items.length ? "Add more lessons" : "Schedule lessons"}<ChevronRight size={11} /></button>
+          <span>{unit.assignmentCount ? `${unit.completedCount} of ${unit.assignmentCount} completed` : "Ready for Klio to plan"}</span>
+          <i><b style={{ width: `${unit.assignmentCount ? unit.completedCount / unit.assignmentCount * 100 : 0}%` }} /></i>
+          <button type="button" onClick={() => openCurriculum(unit)}>{unit.assignmentCount ? "Add more lessons" : "Schedule lessons"}<ChevronRight size={11} /></button>
         </div> : null}
       </section>;
     }) : <div className="curriculum-empty"><strong>Add each curriculum once.</strong><span>Klio creates the numbered assignments and keeps their order when the week changes.</span></div>}</aside>
-    <main className="assignment-library"><header><div><span>{selectedUnit ? `${isFamilyView ? `${props.students.find((student) => student.id === selectedUnit.studentId)?.displayName ?? "Learner"} · ` : ""}${selectedUnit.subject}` : "Other work"}</span><strong>{selectedUnit?.title ?? "Assignments without curriculum"}</strong><small>{visibleAssignments.filter((item) => item.status !== "completed" && item.status !== "skipped").length} active</small></div>{!isFamilyView ? <button type="button" onClick={() => openCurriculum(null)}><Plus size={14} />Add curriculum</button> : null}</header><div>{visibleAssignments.map((item) => <AssignmentRow item={item} busy={props.busy === item.id} onUpdate={props.onUpdate} onSubmit={props.onSubmit} key={item.id} />)}</div></main>
+    <main className="assignment-library"><header><div><span>{selectedUnit ? `${isFamilyView ? `${props.students.find((student) => student.id === selectedUnit.studentId)?.displayName ?? "Learner"} · ` : ""}${selectedUnit.subject}` : "Other work"}</span><strong>{selectedUnit?.title ?? "Choose a curriculum"}</strong>{selectedUnit ? <small>{selectedUnit.assignmentCount} total · {selectedUnit.completedCount} completed · {selectedUnit.activeCount} active</small> : null}</div>{!isFamilyView ? <button type="button" onClick={() => openCurriculum(null)}><Plus size={14} />Add curriculum</button> : null}</header><div>{displayedAssignments.map((item) => <AssignmentRow item={item} busy={props.busy === item.id} onUpdate={(assignment, status) => void updateCourseAssignment(assignment, status)} onSubmit={props.onSubmit} key={item.id} />)}</div>{selectedUnit && (nextCursor || pageState === "error") ? <div className="assignment-page-actions">{pageState === "error" ? <p role="alert">Klio could not load more lessons. Your loaded lessons are still here.</p> : <p role="status" aria-live="polite">{pageState === "loading" ? "Loading more lessons…" : `${displayedAssignments.length} of ${selectedUnit.assignmentCount} lessons loaded`}</p>}<button type="button" onClick={() => void loadMore()} disabled={pageState === "loading"}>{pageState === "loading" ? <><LoaderCircle size={14} className="spin" />Loading…</> : pageState === "error" ? "Try loading again" : "Load more lessons"}</button></div> : null}</main>
     <AnimatePresence>{props.showCurriculum ? <motion.form key={draftUnit?.id ?? "new"} className="curriculum-drawer" onSubmit={addCurriculum} initial={{ opacity: 0, x: 24 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 24 }}><header><div><span>{draftUnit ? "Curriculum ready" : "New curriculum"}</span><h2>{draftUnit ? "Schedule the next lessons" : "Add the sequence once"}</h2><p>{draftUnit ? "This course was added during learner setup. Choose when its lessons begin." : "Klio will create the next assignments on your learning days."}</p></div><button type="button" onClick={closeCurriculum} aria-label="Close"><X size={17} /></button></header><div className="curriculum-fields"><label><span>Curriculum or course</span><input name="title" required placeholder="Algebra I" defaultValue={draftUnit?.title ?? ""} /></label><label><span>Subject</span><input name="subject" required placeholder="Math" defaultValue={draftUnit?.subject ?? ""} /></label><label><span>Numbering</span><select name="sequenceLabel" defaultValue={draftUnit?.sequenceLabel ?? "Lesson"}><option>Lesson</option><option>Unit</option><option>Chapter</option><option>Module</option></select></label><div className="field-pair"><label><span>Start at</span><input name="startSequence" type="number" min="1" defaultValue={draftUnit?.nextSequenceNumber ?? 1} required /></label><label><span>How many</span><input name="count" type="number" min="1" max="40" defaultValue="10" required /></label></div><label><span>First date</span><input name="startDate" type="date" defaultValue={today()} required /></label><fieldset><legend>Learning days</legend>{[[1,"Mon"],[2,"Tue"],[3,"Wed"],[4,"Thu"],[5,"Fri"],[6,"Sat"],[0,"Sun"]].map(([value,label]) => <label key={value}><input type="checkbox" name="weekdays" value={value} defaultChecked={props.enabledWeekdays.includes(Number(value))} disabled={!props.enabledWeekdays.includes(Number(value))} /><span>{label}</span></label>)}</fieldset><small>Enable additional learning days in the learner’s settings first.</small><label><span>Times per week</span><select name="weeklyFrequency" defaultValue={Math.min(draftUnit?.weeklyFrequency ?? 5, props.enabledWeekdays.length)}>{Array.from({ length: props.enabledWeekdays.length }, (_, index) => index + 1).map((frequency) => <option value={frequency} key={frequency}>{frequency}× per week</option>)}</select></label><div className="field-pair"><label><span>Preferred minutes</span><input name="estimatedMinutes" type="number" min="5" defaultValue={draftUnit?.defaultMinutes ?? 40} required /></label><label><span>Time</span><input name="scheduledTime" type="time" /></label></div><label><span>Reference link (Klio won’t open it)</span><input name="curriculumUrl" type="url" placeholder="Optional HTTP(S) reference" defaultValue={draftUnit?.curriculumUrl ?? ""} /></label></div><footer><button type="button" onClick={closeCurriculum}>Cancel</button><button type="submit" disabled={props.busy === "curriculum"}>{props.busy === "curriculum" ? "Adding…" : "Create assignments"}</button></footer></motion.form> : null}</AnimatePresence>
   </div>;
 }
@@ -779,16 +1021,20 @@ function reviewMasterySignals(value: unknown): Array<{ skill: string; status: "e
   return value.filter((item): item is { skill: string; status: "emerging" | "developing" | "secure" | "needs-review" } => Boolean(item && typeof item === "object" && "skill" in item && typeof item.skill === "string" && "status" in item && typeof item.status === "string" && statuses.has(item.status)));
 }
 
-function AdjustmentsSurface(props: { assignments: AssignmentDTO[]; students: StudentDTO[]; proposals: AdjustmentDTO[]; planningProposals: PlanningProposalDTO[]; busy: string | null; setBusy: (value: string | null) => void; setNotice: (value: string | null) => void }) {
+function AdjustmentsSurface(props: { assignments: AssignmentDTO[]; students: StudentDTO[]; proposals: AdjustmentDTO[]; planningProposals: PlanningProposalDTO[]; busy: string | null; setBusy: (value: string | null) => void; setNotice: (value: string | null) => void; onUndo: (proposal: AdjustmentDTO) => void; onAcknowledge: (proposal: AdjustmentDTO) => Promise<boolean> }) {
   const router = useRouter();
+  const [acknowledging, setAcknowledging] = useState<string | null>(null);
   async function decide(proposal: AdjustmentDTO, decision: "approve" | "reject") { props.setBusy(proposal.id); const response = await fetch(`/api/adjustments/${proposal.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ decision }) }); const result = await response.json(); props.setBusy(null); if (!response.ok) return props.setNotice(result.error ?? "Klio could not apply that change."); props.setNotice(decision === "approve" ? "The week has been updated." : "The proposed change was declined."); router.refresh(); }
   async function decidePlanning(proposal: PlanningProposalDTO, decision: "approve" | "reject") { props.setBusy(proposal.id); const response = await fetch(`/api/planning-proposals/${proposal.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ decision }) }); const result = await response.json(); props.setBusy(null); if (!response.ok) return props.setNotice(result.error ?? "Klio could not apply that proposal."); props.setNotice(decision === "approve" ? "The approved plan is now part of the family workspace." : "The proposal was declined; current records are unchanged."); router.refresh(); }
+  async function acknowledge(proposal: AdjustmentDTO) { setAcknowledging(proposal.id); await props.onAcknowledge(proposal); setAcknowledging(null); }
   const current = props.proposals.filter((proposal) => proposal.status === "proposed");
+  const completed = props.proposals.filter((proposal) => proposal.status === "applied" && !proposal.acknowledgedAt);
   const planning = props.planningProposals.filter((proposal) => proposal.status === "proposed");
   return <div className="adjustments-list">
     {planning.map((proposal) => <article key={proposal.id}><header><div><span>{props.students.find((student) => student.id === proposal.studentId)?.displayName ?? "Learner"} · {planningKindLabel(proposal.proposalKind)} · {proposal.risk} risk</span><h2>{proposal.title}</h2><p>{proposal.summary}</p></div><Sparkles size={18} /></header><p>{proposal.reason}</p><PlanningChangeSummary proposal={proposal} assignments={props.assignments} /><footer><button type="button" onClick={() => void decidePlanning(proposal, "reject")} disabled={props.busy === proposal.id}>Decline</button><button type="button" onClick={() => void decidePlanning(proposal, "approve")} disabled={props.busy === proposal.id}><Check size={13} />{props.busy === proposal.id ? "Applying…" : proposal.proposalKind === "grade" ? "Return work" : "Approve proposal"}</button></footer></article>)}
     {current.map((proposal) => <article key={proposal.id}><header><div><span>{props.students.find((student) => student.id === proposal.studentId)?.displayName ?? "Learner"} · Proposed for week of {shortDate(proposal.weekStart)}</span><h2>{proposal.summary}</h2><p>{proposal.reason}</p></div><Sparkles size={18} /></header><ol>{proposal.actions.map((action) => { const assignment = props.assignments.find((item) => item.id === action.assignmentId); const before = action.beforeState as { scheduledDate?: string }; const after = action.afterState as { scheduledDate?: string; title?: string; subject?: string }; return <li key={action.id}><span>{action.actionType === "add_practice" ? after.subject ?? "Practice" : assignment?.subject ?? "Practice"}</span><strong>{action.actionType === "add_practice" ? after.title ?? "Focused review" : assignment?.title ?? "Focused review"}</strong><div><s>{before.scheduledDate ? weekday(before.scheduledDate) : "New"}</s><ArrowRight size={12} /><b>{after.scheduledDate ? weekday(after.scheduledDate) : "Unscheduled"}</b></div></li>; })}</ol><footer><button type="button" onClick={() => void decide(proposal, "reject")}>Keep current week</button><button type="button" onClick={() => void decide(proposal, "approve")} disabled={props.busy === proposal.id}><Check size={13} />{props.busy === proposal.id ? "Applying…" : "Approve changes"}</button></footer></article>)}
-    {!planning.length && !current.length ? <div className="review-empty"><RotateCcw size={28} /><span>Proposed changes</span><h2>Nothing is waiting for your decision.</h2><p>Schedule, goal, curriculum, and return-work proposals appear here before they change family records.</p><Link href="/app">Return to this week <ArrowRight size={13} /></Link></div> : null}
+    {completed.map((proposal) => <article key={`completed-${proposal.id}`}><header><div><span>{props.students.find((student) => student.id === proposal.studentId)?.displayName ?? "Learner"} · Schedule updated</span><h2>{proposal.summary}</h2><p>{proposal.reason}</p></div><Check size={18} /></header>{proposal.actions.length ? <ol>{proposal.actions.map((action) => { const assignment = props.assignments.find((item) => item.id === action.assignmentId); const before = action.beforeState as { scheduledDate?: string }; const after = action.afterState as { scheduledDate?: string; title?: string; subject?: string }; return <li key={action.id}><span>{action.actionType === "add_practice" ? after.subject ?? "Practice" : assignment?.subject ?? "Schedule"}</span><strong>{action.actionType === "add_practice" ? after.title ?? "Focused review" : assignment?.title ?? "Scheduled work"}</strong><div><s>{before.scheduledDate ? weekday(before.scheduledDate) : "New"}</s><ArrowRight size={12} /><b>{after.scheduledDate ? weekday(after.scheduledDate) : "Unscheduled"}</b></div></li>; })}</ol> : null}<footer>{proposal.undoStatus === "available" ? <button type="button" onClick={() => props.onUndo(proposal)} disabled={props.busy === proposal.id}><RotateCcw size={13} />{props.busy === proposal.id ? "Undoing…" : "Undo change"}</button> : null}<button type="button" onClick={() => void acknowledge(proposal)} disabled={acknowledging === proposal.id}><Check size={13} />{acknowledging === proposal.id ? "Acknowledging…" : "Acknowledge"}</button></footer></article>)}
+    {!planning.length && !current.length && !completed.length ? <div className="review-empty"><RotateCcw size={28} /><span>Proposed changes</span><h2>Nothing is waiting for your decision.</h2><p>Schedule, goal, curriculum, and return-work proposals appear here before they change family records.</p><Link href="/app">Return to this week <ArrowRight size={13} /></Link></div> : null}
   </div>;
 }
 
@@ -825,7 +1071,27 @@ function longDate(date: string) { return new Date(`${date}T12:00:00Z`).toLocaleD
 function shortDate(date: string) { return new Date(`${date}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" }); }
 function weekRangeLabel(days: string[]) { const first = new Date(`${days[0]}T12:00:00Z`); const last = new Date(`${days.at(-1)}T12:00:00Z`); return `${first.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })} – ${last.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })}`; }
 function formatTime(time: string) { const [hour, minute] = time.split(":").map(Number); return new Date(2000,0,1,hour,minute).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }); }
+function scheduleViewHref(view: "today" | "week" | "month", date: string, scopeId: string) {
+  const params = new URLSearchParams();
+  params.set("date", date);
+  if (scopeId !== "all") params.set("student", scopeId);
+  if (view === "month") params.set("view", "month");
+  return `${view === "today" ? "/app" : "/app/week"}?${params.toString()}`;
+}
+function assignmentsViewHref(scopeId: string, unitId: string | null) {
+  const params = new URLSearchParams();
+  if (scopeId !== "all") params.set("student", scopeId);
+  if (unitId) params.set("unit", unitId);
+  const query = params.toString();
+  return `/app/assignments${query ? `?${query}` : ""}`;
+}
+function reconcileAssignmentPage(local: AssignmentDTO[], serverPage: AssignmentDTO[]) {
+  const serverIds = new Set(serverPage.map((item) => item.id));
+  return dedupeAssignmentsById([...serverPage, ...local.filter((item) => !serverIds.has(item.id))]);
+}
+function formatTimeFromMinutes(minutes: number) { return formatTime(`${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`); }
+function attentionConflicts(assignments: AssignmentDTO[]) { return findParentAttentionConflicts(assignments.map((item) => ({ id: item.id, studentId: item.studentId, scheduledStart: item.scheduledTime, requirement: { mode: item.resolvedAttentionMode, lessonMinutes: item.estimatedMinutes ?? 0, parentMinutes: item.resolvedParentMinutes, inherited: item.attentionInherited, source: item.attentionSource } }))); }
+function dayConflictLabel(assignment: AssignmentDTO, students: StudentDTO[], includeLearner: boolean) { const learner = includeLearner ? students.find((student) => student.id === assignment.studentId)?.displayName : undefined; return learner ? `${learner} · ${assignment.title}` : assignment.title; }
 function addDays(date: string, amount: number) { const value = new Date(`${date}T12:00:00Z`); value.setUTCDate(value.getUTCDate() + amount); return value.toISOString().slice(0,10); }
-function formatMinutes(minutes: number) { const hours = Math.floor(minutes / 60); const remainder = minutes % 60; return [hours ? `${hours} hr` : "", remainder ? `${remainder} min` : ""].filter(Boolean).join(" ") || "No time planned"; }
 function dueLabel(value: string) { return new Date(value).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }); }
 function subjectTone(subject: string) { const value = subject.toLowerCase(); if (/math|algebra|geometry|calculus/.test(value)) return "blue"; if (/science|biology|chemistry|physics/.test(value)) return "green"; if (/history|social|geography/.test(value)) return "gold"; if (/english|language|writing|literature|reading/.test(value)) return "lilac"; if (/art|music/.test(value)) return "rose"; return "neutral"; }

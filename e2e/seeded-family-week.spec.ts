@@ -112,7 +112,7 @@ test("the seeded family uses a readable schedule-centered teaching board", async
 
     await page.goto("/app/records");
     await expect(page.getByRole("heading", { name: "Family progress" })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Klio activity" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Activity" })).toBeVisible();
 
     await page.goto("/app");
     await expect(page.getByRole("heading", { name: "Wednesday, July 15" })).toBeVisible();
@@ -142,7 +142,7 @@ test("the seeded family uses a readable schedule-centered teaching board", async
     await restoredRow.click();
     await restoredRow.getByRole("button", { name: "Hand to Klio" }).click();
     await expect(page.locator(".quiet-assignment-context")).toContainText(firstLesson.title);
-    await expect(page.getByLabel("Hand something to Klio")).toBeFocused();
+    await expect(page.getByRole("textbox", { name: "Hand something to Klio" })).toBeFocused();
     await page.getByRole("button", { name: `Remove ${firstLesson.title}` }).click();
     await expect(page.getByRole("navigation", { name: "Left workspace tabs" })).not.toContainText("Progress");
     await expect(page.getByRole("navigation", { name: "Right workspace tabs" })).not.toContainText("Attention");

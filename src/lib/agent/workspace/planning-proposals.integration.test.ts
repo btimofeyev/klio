@@ -5,7 +5,8 @@ import { createClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
 
 const admin = createClient<Database>(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SECRET_KEY!, { auth: { persistSession: false } });
-let ownerA = ""; let ownerB = ""; let familyA = ""; let familyB = ""; let studentA = ""; let termId = "";
+let ownerA = ""; let ownerB = ""; let familyA = ""; let familyB = "";
+let studentA = ""; let studentB = ""; let studentC = ""; let termId = ""; let sharedTurnId = "";
 
 beforeAll(async () => {
   const [a, b] = await Promise.all([
@@ -17,10 +18,26 @@ beforeAll(async () => {
   if (families.error) throw families.error;
   familyA = families.data.find((item) => item.name === "Proposal A")!.id; familyB = families.data.find((item) => item.name === "Proposal B")!.id;
   await admin.from("family_members").insert([{ family_id: familyA, user_id: ownerA, role: "owner" }, { family_id: familyB, user_id: ownerB, role: "owner" }]);
-  const student = await admin.from("students").insert({ family_id: familyA, display_name: "Proposal learner" }).select("id").single();
-  if (student.error) throw student.error; studentA = student.data.id;
+  const students = await admin.from("students").insert([
+    { family_id: familyA, display_name: "Proposal learner A" },
+    { family_id: familyA, display_name: "Proposal learner B" },
+    { family_id: familyA, display_name: "Proposal learner C" },
+  ]).select("id,display_name");
+  if (students.error) throw students.error;
+  studentA = students.data.find((item) => item.display_name === "Proposal learner A")!.id;
+  studentB = students.data.find((item) => item.display_name === "Proposal learner B")!.id;
+  studentC = students.data.find((item) => item.display_name === "Proposal learner C")!.id;
   const term = await admin.from("academic_terms").insert({ family_id: familyA, created_by: ownerA, name: "Proposal term", starts_on: "2026-08-01", ends_on: "2027-05-31", status: "active" }).select("id").single();
   if (term.error) throw term.error; termId = term.data.id;
+  const thread = await admin.from("agent_threads").insert({ family_id: familyA, provider: "responses" }).select("id").single();
+  if (thread.error) throw thread.error;
+  const snapshotVersion = await version();
+  const turn = await admin.from("agent_turns").insert({
+    thread_id: thread.data.id, family_id: familyA, requested_by: ownerA, trigger: "parent_message", goal: "weekly_plan",
+    status: "completed", outcome: "completed", idempotency_key: `proposal-turn:${crypto.randomUUID()}`,
+    initial_snapshot_version: snapshotVersion, current_snapshot_version: snapshotVersion, snapshot_hash: "0".repeat(64),
+  }).select("id").single();
+  if (turn.error) throw turn.error; sharedTurnId = turn.data.id;
 });
 
 afterAll(async () => {
@@ -62,5 +79,60 @@ describe("stale-safe planning proposals", () => {
     await admin.from("assignments").update({ scheduled_date: "2026-08-20" }).eq("id", staleTarget.id);
     expect((await admin.rpc("apply_planning_proposal", { p_proposal_id: stale.data.id, p_actor_id: ownerA })).data).toMatchObject({ status: "expired", error: "PROPOSAL_SNAPSHOT_STALE" });
     expect((await admin.from("assignments").select("scheduled_date").eq("id", staleTarget.id).single()).data?.scheduled_date).toBe("2026-08-20");
+  });
+
+  it("keeps same-turn proposals for different learners independently approvable", async () => {
+    const assignments = await admin.from("assignments").insert([
+      { family_id: familyA, student_id: studentA, created_by: ownerA, title: "Learner A move", subject: "Math", scheduled_date: "2026-08-17", estimated_minutes: 30 },
+      { family_id: familyA, student_id: studentB, created_by: ownerA, title: "Learner B move", subject: "Science", scheduled_date: "2026-08-17", estimated_minutes: 35 },
+      { family_id: familyA, student_id: studentC, created_by: ownerA, title: "Learner C move", subject: "History", scheduled_date: "2026-08-17", estimated_minutes: 40 },
+    ]).select("id,student_id,version");
+    if (assignments.error) throw assignments.error;
+    const snapshotVersion = await version();
+    const proposals = await admin.from("planning_proposals").insert(assignments.data.map((assignment, index) => ({
+      family_id: familyA,
+      student_id: assignment.student_id,
+      agent_turn_id: sharedTurnId,
+      proposal_kind: "weekly_plan",
+      action_name: "prepare_week",
+      risk: "moderate",
+      title: `Move learner ${index + 1} work`,
+      summary: "Move unfinished work to tomorrow.",
+      reason: "The parent requested a tomorrow move.",
+      proposed_changes: {
+        assignmentIds: [assignment.id],
+        changes: [{
+          assignmentId: assignment.id,
+          scheduledDate: "2026-08-18",
+          previousScheduledDate: "2026-08-17",
+          previousEstimatedMinutes: 30 + index * 5,
+          previousVersion: assignment.version,
+        }],
+      },
+      snapshot_version: snapshotVersion,
+      idempotency_key: `sibling:${crypto.randomUUID()}`,
+    }))).select("id");
+    if (proposals.error) throw proposals.error;
+
+    const first = await admin.rpc("apply_planning_proposal", { p_proposal_id: proposals.data[0].id, p_actor_id: ownerA });
+    expect(first.error).toBeNull();
+    expect(first.data).toMatchObject({ status: "applied", siblingBatch: false });
+
+    const second = await admin.rpc("apply_planning_proposal", { p_proposal_id: proposals.data[1].id, p_actor_id: ownerA });
+    expect(second.error).toBeNull();
+    expect(second.data).toMatchObject({ status: "applied", siblingBatch: true });
+
+    // Proposals incorrectly expired by the previous implementation can be
+    // recovered only when their own targets are still untouched.
+    const expired = await admin.from("planning_proposals").update({ status: "expired" }).eq("id", proposals.data[2].id);
+    if (expired.error) throw expired.error;
+    const third = await admin.rpc("apply_planning_proposal", { p_proposal_id: proposals.data[2].id, p_actor_id: ownerA });
+    expect(third.error).toBeNull();
+    expect(third.data).toMatchObject({ status: "applied", siblingBatch: true });
+
+    const moved = await admin.from("assignments").select("scheduled_date").in("id", assignments.data.map((assignment) => assignment.id));
+    expect(moved.error).toBeNull();
+    expect(moved.data).toHaveLength(3);
+    expect(moved.data?.every((assignment) => assignment.scheduled_date === "2026-08-18")).toBe(true);
   });
 });

@@ -12,6 +12,8 @@ import { refreshAssignmentReviewDraft } from "@/lib/assignments/draft-review";
 import { writeAuditEvent } from "@/lib/audit/write-audit-event";
 import { policyDecision, policyForPreset, sanitizePolicy, type AutonomyPreset } from "@/lib/autonomy/policy";
 import { assertPracticeQuality } from "@/lib/practice/quality";
+import { loadAvailabilityByDate } from "@/lib/schedule/availability-data";
+import { assertScheduleChangesFit } from "@/lib/schedule/placement-validation";
 
 export async function callWorkspaceTool<K extends WorkspaceToolName>(input: { authorization: string | null; name: K; arguments: unknown }) {
   const token = input.authorization?.match(/^Bearer (.+)$/)?.[1];
@@ -258,20 +260,22 @@ async function executeBoundedDomainTool(input: {
     return { outcome: "completed", assignmentId: args.assignmentId, status: args.status };
   }
   if (input.name === "create_assignment" || input.name === "create_schedule_block") {
-    const args = input.args as WorkspaceToolArguments["create_assignment"];
+    const args = input.args as WorkspaceToolArguments["create_assignment"] | WorkspaceToolArguments["create_schedule_block"];
     await requireStudentAndCurriculum(input.familyId, args.studentId, args.curriculumUnitId ?? null);
+    const scheduledTime = "scheduledTime" in args ? args.scheduledTime ?? null : null;
+    if (args.scheduledDate) await assertScheduleChangesFit({ supabase: admin, familyId: input.familyId, studentId: args.studentId, changes: [{ scheduledDate: args.scheduledDate, estimatedMinutes: args.estimatedMinutes ?? 30, scheduledTime }] });
     const created = await admin.from("assignments").insert({
       family_id: input.familyId, student_id: args.studentId, curriculum_unit_id: args.curriculumUnitId ?? null,
       created_by: input.actorId, created_by_type: "agent", title: args.title, subject: args.subject,
       instructions: args.instructions ?? null, status: "planned", scheduled_date: args.scheduledDate ?? null,
-      due_at: args.dueAt ?? null, estimated_minutes: args.estimatedMinutes ?? null, source_kind: args.sourceKind,
+      scheduled_time: scheduledTime, due_at: args.dueAt ?? null, estimated_minutes: args.estimatedMinutes ?? null, source_kind: args.sourceKind,
     }).select("id,student_id,title,subject,scheduled_date,estimated_minutes").single();
     if (created.error) throw created.error;
     if (created.data.scheduled_date) {
       const placement = await admin.from("weekly_plan_items").insert({
         family_id: input.familyId, student_id: args.studentId, assignment_id: created.data.id, artifact_id: null,
         title: args.title, description: args.instructions ?? null, subject: args.subject,
-        scheduled_date: created.data.scheduled_date, estimated_minutes: args.estimatedMinutes ?? null, source_kind: "klio",
+        scheduled_date: created.data.scheduled_date, scheduled_time: scheduledTime, estimated_minutes: args.estimatedMinutes ?? null, source_kind: "klio",
       });
       if (placement.error) throw placement.error;
     }
@@ -363,26 +367,77 @@ async function proposeScheduleChange(input: {
   const admin = createAdminClient();
   if (input.name === "move_schedule_work") {
     const args = input.args as WorkspaceToolArguments["move_schedule_work"];
-    const assignments = await admin.from("assignments").select("id,student_id,title,scheduled_date").eq("family_id", input.familyId).in("id", args.assignmentIds);
+    const assignments = await admin.from("assignments").select("id,student_id,title,scheduled_date,scheduled_time,estimated_minutes,version").eq("family_id", input.familyId).in("id", args.assignmentIds);
     if (assignments.error) throw assignments.error;
     if (assignments.data.length !== new Set(args.assignmentIds).size) throw new Error("ASSIGNMENT_NOT_FOUND");
     const studentIds = [...new Set(assignments.data.map((item) => item.student_id))];
     if (studentIds.length !== 1) throw new Error("ONE_LEARNER_PER_SCHEDULE_ADJUSTMENT");
-    return createPlanningProposal({ familyId: input.familyId, actorId: input.actorId, turnId: input.turnId, snapshotVersion: input.snapshotVersion, idempotencyKey: input.idempotencyKey, studentId: studentIds[0], kind: "weekly_plan", actionName: "prepare_week", risk: "moderate", title: "Move scheduled work", summary: `Move ${assignments.data.length} assignment${assignments.data.length === 1 ? "" : "s"} to ${args.targetDate}.`, reason: args.reason, changes: { assignmentIds: assignments.data.map((item) => item.id), changes: assignments.data.map((item) => ({ assignmentId: item.id, scheduledDate: args.targetDate, previousScheduledDate: item.scheduled_date })) } });
+    await assertScheduleChangesFit({ supabase: admin, familyId: input.familyId, studentId: studentIds[0], changes: assignments.data.map((assignment) => ({ assignmentId: assignment.id, scheduledDate: args.targetDate, estimatedMinutes: assignment.estimated_minutes ?? 30, scheduledTime: assignment.scheduled_time })) });
+    return createPlanningProposal({ familyId: input.familyId, actorId: input.actorId, turnId: input.turnId, snapshotVersion: input.snapshotVersion, idempotencyKey: input.idempotencyKey, studentId: studentIds[0], kind: "weekly_plan", actionName: "prepare_week", risk: "moderate", title: "Move scheduled work", summary: `Move ${assignments.data.length} assignment${assignments.data.length === 1 ? "" : "s"} to ${args.targetDate}.`, reason: args.reason, changes: { assignmentIds: assignments.data.map((item) => item.id), changes: assignments.data.map((item) => ({ assignmentId: item.id, scheduledDate: args.targetDate, previousScheduledDate: item.scheduled_date, previousVersion: item.version })) } });
   }
   if (input.name === "resize_schedule_work") {
     const args = input.args as WorkspaceToolArguments["resize_schedule_work"];
-    const assignment = await admin.from("assignments").select("id,student_id,title,estimated_minutes").eq("family_id", input.familyId).eq("id", args.assignmentId).maybeSingle();
+    const assignment = await admin.from("assignments").select("id,student_id,title,scheduled_date,scheduled_time,estimated_minutes").eq("family_id", input.familyId).eq("id", args.assignmentId).maybeSingle();
     if (assignment.error) throw assignment.error;
     if (!assignment.data) throw new Error("ASSIGNMENT_NOT_FOUND");
+    if (assignment.data.scheduled_date) await assertScheduleChangesFit({ supabase: admin, familyId: input.familyId, studentId: assignment.data.student_id, changes: [{ assignmentId: assignment.data.id, scheduledDate: assignment.data.scheduled_date, estimatedMinutes: args.estimatedMinutes, scheduledTime: assignment.data.scheduled_time }] });
     return createPlanningProposal({ familyId: input.familyId, actorId: input.actorId, turnId: input.turnId, snapshotVersion: input.snapshotVersion, idempotencyKey: input.idempotencyKey, studentId: assignment.data.student_id, kind: "schedule_resize", actionName: "resize_schedule_work", risk: "moderate", title: `Resize ${assignment.data.title}`, summary: `Change planned duration to ${args.estimatedMinutes} minutes.`, reason: args.reason, targetAssignmentId: assignment.data.id, changes: { before: assignment.data.estimated_minutes, after: args.estimatedMinutes } });
   }
   const args = input.args as WorkspaceToolArguments["prepare_planning_changes"];
   await requireStudentAndTerm(input.familyId, args.studentId, null);
-  const owned = args.assignmentIds.length ? await admin.from("assignments").select("id").eq("family_id", input.familyId).eq("student_id", args.studentId).in("id", args.assignmentIds) : { data: [], error: null };
+  const owned = args.assignmentIds.length ? await admin.from("assignments").select("id,scheduled_date,scheduled_time,estimated_minutes,version").eq("family_id", input.familyId).eq("student_id", args.studentId).in("id", args.assignmentIds) : { data: [], error: null };
   if (owned.error) throw owned.error;
   if (owned.data.length !== new Set(args.assignmentIds).size) throw new Error("ASSIGNMENT_NOT_FOUND");
-  return createPlanningProposal({ familyId: input.familyId, actorId: input.actorId, turnId: input.turnId, snapshotVersion: input.snapshotVersion, idempotencyKey: input.idempotencyKey, studentId: args.studentId, kind: args.scope === "week" ? "weekly_plan" : "term_plan", actionName: args.scope === "week" ? "prepare_week" : "prepare_term", risk: args.scope === "week" ? "moderate" : "high", title: args.title, summary: args.summary, reason: args.reason, changes: { assignmentIds: args.assignmentIds, changes: args.changes } });
+  const ownedById = new Map(owned.data.map((assignment) => [assignment.id, assignment]));
+  if (args.changes.some((change) => !ownedById.has(change.assignmentId))) throw new Error("ASSIGNMENT_NOT_FOUND");
+  const changes = args.changes.map((change) => {
+    const assignment = ownedById.get(change.assignmentId)!;
+    return {
+      ...change,
+      previousScheduledDate: assignment.scheduled_date,
+      previousEstimatedMinutes: assignment.estimated_minutes,
+      previousVersion: assignment.version,
+    };
+  });
+  await assertScheduleChangesFit({
+    supabase: admin,
+    familyId: input.familyId,
+    studentId: args.studentId,
+    changes: changes.flatMap((change) => {
+      const assignment = ownedById.get(change.assignmentId)!;
+      const scheduledDate = change.scheduledDate === undefined ? assignment.scheduled_date : change.scheduledDate;
+      if (!scheduledDate) return [];
+      return [{ assignmentId: change.assignmentId, scheduledDate, estimatedMinutes: change.estimatedMinutes ?? assignment.estimated_minutes ?? 30, scheduledTime: assignment.scheduled_time }];
+    }),
+  });
+  // A model-authored partial move must never be allowed to claim that an
+  // overloaded day is fixed. When the source learner-day is already above the
+  // authoritative capacity, hand the whole date to the deterministic host
+  // rebalancer. It computes every affected assignment, preserves sequence,
+  // applies the safe change with undo, and reports the measured after-load.
+  const sourceDates = [...new Set(changes.flatMap((change) =>
+    change.previousScheduledDate && change.scheduledDate !== change.previousScheduledDate ? [change.previousScheduledDate] : [],
+  ))].sort();
+  if (sourceDates.length) {
+    const student = await admin.from("students").select("daily_capacity_minutes,schedule_preferences").eq("family_id", input.familyId).eq("id", args.studentId).single();
+    if (student.error) throw student.error;
+    const family = await admin.from("families").select("available_days").eq("id", input.familyId).single();
+    if (family.error) throw family.error;
+    const sourceAvailability = await loadAvailabilityByDate({ supabase: admin, familyId: input.familyId, studentId: args.studentId, dailyCapacityMinutes: student.data.daily_capacity_minutes, schedulePreferences: student.data.schedule_preferences, familyLearningDays: family.data.available_days, dates: sourceDates });
+    for (const sourceDate of sourceDates) {
+      const day = await admin.from("assignments").select("estimated_minutes").eq("family_id", input.familyId).eq("student_id", args.studentId).eq("scheduled_date", sourceDate).neq("status", "skipped");
+      if (day.error) throw day.error;
+      const minutes = day.data.reduce((total, assignment) => total + (assignment.estimated_minutes ?? 0), 0);
+      if (minutes > sourceAvailability[sourceDate].availableMinutes) {
+        return organizeDaySchedule({
+          familyId: input.familyId, studentId: args.studentId, scheduledDate: sourceDate,
+          actorId: input.actorId, agentTurnId: input.turnId, snapshotVersion: input.snapshotVersion,
+          idempotencyKey: input.idempotencyKey,
+        });
+      }
+    }
+  }
+  return createPlanningProposal({ familyId: input.familyId, actorId: input.actorId, turnId: input.turnId, snapshotVersion: input.snapshotVersion, idempotencyKey: input.idempotencyKey, studentId: args.studentId, kind: args.scope === "week" ? "weekly_plan" : "term_plan", actionName: args.scope === "week" ? "prepare_week" : "prepare_term", risk: args.scope === "week" ? "moderate" : "high", title: args.title, summary: args.summary, reason: args.reason, changes: { assignmentIds: args.assignmentIds, changes } });
 }
 
 async function createPracticeRemovalAdjustment(input: {
@@ -504,18 +559,120 @@ async function createParentGroundedPractice(input: {
     if (links.error) throw links.error;
   }
   let approvalRequestId: string | null = null;
+  let practiceSessionId: string | null = null;
+  let scheduleResult: Awaited<ReturnType<typeof scheduleParentGroundedPractice>> | null = null;
   if (approvalRequired) {
     const approval = await admin.from("approval_requests").insert({ family_id: input.familyId, entity_type: "artifact", entity_id: artifact.data.id }).select("id").single();
     if (approval.error) throw approval.error;
     approvalRequestId = approval.data.id;
   } else {
-    await publishPracticeReadyInsight({ familyId: input.familyId, studentId: input.args.studentId, artifactId: artifact.data.id, title: input.args.title, summary: input.args.summary ?? "I made focused practice from your lesson update.", evidenceIds, dedupeKey: `agent-practice:${input.turnId}:${input.idempotencyKey}` });
+    const session = await admin.from("practice_sessions").insert({
+      family_id: input.familyId, student_id: input.args.studentId, artifact_id: artifact.data.id,
+      created_by: input.actorId, spec: input.args.content.practice as Json, status: "ready",
+    }).select("id").single();
+    if (session.error) throw session.error;
+    practiceSessionId = session.data.id;
+    if (input.args.scheduleDate) {
+      scheduleResult = await scheduleParentGroundedPractice({
+        familyId: input.familyId, actorId: input.actorId, turnId: input.turnId,
+        idempotencyKey: `${input.idempotencyKey}:schedule`, studentId: input.args.studentId,
+        artifactId: artifact.data.id, practiceSessionId, title: input.args.title,
+        subject: input.args.content.practice.subject, skillKey: input.args.content.practice.skill_key,
+        scheduledDate: input.args.scheduleDate,
+        estimatedMinutes: input.args.estimatedMinutes ?? Math.min(90, Math.max(10, input.args.content.practice.activities.length * 5)),
+        reason: input.args.rationale ?? input.args.summary ?? "Parent-requested focused practice.",
+      });
+    }
+    await publishPracticeReadyInsight({
+      familyId: input.familyId, studentId: input.args.studentId, artifactId: artifact.data.id,
+      practiceSessionId, proposalId: scheduleResult?.proposalId ?? null,
+      scheduledDate: scheduleResult?.scheduledDate ?? null, undoAvailable: scheduleResult?.undoAvailable ?? false,
+      title: input.args.title,
+      summary: scheduleResult?.scheduleStatus === "applied"
+        ? `${input.args.summary ?? "Focused practice is ready."} It was added to ${input.args.scheduleDate}.`
+        : input.args.summary ?? "I made focused practice from your lesson update.",
+      evidenceIds, dedupeKey: `agent-practice:${input.turnId}:${input.idempotencyKey}`,
+    });
   }
   await writeAuditEvent(admin, { familyId: input.familyId, actorId: input.actorId, actorType: "agent", action: approvalRequired ? "practice.drafted" : "practice.created_automatically", entityType: "artifact", entityId: artifact.data.id, metadata: { policy: decision.level, evidence_ids: evidenceIds } });
-  return { outcome: approvalRequired ? "draft_ready" : "automatic_action", artifactId: artifact.data.id, artifactType: "practice", approvalRequestId, evidenceIds, approved: !approvalRequired };
+  return {
+    outcome: approvalRequired ? "draft_ready" : scheduleResult?.scheduleStatus === "proposed" ? "review_required" : "automatic_action",
+    artifactId: artifact.data.id, artifactType: "practice", practiceSessionId,
+    approvalRequestId, evidenceIds, approved: !approvalRequired,
+    ...(scheduleResult ?? { scheduleStatus: approvalRequired && input.args.scheduleDate ? "awaiting_practice_approval" : "not_requested", scheduledDate: null }),
+  };
 }
 
-async function autonomyDecision(familyId: string, action: "build_supplemental_practice") {
+async function scheduleParentGroundedPractice(input: {
+  familyId: string; actorId: string; turnId: string; idempotencyKey: string; studentId: string;
+  artifactId: string; practiceSessionId: string; title: string; subject: string; skillKey: string;
+  scheduledDate: string; estimatedMinutes: number; reason: string;
+}) {
+  const admin = createAdminClient();
+  const [student, family, policyRow] = await Promise.all([
+    admin.from("students").select("id,daily_capacity_minutes,schedule_preferences").eq("family_id", input.familyId).eq("id", input.studentId).single(),
+    admin.from("families").select("agent_context_version,available_days").eq("id", input.familyId).single(),
+    admin.from("family_autonomy_policies").select("preset,policies").eq("family_id", input.familyId).maybeSingle(),
+  ]);
+  if (student.error ?? family.error ?? policyRow.error) throw student.error ?? family.error ?? policyRow.error;
+  const preset = (policyRow.data?.preset ?? "proactive") as AutonomyPreset;
+  const decision = policyDecision(policyForPreset(preset, sanitizePolicy(policyRow.data?.policies)), "schedule_supplemental_practice");
+  if (decision.denied) return { scheduleStatus: "blocked_by_policy" as const, scheduledDate: null, proposalId: null, assignmentId: null, undoAvailable: false };
+  const availability = await loadAvailabilityByDate({ supabase: admin, familyId: input.familyId, studentId: input.studentId, dailyCapacityMinutes: student.data.daily_capacity_minutes, schedulePreferences: student.data.schedule_preferences, familyLearningDays: family.data.available_days, dates: [input.scheduledDate] });
+  const effectiveMinutes = availability[input.scheduledDate].availableMinutes;
+  if (effectiveMinutes === 0) return { scheduleStatus: "blocked_learning_day" as const, scheduledDate: null, proposalId: null, assignmentId: null, undoAvailable: false };
+  const existingWork = await admin.from("assignments").select("estimated_minutes").eq("family_id", input.familyId).eq("student_id", input.studentId).eq("scheduled_date", input.scheduledDate).neq("status", "skipped");
+  if (existingWork.error) throw existingWork.error;
+  const usedMinutes = existingWork.data.reduce((total, assignment) => total + (assignment.estimated_minutes ?? 0), 0);
+  if (usedMinutes + input.estimatedMinutes > effectiveMinutes) {
+    return { scheduleStatus: "blocked_capacity" as const, scheduledDate: null, proposalId: null, assignmentId: null, undoAvailable: false };
+  }
+  const existing = await admin.from("adjustment_proposals").select("id,status,undo_status").eq("family_id", input.familyId).eq("idempotency_key", input.idempotencyKey).maybeSingle();
+  if (existing.error) throw existing.error;
+  let proposal = existing.data;
+  if (!proposal) {
+    const created = await admin.from("adjustment_proposals").insert({
+      family_id: input.familyId, student_id: input.studentId, agent_turn_id: input.turnId,
+      week_start: input.scheduledDate, reason: input.reason,
+      summary: `Add ${input.estimatedMinutes} minutes of ${input.subject} practice to ${input.scheduledDate}.`,
+      snapshot_version: family.data.agent_context_version, idempotency_key: input.idempotencyKey,
+      trigger_event: { eventKind: "parent_message", practiceSessionId: input.practiceSessionId },
+      policy_decision: { ...decision, preset },
+    }).select("id,status,undo_status").single();
+    if (created.error) throw created.error;
+    proposal = created.data;
+    const action = await admin.from("adjustment_actions").insert({
+      family_id: input.familyId, proposal_id: proposal.id, assignment_id: null, action_type: "add_practice", position: 0,
+      before_state: {}, after_state: {
+        artifactId: input.artifactId, practiceSessionId: input.practiceSessionId,
+        scheduledDate: input.scheduledDate, estimatedMinutes: input.estimatedMinutes,
+        subject: input.subject, skillKey: input.skillKey, title: input.title, reason: input.reason,
+      },
+    });
+    if (action.error) throw action.error;
+  }
+  let status = proposal.status;
+  // This tool is available only on an explicit parent practice-creation turn.
+  // The parent already supplied the scheduling confirmation in that request;
+  // `never` remains a hard boundary and every applied schedule stays undoable.
+  if (status === "proposed") {
+    const applied = await admin.rpc("apply_klio_adjustment", { p_proposal_id: proposal.id, p_actor_id: input.actorId });
+    if (applied.error) throw applied.error;
+    status = applied.data && typeof applied.data === "object" && !Array.isArray(applied.data) && "status" in applied.data ? String(applied.data.status) : "unknown";
+    if (status !== "applied") throw new Error("ADJUSTMENT_SNAPSHOT_STALE");
+  }
+  const action = await admin.from("adjustment_actions").select("after_state").eq("proposal_id", proposal.id).eq("action_type", "add_practice").single();
+  if (action.error) throw action.error;
+  const afterState = action.data.after_state && typeof action.data.after_state === "object" && !Array.isArray(action.data.after_state) ? action.data.after_state as Record<string, unknown> : {};
+  return {
+    scheduleStatus: status === "applied" ? "applied" as const : "proposed" as const,
+    scheduledDate: input.scheduledDate, proposalId: proposal.id,
+    assignmentId: typeof afterState.createdAssignmentId === "string" ? afterState.createdAssignmentId : null,
+    undoAvailable: status === "applied",
+  };
+}
+
+async function autonomyDecision(familyId: string, action: "build_supplemental_practice" | "schedule_supplemental_practice") {
   const admin = createAdminClient();
   const row = await admin.from("family_autonomy_policies").select("preset,policies").eq("family_id", familyId).maybeSingle();
   if (row.error) throw row.error;
@@ -524,13 +681,13 @@ async function autonomyDecision(familyId: string, action: "build_supplemental_pr
   return { preset, decision: policyDecision(policy, action) };
 }
 
-async function publishPracticeReadyInsight(input: { familyId: string; studentId: string; artifactId: string; title: string; summary: string; evidenceIds: string[]; dedupeKey: string }) {
+async function publishPracticeReadyInsight(input: { familyId: string; studentId: string; artifactId: string; practiceSessionId?: string | null; proposalId?: string | null; scheduledDate?: string | null; undoAvailable?: boolean; title: string; summary: string; evidenceIds: string[]; dedupeKey: string }) {
   const admin = createAdminClient();
   const insight = await admin.from("klio_insights").upsert({
     family_id: input.familyId, student_id: input.studentId, kind: "practice_ready",
     title: input.title, summary: input.summary, reason: "A parent handoff or finalized review identified a specific practice need.", priority: 86,
     evidence_refs: input.evidenceIds.map((id) => ({ type: "evidence", id })),
-    action_ref: { type: "practice", artifactId: input.artifactId, approvalRequired: false },
+    action_ref: { type: "practice", artifactId: input.artifactId, practiceSessionId: input.practiceSessionId ?? null, proposalId: input.proposalId ?? null, scheduledDate: input.scheduledDate ?? null, undoAvailable: input.undoAvailable ?? false, approvalRequired: false },
     dedupe_key: input.dedupeKey,
   }, { onConflict: "family_id,dedupe_key" });
   if (insight.error) throw insight.error;

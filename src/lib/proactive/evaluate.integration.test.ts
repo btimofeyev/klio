@@ -100,6 +100,48 @@ describe("proactive operating loop", () => {
     expect((await admin.from("klio_insights").select("id", { count: "exact", head: true }).eq("family_id", familyId).eq("student_id", singleStudentId)).count).toBe(0);
   });
 
+  it("retires a schedule question after its lessons are completed or manually moved", async () => {
+    const sourceDate = "2026-07-24";
+    const lessons = await admin.from("assignments").insert([
+      { family_id: familyId, student_id: singleStudentId, created_by: userId, title: "Reading · Carryover A", subject: "Reading", status: "planned", scheduled_date: sourceDate, estimated_minutes: 20 },
+      { family_id: familyId, student_id: singleStudentId, created_by: userId, title: "Reading · Carryover B", subject: "Reading", status: "planned", scheduled_date: sourceDate, estimated_minutes: 20 },
+      { family_id: familyId, student_id: singleStudentId, created_by: userId, title: "Reading · Carryover C", subject: "Reading", status: "planned", scheduled_date: sourceDate, estimated_minutes: 20 },
+    ]).select("id");
+    if (lessons.error) throw lessons.error;
+    const [first, second, moved] = lessons.data;
+    const completionInsight = await admin.from("klio_insights").insert({
+      family_id: familyId, student_id: singleStudentId, kind: "needs_detail", status: "active",
+      title: "Two lessons need another day", summary: "The current day is full.", reason: "No safe slot.", priority: 93,
+      evidence_refs: [first, second].map((assignment) => ({ type: "assignment", id: assignment.id })),
+      action_ref: { type: "week", date: sourceDate, studentId: singleStudentId, assignmentIds: [first.id, second.id] },
+      dedupe_key: `resolved-by-completion:${crypto.randomUUID()}`,
+    }).select("id").single();
+    if (completionInsight.error) throw completionInsight.error;
+    const moveInsight = await admin.from("klio_insights").insert({
+      family_id: familyId, student_id: singleStudentId, kind: "needs_detail", status: "active",
+      title: "One lesson needs another day", summary: "The current day is full.", reason: "No safe slot.", priority: 93,
+      evidence_refs: [{ type: "assignment", id: moved.id }],
+      action_ref: { type: "week", date: sourceDate, studentId: singleStudentId, assignmentIds: [moved.id] },
+      dedupe_key: `resolved-by-move:${crypto.randomUUID()}`,
+    }).select("id").single();
+    if (moveInsight.error) throw moveInsight.error;
+
+    for (const assignment of [first, second]) {
+      const completedAt = new Date().toISOString();
+      await admin.from("assignments").update({ status: "completed", completed_at: completedAt }).eq("id", assignment.id);
+      const queued = await enqueueProactiveEvaluation({ familyId, studentId: singleStudentId, requestedBy: userId, eventKind: "assignment_completed", entityType: "assignment", entityId: assignment.id, idempotencyKey: `resolve-completed:${assignment.id}:${completedAt}` });
+      await processProactiveEvaluation(queued.evaluation.id);
+      const status = (await admin.from("klio_insights").select("status").eq("id", completionInsight.data.id).single()).data?.status;
+      expect(status).toBe(assignment.id === first.id ? "active" : "superseded");
+    }
+
+    const movedDate = "2026-07-27";
+    await admin.from("assignments").update({ scheduled_date: movedDate }).eq("id", moved.id);
+    const movedEvaluation = await enqueueProactiveEvaluation({ familyId, studentId: singleStudentId, requestedBy: userId, eventKind: "schedule_adjusted", entityType: "assignment", entityId: moved.id, idempotencyKey: `resolve-moved:${moved.id}:${movedDate}` });
+    await processProactiveEvaluation(movedEvaluation.evaluation.id);
+    expect((await admin.from("klio_insights").select("status").eq("id", moveInsight.data.id).single()).data?.status).toBe("superseded");
+  });
+
   it("removes unnecessary supplemental practice after sustained improvement and can restore it", async () => {
     const curriculum = await admin.from("assignments").insert({ family_id: familyId, student_id: improvementStudentId, created_by: userId, title: "Biology · Curriculum lesson", subject: "Biology", source_kind: "curriculum", scheduled_date: "2026-07-21" }).select("id").single();
     if (curriculum.error) throw curriculum.error;
@@ -129,12 +171,58 @@ describe("proactive operating loop", () => {
     const now = new Date("2026-07-13T22:00:00Z");
     await enqueueScheduledFamilyEvaluations(now, familyId);
     await enqueueScheduledFamilyEvaluations(now, familyId);
-    const scheduled = await admin.from("proactive_evaluations").select("id,event_kind,status").eq("family_id", familyId).in("event_kind", ["day_preparation", "day_reconciliation", "weekly_boundary"]);
+    const scheduled = await admin.from("proactive_evaluations").select("id,event_kind,status,idempotency_key").eq("family_id", familyId).in("event_kind", ["day_preparation", "day_reconciliation", "weekly_boundary"]);
     if (scheduled.error) throw scheduled.error;
     expect(scheduled.data.map((item) => item.event_kind).sort()).toEqual(["day_preparation", "day_reconciliation", "weekly_boundary"]);
     const result = await processProactiveEvaluation(scheduled.data[0].id);
     expect(result?.outcome).toBe("no_action");
     expect((await admin.from("klio_insights").select("id", { count: "exact", head: true }).eq("evaluation_id", scheduled.data[0].id)).count).toBe(0);
+    const weekly = scheduled.data.find((item) => item.event_kind === "weekly_boundary")!;
+    if (weekly.id !== scheduled.data[0].id) await processProactiveEvaluation(weekly.id);
+    const briefings = await admin.from("weekly_briefings").select("id,week_start,status,sections,evaluation_id").eq("family_id", familyId).eq("week_start", "2026-07-13");
+    expect(briefings.error).toBeNull();
+    expect(briefings.data).toHaveLength(1);
+    expect(briefings.data![0]).toMatchObject({ week_start: "2026-07-13", status: "active", evaluation_id: weekly.id });
+    expect(briefings.data![0].sections).toMatchObject({ headline: "Your week at a glance", weekStart: "2026-07-13" });
+    await processProactiveEvaluation(weekly.id);
+    expect((await admin.from("weekly_briefings").select("id", { count: "exact", head: true }).eq("family_id", familyId).eq("week_start", "2026-07-13")).count).toBe(1);
+  });
+
+  it("catches up after Monday and keeps one evaluation and briefing for the local week", async () => {
+    const tuesday = new Date("2026-07-21T15:00:00Z");
+    expect(await enqueueScheduledFamilyEvaluations(tuesday, familyId)).toBeGreaterThan(0);
+    await enqueueScheduledFamilyEvaluations(tuesday, familyId);
+    const weekly = await admin.from("proactive_evaluations").select("id,idempotency_key,status").eq("family_id", familyId).eq("idempotency_key", "weekly-briefing:2026-07-20");
+    expect(weekly.error).toBeNull();
+    expect(weekly.data).toHaveLength(1);
+    const concurrent = await Promise.all([processProactiveEvaluation(weekly.data![0].id), processProactiveEvaluation(weekly.data![0].id)]);
+    expect(concurrent.filter(Boolean)).toHaveLength(1);
+    const briefings = await admin.from("weekly_briefings").select("id,week_start").eq("family_id", familyId).eq("week_start", "2026-07-20");
+    expect(briefings.error).toBeNull();
+    expect(briefings.data).toEqual([expect.objectContaining({ week_start: "2026-07-20" })]);
+  });
+
+  it("does not fail a scheduled sweep when its target family is already deleted", async () => {
+    const deleted = await admin.from("families").insert({ name: "Deleted before sweep", created_by: userId, timezone: "America/New_York" }).select("id").single();
+    if (deleted.error) throw deleted.error;
+    await admin.from("families").delete().eq("id", deleted.data.id);
+    await expect(enqueueScheduledFamilyEvaluations(new Date("2026-07-21T15:00:00Z"), deleted.data.id)).resolves.toBe(0);
+  });
+
+  it("keeps a failed weekly briefing durable and succeeds on its next retry", async () => {
+    const family = await admin.from("families").insert({ name: "Weekly retry", created_by: userId, timezone: "Invalid/Timezone" }).select("id").single();
+    if (family.error) throw family.error;
+    try {
+      const queued = await enqueueProactiveEvaluation({ familyId: family.data.id, requestedBy: userId, eventKind: "weekly_boundary", entityType: "family", entityId: family.data.id, idempotencyKey: "weekly-briefing:2026-07-20" });
+      await expect(processProactiveEvaluation(queued.evaluation.id)).rejects.toThrow();
+      expect((await admin.from("proactive_evaluations").select("status,attempt_count,error_code").eq("id", queued.evaluation.id).single()).data).toMatchObject({ status: "queued", attempt_count: 1 });
+      await admin.from("families").update({ timezone: "America/New_York" }).eq("id", family.data.id);
+      await expect(processProactiveEvaluation(queued.evaluation.id)).resolves.toMatchObject({ outcome: "no_action" });
+      expect((await admin.from("proactive_evaluations").select("status,attempt_count").eq("id", queued.evaluation.id).single()).data).toMatchObject({ status: "completed", attempt_count: 2 });
+      expect((await admin.from("weekly_briefings").select("id", { count: "exact", head: true }).eq("family_id", family.data.id).eq("week_start", "2026-07-20")).count).toBe(1);
+    } finally {
+      await admin.from("families").delete().eq("id", family.data.id);
+    }
   });
 
   it("treats an ordinary planned teaching day as ready, not unfinished", async () => {

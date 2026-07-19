@@ -5,6 +5,9 @@ import { normalizePublicResult, type PublicResult } from "@/lib/agent/workspace/
 import { createClient } from "@/lib/supabase/server";
 import { requireParent } from "@/lib/auth/require-parent";
 import { agentEventLabel } from "@/lib/agent/workspace/presentation";
+import { parentFacingTurnStatus } from "@/lib/agent/workspace/turn-status";
+import { weeklyBriefingSchedule } from "@/lib/proactive/weekly-schedule";
+import type { WeeklyFamilyBriefingSnapshot } from "@/lib/proactive/weekly-briefing";
 
 export type StudentDTO = {
   id: string;
@@ -87,6 +90,7 @@ export type ReminderDTO = {
 export type ScheduleItemDTO = {
   id: string;
   artifactId: string | null;
+  assignmentId: string | null;
   studentId: string | null;
   scheduledDate: string | null;
   scheduledTime: string | null;
@@ -145,6 +149,17 @@ export type WorkspaceLayoutDTO = {
   positions: Record<string, { x: number; y: number }>;
 };
 
+export type WeeklyBriefingDTO = {
+  id: string;
+  status: "active" | "dismissed";
+  weekStart: string;
+  generatedAt: string;
+  viewedAt: string | null;
+  snapshot: WeeklyFamilyBriefingSnapshot;
+};
+
+export type WeeklyBriefingState = "available" | "dismissed" | "pending" | "failed" | "not_due";
+
 export const getWorkspace = cache(async () => {
   const parent = await requireParent();
   const supabase = await createClient();
@@ -159,7 +174,7 @@ export const getWorkspace = cache(async () => {
   if (!membership) return null;
 
   const familyId = membership.family_id;
-  const [familyResult, studentsResult, subjectsResult, evidenceResult, artifactsResult, approvalsResult, categoriesResult, jobsResult, remindersResult, scheduleResult, latestTurnResult, insightsResult, autonomyResult, layoutsResult, questionsResult, latestConversationResult] = await Promise.all([
+  const [familyResult, studentsResult, subjectsResult, evidenceResult, artifactsResult, approvalsResult, categoriesResult, jobsResult, remindersResult, scheduleResult, latestTurnResult, insightsResult, autonomyResult, layoutsResult, questionsResult, latestConversationResult, briefingResult, weeklyEvaluationResult] = await Promise.all([
     supabase.from("families").select("id, name, timezone, available_days").eq("id", familyId).single(),
     supabase.from("students").select("id, display_name, grade_band, learning_preferences, daily_capacity_minutes, schedule_preferences").eq("family_id", familyId).eq("active", true).order("created_at"),
     supabase.from("student_subjects").select("student_id,name,course_name,weekly_frequency,position").eq("family_id", familyId).eq("status", "active").order("position"),
@@ -169,13 +184,15 @@ export const getWorkspace = cache(async () => {
     supabase.from("categories").select("id, name, slug, description, evidence_categories(count)").eq("family_id", familyId).order("name"),
     supabase.from("agent_jobs").select("id, status, total_actions, completed_actions, failed_actions, error_message, created_at, completed_at, agent_job_actions(id, intent, status, error_message)").eq("family_id", familyId).order("created_at", { ascending: false }).limit(12),
     supabase.from("reminders").select("id, title, notes, due_at, status, student_id, source_evidence_id, created_at").eq("family_id", familyId).in("status", ["pending", "completed"]).order("due_at", { ascending: true, nullsFirst: false }).limit(30),
-    supabase.from("weekly_plan_items").select("id, artifact_id, student_id, scheduled_date, scheduled_time, title, description, estimated_minutes, subject, curriculum_url, source_kind, rescheduled_count, completed_at, position, artifacts(type, status)").eq("family_id", familyId).order("scheduled_date", { ascending: true, nullsFirst: false }).order("scheduled_time", { ascending: true, nullsFirst: false }).order("position").limit(120),
+    supabase.from("weekly_plan_items").select("id, artifact_id, assignment_id, student_id, scheduled_date, scheduled_time, title, description, estimated_minutes, subject, curriculum_url, source_kind, rescheduled_count, completed_at, position, artifacts(type, status)").eq("family_id", familyId).order("scheduled_date", { ascending: true, nullsFirst: false }).order("scheduled_time", { ascending: true, nullsFirst: false }).order("position").limit(120),
     supabase.from("agent_turns").select("id,status,goal,student_id,task_name,subject,source_count,normalized_step,expected_output,created_at,started_at,last_heartbeat_at,last_progress_at,snapshot_summary,public_result,conversation_id,interaction_mode,streamed_message,agent_events(sequence,kind,payload),agent_tool_calls(result_summary)").eq("family_id", familyId).is("dismissed_at", null).in("status", ["queued", "running", "awaiting_parent", "failed", "completed"]).order("created_at", { ascending: false }).limit(1).maybeSingle(),
     supabase.from("klio_insights").select("id,student_id,kind,title,summary,reason,priority,evidence_refs,action_ref,created_at").eq("family_id", familyId).eq("status", "active").order("priority", { ascending: false }).order("created_at", { ascending: false }).limit(3),
     supabase.from("family_autonomy_policies").select("preset,policies").eq("family_id", familyId).maybeSingle(),
     supabase.from("family_workspace_layouts").select("surface,scope_key,layout_version,positions").eq("family_id", familyId),
     supabase.from("question_threads").select("id,status,awaiting_turn_id,question_messages!question_messages_thread_id_fkey(id,role,content,created_at)").eq("family_id", familyId).order("updated_at", { ascending: false }).limit(10),
     supabase.from("agent_conversations").select("id,title,student_id").eq("family_id", familyId).eq("status", "active").order("updated_at", { ascending: false }).limit(1).maybeSingle(),
+    supabase.from("weekly_briefings").select("id,status,week_start,generated_at,viewed_at,sections").eq("family_id", familyId).order("week_start", { ascending: false }).limit(1).maybeSingle(),
+    supabase.from("proactive_evaluations").select("status,idempotency_key,error_code").eq("family_id", familyId).eq("event_kind", "weekly_boundary").order("created_at", { ascending: false }).limit(8),
   ]);
 
   if (familyResult.error) throw familyResult.error;
@@ -194,6 +211,8 @@ export const getWorkspace = cache(async () => {
   if (layoutsResult.error) throw layoutsResult.error;
   if (questionsResult.error) throw questionsResult.error;
   if (latestConversationResult.error) throw latestConversationResult.error;
+  if (briefingResult.error) throw briefingResult.error;
+  if (weeklyEvaluationResult.error) throw weeklyEvaluationResult.error;
   const latestConversationTurnResult = latestConversationResult.data
     ? await supabase.from("agent_turns").select("id,status,goal,student_id,task_name,subject,source_count,normalized_step,expected_output,created_at,started_at,last_heartbeat_at,last_progress_at,snapshot_summary,public_result,conversation_id,interaction_mode,streamed_message,agent_events(sequence,kind,payload),agent_tool_calls(result_summary)").eq("family_id", familyId).eq("conversation_id", latestConversationResult.data.id).order("created_at", { ascending: false }).limit(1).maybeSingle()
     : { data: null, error: null };
@@ -205,6 +224,22 @@ export const getWorkspace = cache(async () => {
   const latestAgentTurn = latestTurnResult.data && ["queued", "running", "awaiting_parent", "failed"].includes(latestTurnResult.data.status)
     ? latestTurnResult.data
     : latestConversationTurnResult.data ?? latestTurnResult.data;
+  const latestClarification = latestAgentTurn ? clarificationForTurn(questionsResult.data, latestAgentTurn.id) : null;
+  const briefingSchedule = weeklyBriefingSchedule(new Date(), familyResult.data.timezone);
+  const currentBriefingRow = briefingSchedule && briefingResult.data?.week_start === briefingSchedule.weekStart ? briefingResult.data : null;
+  const currentEvaluation = briefingSchedule
+    ? weeklyEvaluationResult.data.find((evaluation) => evaluation.idempotency_key === briefingSchedule.idempotencyKey)
+    : null;
+  const weeklyBriefing = currentBriefingRow ? parseWeeklyBriefing(currentBriefingRow) : null;
+  const weeklyBriefingState: WeeklyBriefingState = weeklyBriefing?.status === "active"
+    ? "available"
+    : weeklyBriefing?.status === "dismissed"
+      ? "dismissed"
+      : !briefingSchedule?.due
+        ? "not_due"
+        : currentEvaluation?.status === "failed"
+          ? "failed"
+          : "pending";
 
   return {
     parent,
@@ -288,6 +323,7 @@ export const getWorkspace = cache(async () => {
     scheduleItems: scheduleResult.data.map((item): ScheduleItemDTO => ({
       id: item.id,
       artifactId: item.artifact_id,
+      assignmentId: item.assignment_id,
       studentId: item.student_id,
       scheduledDate: item.scheduled_date,
       scheduledTime: item.scheduled_time,
@@ -311,6 +347,8 @@ export const getWorkspace = cache(async () => {
       layoutVersion: layout.layout_version,
       positions: parseWorkspacePositions(layout.positions),
     })),
+    weeklyBriefing,
+    weeklyBriefingState,
     latestAgentConversation: latestConversationResult.data ? ({
       id: latestConversationResult.data.id,
       title: latestConversationResult.data.title,
@@ -319,11 +357,11 @@ export const getWorkspace = cache(async () => {
     } satisfies AgentConversationDTO) : null,
     latestAgentTurn: latestAgentTurn ? ({
       id: latestAgentTurn.id,
-      status: latestAgentTurn.status,
+      status: parentFacingTurnStatus(latestAgentTurn.status, Boolean(latestClarification)),
       goal: latestAgentTurn.goal,
       request: ((latestAgentTurn.snapshot_summary as { request?: string | null } | null)?.request ?? `Complete a ${latestAgentTurn.goal.replaceAll("_", " ")} job.`),
       result: latestAgentTurn.public_result ? normalizePublicResult(latestAgentTurn.public_result) : null,
-      clarification: clarificationForTurn(questionsResult.data, latestAgentTurn.id),
+      clarification: latestClarification,
       events: [...latestAgentTurn.agent_events].sort((a, b) => a.sequence - b.sequence).map((event) => ({ sequence: event.sequence, kind: event.kind, label: agentEventLabel(event.kind, event.payload) })),
       tools: latestAgentTurn.agent_tool_calls.map((tool) => ({ result: tool.result_summary })),
       taskName: latestAgentTurn.task_name ?? "Handling a family handoff",
@@ -342,6 +380,20 @@ export const getWorkspace = cache(async () => {
     } satisfies AgentTurnDTO) : null,
   };
 });
+
+function parseWeeklyBriefing(row: { id: string; status: string; week_start: string; generated_at: string; viewed_at: string | null; sections: unknown }): WeeklyBriefingDTO | null {
+  const snapshot = row.sections;
+  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) return null;
+  if (!("weekStart" in snapshot) || snapshot.weekStart !== row.week_start || !("headline" in snapshot) || !("learners" in snapshot) || !Array.isArray(snapshot.learners)) return null;
+  return {
+    id: row.id,
+    status: row.status === "dismissed" ? "dismissed" : "active",
+    weekStart: row.week_start,
+    generatedAt: row.generated_at,
+    viewedAt: row.viewed_at,
+    snapshot: snapshot as WeeklyFamilyBriefingSnapshot,
+  };
+}
 
 function parseWorkspacePositions(value: unknown): Record<string, { x: number; y: number }> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
