@@ -84,7 +84,7 @@ export function OperationsWorkspace({ surface, workspace, initialSelectedDate, i
   const [dismissedPracticeSessionIds, setDismissedPracticeSessionIds] = useState<string[]>([]);
   const [assistantPrefill, setAssistantPrefill] = useState<{ key: number; request: string } | null>(null);
   const [liveAgentTurn, setLiveAgentTurn] = useState<AgentTurnDTO | null>(workspace.latestAgentTurn);
-  const [assignmentAttentionOverrides, setAssignmentAttentionOverrides] = useState<Record<string, Partial<AssignmentDTO>>>({});
+  const [assignmentOverrides, setAssignmentOverrides] = useState<Record<string, Partial<AssignmentDTO>>>({});
   const [locallyDismissedBriefingId, setLocallyDismissedBriefingId] = useState<string | null>(null);
   const [activePracticeSessionId, setActivePracticeSessionId] = useState<string | null>(() => initialPracticeSessionId ?? (initialArtifactId
     ? workspace.practiceSessions.find((session) => session.artifactId === initialArtifactId && ["ready", "in_progress"].includes(session.status))?.id ?? null
@@ -100,7 +100,7 @@ export function OperationsWorkspace({ surface, workspace, initialSelectedDate, i
     .filter((insight) => typeof insight.actionRef.proposalId !== "string" || (!resolvedProposalIds.includes(insight.actionRef.proposalId) && !acknowledgedProposalIds.includes(insight.actionRef.proposalId)));
   const selectedLearner = workspace.students.find((student) => student.id === studentId);
   const learner = selectedLearner ?? workspace.students[0];
-  const liveAssignments = workspace.assignments.map((item) => ({ ...item, ...(assignmentAttentionOverrides[item.id] ?? {}) }));
+  const liveAssignments = workspace.assignments.map((item) => ({ ...item, ...(assignmentOverrides[item.id] ?? {}) }));
   const visiblePlanningProposals = workspace.planningProposals.filter((proposal) => proposal.status !== "proposed" || planningProposalNeedsDecision(proposal, liveAssignments));
   const assignments = studentId === "all" ? liveAssignments : liveAssignments.filter((item) => item.studentId === studentId);
   const enabledWeekdays = useMemo(() => {
@@ -237,18 +237,38 @@ export function OperationsWorkspace({ surface, workspace, initialSelectedDate, i
   }
 
   async function updateAssignment(assignment: AssignmentDTO, status: "doing" | "completed" | "planned" | "skipped") {
-    setBusy(assignment.id); setNotice(null);
-    const response = await fetch(`/api/assignments/${assignment.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ status }) });
-    const result = await response.json();
-    setBusy(null);
-    if (!response.ok) { setNotice(result.error ?? "Klio could not update that assignment."); return false; }
-    setNotice(status === "completed" ? `${assignment.title} is done. Klio recorded it and is checking the follow-through.` : `${assignment.title} updated.`);
-    router.refresh();
-    return true;
+    const previous = { status: assignment.status, completedAt: assignment.completedAt };
+    const completedAt = status === "completed" ? new Date().toISOString() : null;
+    const successMessage = status === "completed" ? `${assignment.title} is done. Klio recorded it and is checking the follow-through.` : `${assignment.title} updated.`;
+    const applyStatus = (next: { status: string; completedAt: string | null }) => setAssignmentOverrides((current) => ({
+      ...current,
+      [assignment.id]: { ...(current[assignment.id] ?? {}), ...next },
+    }));
+    applyStatus({ status, completedAt });
+    setBusy(assignment.id);
+    setNotice(successMessage);
+    try {
+      const response = await fetch(`/api/assignments/${assignment.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ status }) });
+      const result = await response.json().catch(() => ({})) as { assignment?: { status?: string; completed_at?: string | null }; error?: string };
+      if (!response.ok) {
+        applyStatus(previous);
+        setNotice(result.error ?? "Klio could not update that assignment. The previous status was restored.");
+        return false;
+      }
+      applyStatus({ status: result.assignment?.status ?? status, completedAt: result.assignment?.completed_at ?? completedAt });
+      router.refresh();
+      return true;
+    } catch {
+      applyStatus(previous);
+      setNotice("Klio lost the connection before saving that update. The previous status was restored.");
+      return false;
+    } finally {
+      setBusy(null);
+    }
   }
 
   function attentionSaved(assignmentId: string, value: Partial<AssignmentDTO>) {
-    setAssignmentAttentionOverrides((current) => ({ ...current, [assignmentId]: { ...(current[assignmentId] ?? {}), ...value } }));
+    setAssignmentOverrides((current) => ({ ...current, [assignmentId]: { ...(current[assignmentId] ?? {}), ...value } }));
   }
 
   async function moveAssignment(assignmentId: string, scheduledDate: string) {

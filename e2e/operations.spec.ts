@@ -131,9 +131,18 @@ test("a family plans curriculum, reviews submitted work, and approves a coordina
 
     await page.goto(`/app?date=${dateAfter(nextMonday(), 2)}`);
     const lesson8 = page.locator(".day-assignment").filter({ hasText: "Algebra I · Lesson 8" });
+    let releaseCompletion!: () => void;
+    const completionHeld = new Promise<void>((resolve) => { releaseCompletion = resolve; });
+    await page.route(`**/api/assignments/${stableLessons.data.find((lesson) => lesson.title === "Algebra I · Lesson 8")!.id}`, async (route) => {
+      await completionHeld;
+      await route.continue();
+    });
     await lesson8.getByRole("button", { name: "Mark Algebra I · Lesson 8 done" }).click();
     await expect(page.getByText("Algebra I · Lesson 8 is done. Klio recorded it and is checking the follow-through.")).toBeVisible();
     await expect(lesson8).toHaveClass(/completed/);
+    releaseCompletion();
+    await expect.poll(async () => (await admin.from("assignments").select("status").eq("id", stableLessons.data.find((lesson) => lesson.title === "Algebra I · Lesson 8")!.id).single()).data?.status).toBe("completed");
+    await page.unroute(`**/api/assignments/${stableLessons.data.find((lesson) => lesson.title === "Algebra I · Lesson 8")!.id}`);
     await lesson8.getByLabel("Actions for Algebra I · Lesson 8").click();
     const completedDetails = lesson8.getByRole("menuitem", { name: "View details for Algebra I · Lesson 8" });
     await expect(completedDetails).toHaveAttribute("aria-expanded", "false");
@@ -144,6 +153,11 @@ test("a family plans curriculum, reviews submitted work, and approves a coordina
     const hideCompletedDetails = lesson8.getByRole("menuitem", { name: "Hide details for Algebra I · Lesson 8" });
     await expect(hideCompletedDetails).toHaveAttribute("aria-expanded", "true");
     await expect(lesson8.getByRole("button", { name: "Hand to Klio" })).toBeVisible();
+    const selectedRailHeight = await lesson8.evaluate((element) => {
+      const rail = getComputedStyle(element, "::before");
+      return Number.parseFloat(rail.height);
+    });
+    expect(selectedRailHeight).toBeLessThanOrEqual(50);
     await hideCompletedDetails.click();
     await expect(completedDetails).toHaveAttribute("aria-expanded", "false");
     await expect(lesson8).toHaveCSS("transform", "none");
