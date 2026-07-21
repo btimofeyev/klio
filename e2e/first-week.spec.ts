@@ -84,8 +84,13 @@ test("Klio builds a balanced first week from onboarding curriculum", async ({ pa
     expect(nextAssignments.data).toHaveLength(600);
     const scheduledNextWeek = nextAssignments.data?.filter((item) => item.scheduled_date && !firstWeekAssignmentIds.has(item.id)) ?? [];
     expect(scheduledNextWeek.length).toBeGreaterThan(0);
-    expect(scheduledNextWeek.filter((item) => item.subject === "Math")).toHaveLength(3);
-    expect(scheduledNextWeek.filter((item) => item.subject === "Math").map((item) => item.sequence_number)).toEqual([6, 7, 8]);
+    const firstWeekMathSequences = nextAssignments.data
+      ?.filter((item) => item.subject === "Math" && firstWeekAssignmentIds.has(item.id))
+      .map((item) => item.sequence_number) ?? [];
+    const nextWeekMathSequences = scheduledNextWeek.filter((item) => item.subject === "Math").map((item) => item.sequence_number);
+    expect(firstWeekMathSequences.length).toBeGreaterThan(0);
+    const firstUnscheduledMathSequence = Math.max(...firstWeekMathSequences) + 1;
+    expect(nextWeekMathSequences).toEqual([firstUnscheduledMathSequence, firstUnscheduledMathSequence + 1, firstUnscheduledMathSequence + 2]);
 
     await page.goto("/app");
     await page.setViewportSize({ width: 390, height: 844 });

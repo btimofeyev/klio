@@ -159,15 +159,16 @@ test("a stale worker heartbeat stops the working claim and keeps the source safe
     const turnsBeforeGreeting = await admin.from("agent_turns").select("id", { count: "exact", head: true }).eq("family_id", familyId);
     const directGreeting = await page.evaluate(async ({ familyId }) => {
       const response = await fetch("/api/agent", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ familyId, studentId: null, evidenceIds: [], intent: "general", request: "Hello", requestId: crypto.randomUUID() }) });
-      return { status: response.status, body: await response.json() as { turn?: { id: string }; conversationId?: string; interactionMode?: string } };
+      return { status: response.status, body: await response.json() as { turn?: { id: string }; conversationId?: string; interactionMode?: string; instantReply?: string } };
     }, { familyId });
-    expect(directGreeting.status).toBe(202);
+    expect(directGreeting.status).toBe(200);
     expect(directGreeting.body.turn?.id).toBeTruthy();
     expect(directGreeting.body.conversationId).toBeTruthy();
-    expect(directGreeting.body.interactionMode).toBe("act");
+    expect(directGreeting.body.interactionMode).toBe("answer");
+    expect(directGreeting.body.instantReply).toBe("Hello! What would you like help with today?");
     await expect.poll(async () => (await admin.from("agent_turns").select("id", { count: "exact", head: true }).eq("family_id", familyId)).count).toBe((turnsBeforeGreeting.count ?? 0) + 1);
     const greetingTurn = await admin.from("agent_turns").select("id,interaction_mode").eq("id", directGreeting.body.turn!.id).single();
-    expect(greetingTurn.data?.interaction_mode).toBe("act");
+    expect(greetingTurn.data?.interaction_mode).toBe("answer");
     await admin.from("agent_turns").update({ status: "cancelled", normalized_step: "paused", completed_at: new Date().toISOString(), cancel_requested_at: new Date().toISOString() }).eq("id", directGreeting.body.turn!.id).in("status", ["queued", "running"]);
     const nextTurnId = crypto.randomUUID();
     const nextConversationId = crypto.randomUUID();

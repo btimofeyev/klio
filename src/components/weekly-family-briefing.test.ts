@@ -36,10 +36,11 @@ const briefing: WeeklyBriefingDTO = {
 };
 
 const students = [{ id: "maya", displayName: "Maya", gradeBand: "6-8", learningPreferences: null }];
+const familyId = "00000000-0000-4000-8000-000000000001";
 
-function renderBriefing(input: { onAsk?: (request: string) => void; onDismissed?: () => void; selectedStudentId?: string; planningProposals?: React.ComponentProps<typeof WeeklyFamilyBriefing>["planningProposals"] } = {}) {
+function renderBriefing(input: { onDismissed?: () => void; selectedStudentId?: string; planningProposals?: React.ComponentProps<typeof WeeklyFamilyBriefing>["planningProposals"] } = {}) {
   return render(React.createElement(WeeklyFamilyBriefing, {
-    briefing, state: "available", students, selectedStudentId: input.selectedStudentId ?? "all", familyTimezone: "America/New_York", planningProposals: input.planningProposals, onAsk: input.onAsk ?? vi.fn(), onDismissed: input.onDismissed,
+    briefing, state: "available", familyId, students, selectedStudentId: input.selectedStudentId ?? "all", familyTimezone: "America/New_York", planningProposals: input.planningProposals, onDismissed: input.onDismissed,
   }));
 }
 
@@ -70,21 +71,28 @@ describe("weekly family briefing", () => {
   it("renders a quiet on-track state without fabricated actions", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }));
     const quiet = { ...briefing, snapshot: { ...briefing.snapshot, onTrack: true, actions: [], summary: "5 assignments and 170 planned minutes are on the family schedule. Current records show no capacity, review, or pacing concern." } };
-    render(React.createElement(WeeklyFamilyBriefing, { briefing: quiet, state: "available", students, selectedStudentId: "all", familyTimezone: "America/New_York", onAsk: vi.fn() }));
+    render(React.createElement(WeeklyFamilyBriefing, { briefing: quiet, state: "available", familyId, students, selectedStudentId: "all", familyTimezone: "America/New_York" }));
     expect(screen.getAllByText("The week is ready. Nothing needs your decision.")).toHaveLength(1);
     expect(screen.queryByText("Everyone fits within the current plan.")).not.toBeInTheDocument();
     expect(document.querySelectorAll('[data-briefing-side]')).toHaveLength(1);
   });
 
-  it("prefills Ask Klio through its callback and never performs an agent submission", async () => {
-    const onAsk = vi.fn();
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }));
-    renderBriefing({ onAsk, selectedStudentId: "maya" });
+  it("starts a background handoff in place without opening the composer", async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) as { action?: string } : {};
+      return body.action === "handle"
+        ? { ok: true, json: async () => ({ turn: { id: "turn-1", status: "queued" } }) }
+        : { ok: true, json: async () => ({}) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderBriefing({ selectedStudentId: "maya" });
     await userEvent.click(screen.getByRole("button", { name: "Ask Klio to handle this" }));
-    expect(onAsk).toHaveBeenCalledWith(expect.stringContaining("Take care of the remaining items in Maya’s weekly briefing"));
-    expect(onAsk).toHaveBeenCalledWith(expect.stringContaining("do not apply anything automatically"));
-    expect(fetch).toHaveBeenCalledTimes(1);
-    expect(fetch).not.toHaveBeenCalledWith("/api/agent", expect.anything());
+    const handleCall = fetchMock.mock.calls.find(([, init]) => typeof init?.body === "string" && init.body.includes('"action":"handle"'));
+    expect(handleCall?.[0]).toBe("/api/weekly-briefings/briefing-1");
+    expect(JSON.parse(String(handleCall?.[1]?.body))).toMatchObject({ action: "handle", studentId: "maya" });
+    expect(JSON.parse(String(handleCall?.[1]?.body)).request).toContain("Work in the background");
+    expect(screen.getByRole("progressbar", { name: "Klio briefing progress" })).toHaveAttribute("aria-valuenow", "10");
+    expect(screen.queryByText(/Take care of the remaining items/)).not.toBeInTheDocument();
   });
 
   it("keeps learner-scoped actions learner-specific", async () => {
@@ -96,7 +104,7 @@ describe("weekly family briefing", () => {
         actions: [{ kind: "schedule_work" as const, label: "Place unscheduled work", explanation: "Noah has loose work.", priority: 90, target: { studentId: "noah", href: "/app/assignments" }, evidenceRefs: [] }],
       },
     };
-    render(React.createElement(WeeklyFamilyBriefing, { briefing: scoped, state: "available", students, selectedStudentId: "maya", familyTimezone: "America/New_York", onAsk: vi.fn() }));
+    render(React.createElement(WeeklyFamilyBriefing, { briefing: scoped, state: "available", familyId, students, selectedStudentId: "maya", familyTimezone: "America/New_York" }));
     expect(screen.getAllByText("Maya’s week is ready. Nothing needs your decision.")).toHaveLength(1);
     expect(screen.queryByText("Some work still needs a place")).not.toBeInTheDocument();
   });
@@ -133,7 +141,7 @@ describe("weekly family briefing", () => {
       },
     };
 
-    render(React.createElement(WeeklyFamilyBriefing, { briefing: pacingBriefing, state: "available", students, selectedStudentId: "all", familyTimezone: "America/New_York", onAsk: vi.fn() }));
+    render(React.createElement(WeeklyFamilyBriefing, { briefing: pacingBriefing, state: "available", familyId, students, selectedStudentId: "all", familyTimezone: "America/New_York" }));
     expect(screen.getAllByText("The pace could use a simpler plan")).toHaveLength(1);
     expect(screen.queryByText("Maya has a pacing concern to review.")).not.toBeInTheDocument();
     expect(screen.queryByText("Noah has a pacing concern to review.")).not.toBeInTheDocument();
@@ -153,7 +161,7 @@ describe("weekly family briefing", () => {
         ],
       },
     };
-    render(React.createElement(WeeklyFamilyBriefing, { briefing: busyBriefing, state: "available", students, selectedStudentId: "all", familyTimezone: "America/New_York", onAsk: vi.fn() }));
+    render(React.createElement(WeeklyFamilyBriefing, { briefing: busyBriefing, state: "available", familyId, students, selectedStudentId: "all", familyTimezone: "America/New_York" }));
     expect(screen.getByText("Submitted work is ready for you")).toBeInTheDocument();
     expect(screen.getByText("One lesson is still open")).toBeInTheDocument();
     expect(screen.queryByText("Some work still needs a place")).not.toBeInTheDocument();
@@ -167,11 +175,11 @@ describe("weekly family briefing", () => {
     render(React.createElement(WeeklyFamilyBriefing, {
       briefing: proposalBriefing,
       state: "available",
+      familyId,
       students,
       selectedStudentId: "all",
       familyTimezone: "America/New_York",
       planningProposals: [planningProposal({ status: "proposed", assignmentId: "assignment-old", summary: "Move the open science lesson to Monday and leave the rest of the week unchanged." })],
-      onAsk: vi.fn(),
     }));
 
     expect(screen.getAllByText("Klio prepared a change. It’s ready for your review.")).toHaveLength(2);
@@ -190,11 +198,11 @@ describe("weekly family briefing", () => {
     render(React.createElement(WeeklyFamilyBriefing, {
       briefing: proposalBriefing,
       state: "available",
+      familyId,
       students,
       selectedStudentId: "all",
       familyTimezone: "America/New_York",
       planningProposals: [planningProposal({ status: "applied", assignmentId: "assignment-old" })],
-      onAsk: vi.fn(),
     }));
 
     expect(screen.getAllByText("Klio handled the briefing. Nothing else needs your decision.")).toHaveLength(1);
@@ -212,11 +220,11 @@ describe("weekly family briefing", () => {
     render(React.createElement(WeeklyFamilyBriefing, {
       briefing: proposalBriefing,
       state: "available",
+      familyId,
       students,
       selectedStudentId: "all",
       familyTimezone: "America/New_York",
       planningProposals: [planningProposal({ status: "applied", assignmentId: "assignment-next" })],
-      onAsk: vi.fn(),
     }));
 
     expect(screen.getAllByText("Klio handled the briefing. Nothing else needs your decision.")).toHaveLength(1);
@@ -225,9 +233,14 @@ describe("weekly family briefing", () => {
     expect(document.querySelector('[data-briefing-side="right"]')).not.toBeInTheDocument();
   });
 
-  it("asks Klio only about work that has not already been prepared", async () => {
-    const onAsk = vi.fn();
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }));
+  it("hands off only work that has not already been prepared", async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) as { action?: string } : {};
+      return body.action === "handle"
+        ? { ok: true, json: async () => ({ turn: { id: "turn-2", status: "queued" } }) }
+        : { ok: true, json: async () => ({}) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
     const proposalBriefing = briefingWithActions([
       { kind: "decide_unfinished", label: "Unfinished", explanation: "One remains.", priority: 90, target: { href: "/app/week", assignmentIds: ["assignment-old"] }, evidenceRefs: [{ type: "assignment", id: "assignment-old" }] },
       { kind: "review_pacing", label: "Pacing", explanation: "Pace needs work.", priority: 80, target: { href: "/app/plans", goalId: "goal-math" }, evidenceRefs: [{ type: "pacing_checkpoint", id: "pace-1", goalId: "goal-math" }] },
@@ -235,15 +248,17 @@ describe("weekly family briefing", () => {
     render(React.createElement(WeeklyFamilyBriefing, {
       briefing: proposalBriefing,
       state: "available",
+      familyId,
       students,
       selectedStudentId: "all",
       familyTimezone: "America/New_York",
       planningProposals: [planningProposal({ status: "proposed", assignmentId: "assignment-old" })],
-      onAsk,
     }));
     await userEvent.click(screen.getByRole("button", { name: "Ask Klio to handle the rest" }));
-    expect(onAsk).toHaveBeenCalledWith(expect.stringContaining("the pace could use a simpler plan"));
-    expect(onAsk).not.toHaveBeenCalledWith(expect.stringContaining("catch-up plan"));
+    const handleCall = fetchMock.mock.calls.find(([, init]) => typeof init?.body === "string" && init.body.includes('"action":"handle"'));
+    const request = JSON.parse(String(handleCall?.[1]?.body)).request as string;
+    expect(request).toContain("the pace could use a simpler plan");
+    expect(request).not.toContain("catch-up plan");
   });
 
   it("ignores unrelated and older proposals", async () => {
@@ -254,6 +269,7 @@ describe("weekly family briefing", () => {
     render(React.createElement(WeeklyFamilyBriefing, {
       briefing: proposalBriefing,
       state: "available",
+      familyId,
       students,
       selectedStudentId: "all",
       familyTimezone: "America/New_York",
@@ -261,7 +277,6 @@ describe("weekly family briefing", () => {
         planningProposal({ status: "proposed", assignmentId: "another-assignment" }),
         planningProposal({ status: "applied", assignmentId: "assignment-old", createdAt: "2026-07-13T08:00:00.000Z" }),
       ],
-      onAsk: vi.fn(),
     }));
     expect(screen.getAllByText("The week is organized. Klio found one thing worth a quick look.")).toHaveLength(2);
     expect(screen.getByText("One lesson is still open")).toBeInTheDocument();
@@ -284,14 +299,14 @@ describe("weekly family briefing", () => {
     expect(weeklyBriefingShouldRender(null, "not_due")).toBe(false);
     expect(weeklyBriefingShouldRender({ ...briefing, status: "dismissed" }, "dismissed")).toBe(false);
     expect(weeklyBriefingShouldRender(briefing, "available")).toBe(true);
-    const view = render(React.createElement(WeeklyFamilyBriefing, { briefing: null, state: "pending", students, selectedStudentId: "all", familyTimezone: "America/New_York", onAsk: vi.fn() }));
+    const view = render(React.createElement(WeeklyFamilyBriefing, { briefing: null, state: "pending", familyId, students, selectedStudentId: "all", familyTimezone: "America/New_York" }));
     expect(screen.getByText("Preparing your week at a glance")).toBeInTheDocument();
-    view.rerender(React.createElement(WeeklyFamilyBriefing, { briefing: null, state: "failed", students, selectedStudentId: "all", familyTimezone: "America/New_York", onAsk: vi.fn() }));
+    view.rerender(React.createElement(WeeklyFamilyBriefing, { briefing: null, state: "failed", familyId, students, selectedStudentId: "all", familyTimezone: "America/New_York" }));
     expect(screen.getByText("This week’s briefing is delayed")).toBeInTheDocument();
-    view.rerender(React.createElement(WeeklyFamilyBriefing, { briefing: null, state: "not_due", students, selectedStudentId: "all", familyTimezone: "America/New_York", onAsk: vi.fn() }));
+    view.rerender(React.createElement(WeeklyFamilyBriefing, { briefing: null, state: "not_due", familyId, students, selectedStudentId: "all", familyTimezone: "America/New_York" }));
     expect(screen.queryByText("Preparing your week at a glance")).not.toBeInTheDocument();
     view.unmount();
-    render(React.createElement(WeeklyFamilyBriefing, { briefing: { ...briefing, status: "dismissed" }, state: "dismissed", students, selectedStudentId: "all", familyTimezone: "America/New_York", onAsk: vi.fn() }));
+    render(React.createElement(WeeklyFamilyBriefing, { briefing: { ...briefing, status: "dismissed" }, state: "dismissed", familyId, students, selectedStudentId: "all", familyTimezone: "America/New_York" }));
     expect(screen.queryByRole("heading", { name: "Your week at a glance" })).not.toBeInTheDocument();
   });
 });

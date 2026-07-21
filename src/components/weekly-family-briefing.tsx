@@ -1,28 +1,34 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Clock3, X } from "lucide-react";
-import type { StudentDTO, WeeklyBriefingDTO, WeeklyBriefingState } from "@/lib/data/workspace";
+import { AlertCircle, ArrowRight, CheckCircle2, Clock3, LoaderCircle, X } from "lucide-react";
+import type { AgentTurnDTO, StudentDTO, WeeklyBriefingDTO, WeeklyBriefingState } from "@/lib/data/workspace";
 import styles from "./weekly-family-briefing.module.css";
 
-export function WeeklyFamilyBriefing({ briefing, state, students, selectedStudentId, familyTimezone, planningProposals = [], onAsk, onDismissed }: {
+export function WeeklyFamilyBriefing({ briefing, state, familyId, students, selectedStudentId, familyTimezone, planningProposals = [], activeAgentTurn = null, onDismissed }: {
   briefing: WeeklyBriefingDTO | null;
   state: WeeklyBriefingState;
+  familyId: string;
   students: StudentDTO[];
   selectedStudentId: string;
   familyTimezone: string;
   planningProposals?: BriefingPlanningProposal[];
-  onAsk: (request: string) => void;
+  activeAgentTurn?: AgentTurnDTO | null;
   onDismissed?: () => void;
 }) {
   const router = useRouter();
   const [hidden, setHidden] = useState(state === "dismissed");
   const [busy, setBusy] = useState(false);
+  const [localBriefingTurn, setBriefingTurn] = useState<AgentTurnDTO | null>(null);
+  const [answer, setAnswer] = useState("");
   const [error, setError] = useState<string | null>(null);
   const viewed = useRef(Boolean(briefing?.viewedAt));
   const learner = students.find((student) => student.id === selectedStudentId);
+  const briefingTurn = localBriefingTurn ?? (isBriefingTurn(activeAgentTurn) ? activeAgentTurn : null);
+  const briefingTurnId = briefingTurn?.id ?? null;
+  const briefingTurnStatus = briefingTurn?.status ?? null;
 
   useEffect(() => {
     if (!briefing || state !== "available" || viewed.current) return;
@@ -40,6 +46,28 @@ export function WeeklyFamilyBriefing({ briefing, state, students, selectedStuden
     });
     return () => controller.abort();
   }, [briefing, state]);
+
+  useEffect(() => {
+    if (!briefingTurnId || !briefingTurnStatus || !["queued", "running"].includes(briefingTurnStatus) || briefingTurnId.startsWith("optimistic:")) return;
+    let cancelled = false;
+    let timer: number | undefined;
+    async function refreshTurn() {
+      try {
+        const response = await fetch(`/api/agent/turns?familyId=${encodeURIComponent(familyId)}`, { cache: "no-store" });
+        const result = await response.json() as { turns?: AgentTurnDTO[] };
+        if (!response.ok || cancelled) return;
+        const updated = result.turns?.find((turn) => turn.id === briefingTurnId);
+        if (!updated) return;
+        setBriefingTurn(updated);
+        if (["queued", "running"].includes(updated.status)) timer = window.setTimeout(refreshTurn, 900);
+        else router.refresh();
+      } catch {
+        if (!cancelled) timer = window.setTimeout(refreshTurn, 1800);
+      }
+    }
+    timer = window.setTimeout(refreshTurn, 500);
+    return () => { cancelled = true; if (timer !== undefined) window.clearTimeout(timer); };
+  }, [briefingTurnId, briefingTurnStatus, familyId, router]);
 
   if (hidden || state === "not_due") return null;
   if (!briefing || state !== "available") {
@@ -64,6 +92,9 @@ export function WeeklyFamilyBriefing({ briefing, state, students, selectedStuden
   const scopeLabel = learner?.displayName;
   const briefingId = briefing.id;
   const summary = briefingSummary(visibleLearners, presentation, learner?.displayName);
+  const turnIsWorking = Boolean(briefingTurn && ["queued", "running"].includes(briefingTurn.status));
+  const turnProgress = briefingProgress(briefingTurn);
+  const turnUpdate = briefingTurn?.events.at(-1)?.label ?? (briefingTurn?.status === "queued" ? "Received the handoff" : "Checking the current week");
 
   async function dismissBriefing() {
     if (busy) return false;
@@ -79,14 +110,64 @@ export function WeeklyFamilyBriefing({ briefing, state, students, selectedStuden
     } finally { setBusy(false); }
   }
 
-  function askAboutBriefing() {
-    if (!openHighlights.length) {
-      const scope = learner ? `${learner.displayName}’s` : "the family’s";
-      onAsk(`Give me a very short update on ${scope} week for ${dateRange(snapshot.weekStart, snapshot.weekEnd)}. Tell me only if something now needs my decision. Do not change anything.`);
-      return;
-    }
+  async function handleBriefing() {
+    if (!openHighlights.length || busy || ["queued", "running"].includes(briefingTurn?.status ?? "")) return;
     const scope = learner ? `${learner.displayName}’s` : "the family’s";
-    onAsk(`Take care of the remaining items in ${scope} weekly briefing for ${dateRange(snapshot.weekStart, snapshot.weekEnd)}: ${openHighlights.map((item) => item.title.toLocaleLowerCase("en-US")).join("; ")}. Prepare the smallest useful next step. Draft schedule or pacing changes as a proposal for my review, and do not apply anything automatically.`);
+    const request = `Take care of the remaining items in ${scope} weekly briefing for ${dateRange(snapshot.weekStart, snapshot.weekEnd)}: ${openHighlights.map((item) => item.title.toLocaleLowerCase("en-US")).join("; ")}. Work in the background using current family records and available tools. Make ordinary safe, reversible schedule fixes when policy permits. For anything requiring review, create one durable proposal linked to the exact affected records. Do not return a review-only narrative without creating the corresponding proposal. If no change is needed, finish with no action. Ask one precise question only when a required fact cannot be inferred.`;
+    const startedAt = new Date().toISOString();
+    setBusy(true); setError(null); setAnswer("");
+    setBriefingTurn(optimisticBriefingTurn({ briefingId, request, studentId: learner?.id ?? null, createdAt: startedAt }));
+    try {
+      const response = await fetch(`/api/weekly-briefings/${briefingId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "handle", request, studentId: learner?.id ?? null }),
+      });
+      const result = await response.json().catch(() => ({})) as { turn?: { id: string; status: string }; error?: string };
+      if (!response.ok || !result.turn?.id) throw new Error(result.error ?? "Klio could not start this briefing handoff.");
+      setBriefingTurn((current) => current ? { ...current, id: result.turn!.id, status: result.turn!.status } : current);
+    } catch (caught) {
+      setBriefingTurn(null);
+      setError(caught instanceof Error ? caught.message : "Klio could not start this briefing handoff.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function retryBriefingTurn() {
+    if (!briefingTurn || busy) return;
+    setBusy(true); setError(null);
+    try {
+      const response = await fetch(`/api/agent/turns/${briefingTurn.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "retry" }) });
+      const result = await response.json().catch(() => ({})) as { status?: string; error?: string };
+      if (!response.ok) throw new Error(result.error ?? "Klio could not retry this handoff.");
+      setBriefingTurn({ ...briefingTurn, status: "queued", normalizedStep: "waiting", clarification: null, result: null, lastProgressAt: new Date().toISOString() });
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Klio could not retry this handoff.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function answerBriefingQuestion(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!briefingTurn?.clarification || !answer.trim() || busy) return;
+    setBusy(true); setError(null);
+    try {
+      const response = await fetch(`/api/agent/turns/${briefingTurn.id}/clarification`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ answer: answer.trim(), requestId: crypto.randomUUID() }),
+      });
+      const result = await response.json().catch(() => ({})) as { resumedTurnId?: string; error?: string };
+      if (!response.ok || !result.resumedTurnId) throw new Error(result.error ?? "Klio could not save that answer.");
+      const resumedAt = new Date().toISOString();
+      setBriefingTurn({ ...briefingTurn, id: result.resumedTurnId, status: "queued", clarification: null, result: null, normalizedStep: "waiting", createdAt: resumedAt, startedAt: null, lastHeartbeatAt: null, lastProgressAt: resumedAt });
+      setAnswer("");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Klio could not save that answer.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   return <section className={styles.notes} aria-labelledby={`weekly-briefing-${briefing.id}`}>
@@ -106,8 +187,20 @@ export function WeeklyFamilyBriefing({ briefing, state, students, selectedStuden
         {item.href ? <Link href={item.href}>{item.linkLabel} <ArrowRight size={12} aria-hidden="true" /></Link> : null}
       </li>)}</ol> : <p className={styles.ready}>{visibleLearners.length ? presentation.resolvedThemes ? "Klio handled the briefing. Nothing else needs your decision." : `${learner?.displayName ?? "Everyone"} fits within the current plan.` : "There is no learner schedule to summarize yet."}</p>}
       <footer className={styles.footer}>
-        {openHighlights.length ? <button type="button" onClick={askAboutBriefing}>{preparedHighlights.length || presentation.resolvedThemes ? "Ask Klio to handle the rest" : "Ask Klio to handle this"}</button> : null}
-        <p>{briefingTrust(presentation)}</p>
+        {turnIsWorking ? <div className={styles.handoffProgress} role="status" aria-live="polite">
+          <div className={styles.handoffHeading}><LoaderCircle size={13} aria-hidden="true" /><span><strong>{briefingTurn?.status === "queued" ? "Klio is starting" : "Klio is handling this"}</strong><small>{turnUpdate}</small></span></div>
+          <div className={styles.progressTrack} role="progressbar" aria-label="Klio briefing progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={turnProgress}><span style={{ width: `${turnProgress}%` }} /></div>
+        </div> : briefingTurn?.status === "awaiting_parent" && briefingTurn.clarification ? <form className={styles.handoffQuestion} onSubmit={answerBriefingQuestion}>
+          <span><strong>Klio needs one detail</strong><small>{briefingTurn.clarification.question}</small></span>
+          <label><span>Your answer</span><input value={answer} onChange={(event) => setAnswer(event.target.value)} disabled={busy} /></label>
+          <button type="submit" disabled={busy || !answer.trim()}>Continue</button>
+        </form> : briefingTurn?.status === "failed" ? <div className={styles.handoffFailed} role="alert">
+          <AlertCircle size={13} aria-hidden="true" /><span><strong>Klio paused here</strong><small>Your briefing is unchanged. Retry the same background handoff.</small></span><button type="button" onClick={() => void retryBriefingTurn()} disabled={busy}>Try again</button>
+        </div> : briefingTurn?.status === "completed" && openHighlights.length ? <div className={styles.handoffComplete} role="status">
+          <CheckCircle2 size={13} aria-hidden="true" /><span><strong>Klio finished</strong><small>{briefingResultSummary(briefingTurn)}</small></span>
+          {briefingTurn.result?.actions[0] ? <Link href={briefingTurn.result.actions[0].href}>{briefingTurn.result.actions[0].label} <ArrowRight size={12} aria-hidden="true" /></Link> : null}
+        </div> : openHighlights.length ? <button type="button" onClick={() => void handleBriefing()} disabled={busy}>{preparedHighlights.length || presentation.resolvedThemes ? "Ask Klio to handle the rest" : "Ask Klio to handle this"}</button> : null}
+        {!turnIsWorking && briefingTurn?.status !== "awaiting_parent" ? <p>{briefingTrust(presentation)}</p> : null}
         {error ? <span role="alert">{error}</span> : null}
       </footer>
     </article> : null}
@@ -116,6 +209,50 @@ export function WeeklyFamilyBriefing({ briefing, state, students, selectedStuden
 
 export function weeklyBriefingShouldRender(briefing: WeeklyBriefingDTO | null, state: WeeklyBriefingState) {
   return state === "pending" || state === "failed" || (state === "available" && Boolean(briefing));
+}
+
+export function isBriefingTurn(turn: AgentTurnDTO | null | undefined): boolean {
+  return turn?.taskName === "Handling weekly briefing" && turn.conversationId === null;
+}
+
+function optimisticBriefingTurn(input: { briefingId: string; request: string; studentId: string | null; createdAt: string }): AgentTurnDTO {
+  return {
+    id: `optimistic:${input.briefingId}`,
+    status: "queued",
+    goal: "weekly_plan",
+    request: input.request,
+    result: null,
+    clarification: null,
+    events: [{ sequence: 1, kind: "turn.queued", label: "Received the handoff" }],
+    tools: [],
+    taskName: "Handling weekly briefing",
+    studentId: input.studentId,
+    subject: null,
+    sourceCount: 0,
+    normalizedStep: "waiting",
+    expectedOutput: "A completed safe change, a durable reviewable proposal, or one precise question",
+    createdAt: input.createdAt,
+    startedAt: null,
+    lastHeartbeatAt: null,
+    lastProgressAt: input.createdAt,
+    conversationId: null,
+    interactionMode: "act",
+    streamedMessage: null,
+  };
+}
+
+function briefingProgress(turn: AgentTurnDTO | null) {
+  if (!turn) return 0;
+  if (turn.status === "completed") return 100;
+  if (turn.status === "queued") return 10;
+  const steps: Record<string, number> = { waiting: 10, reading: 28, planning: 48, acting: 70, verifying: 88, finished: 100 };
+  return Math.max(18, steps[turn.normalizedStep ?? ""] ?? Math.min(86, 22 + turn.events.length * 9));
+}
+
+function briefingResultSummary(turn: AgentTurnDTO) {
+  const source = turn.result?.changed[0] ?? turn.result?.message ?? turn.streamedMessage ?? "The background handoff is complete.";
+  const plain = source.replace(/[*_`#>]/g, "").replace(/\s+/g, " ").trim();
+  return plain.length > 180 ? `${plain.slice(0, 177).trimEnd()}…` : plain;
 }
 
 function briefingSummary(learners: WeeklyBriefingDTO["snapshot"]["learners"], presentation: BriefingPresentation, learnerName?: string) {

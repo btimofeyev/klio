@@ -153,6 +153,104 @@
 .footer p { margin: 0; color: #7b837c; font-size: 8px; line-height: 1.4; }
 .footer > span { color: #985f55; font-size: 8px; line-height: 1.4; }
 
+.handoffProgress,
+.handoffQuestion,
+.handoffFailed,
+.handoffComplete {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  color: #3f5143;
+}
+.handoffHeading,
+.handoffFailed,
+.handoffComplete { grid-template-columns: auto minmax(0, 1fr); align-items: start; }
+.handoffHeading > svg,
+.handoffFailed > svg,
+.handoffComplete > svg { margin-top: 1px; flex: 0 0 auto; }
+.handoffHeading > svg { animation: briefing-spin 1.1s linear infinite; }
+.handoffHeading > span,
+.handoffQuestion > span,
+.handoffFailed > span,
+.handoffComplete > span { min-width: 0; display: grid; gap: 2px; }
+.handoffProgress strong,
+.handoffQuestion strong,
+.handoffFailed strong,
+.handoffComplete strong { font-size: 9px; line-height: 1.25; }
+.handoffProgress small,
+.handoffQuestion small,
+.handoffFailed small,
+.handoffComplete small { color: #717a73; font-size: 8px; line-height: 1.35; }
+
+.progressTrack {
+  position: relative;
+  height: 4px;
+  overflow: hidden;
+  background: rgba(63, 81, 67, .12);
+  border-radius: 999px;
+}
+.progressTrack > span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  min-width: 8%;
+  background: #58705d;
+  border-radius: inherit;
+  transition: width 420ms cubic-bezier(.2, .7, .2, 1);
+}
+.progressTrack > span::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .55), transparent);
+  transform: translateX(-100%);
+  animation: briefing-sweep 1.6s ease-in-out infinite;
+}
+
+.handoffQuestion label { display: grid; gap: 3px; }
+.handoffQuestion label > span { position: absolute; overflow: hidden; width: 1px; height: 1px; clip: rect(0 0 0 0); }
+.handoffQuestion input {
+  min-width: 0;
+  height: 34px;
+  padding: 0 8px;
+  color: #354038;
+  background: rgba(255, 255, 255, .58);
+  border: 1px solid rgba(63, 81, 67, .25);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 9px;
+}
+.handoffQuestion button,
+.handoffFailed button {
+  min-height: 34px;
+  padding: 0 9px;
+  justify-self: start;
+  color: #3f5143;
+  background: rgba(230, 235, 225, .72);
+  border: 1px solid rgba(63, 81, 67, .28);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 780;
+}
+.handoffQuestion button:disabled,
+.handoffFailed button:disabled { cursor: wait; opacity: .55; }
+.handoffFailed button { grid-column: 2; }
+.handoffComplete > a {
+  grid-column: 2;
+  min-height: 34px;
+  width: fit-content;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #4e6c54;
+  font-size: 9px;
+  font-weight: 780;
+  text-decoration: none;
+}
+
+@keyframes briefing-spin { to { transform: rotate(360deg); } }
+@keyframes briefing-sweep { 55%, 100% { transform: translateX(100%); } }
+
 .status {
   min-height: 76px;
   padding: 12px;
@@ -197,9 +295,16 @@
   .footer > button { min-height: 40px; }
   .footer p { max-width: 135px; text-align: right; }
   .footer > span { grid-column: 1 / -1; }
+  .handoffProgress,
+  .handoffQuestion,
+  .handoffFailed,
+  .handoffComplete { grid-column: 1 / -1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .summaryNote,
   .actionNote { transform: none; }
+  .handoffHeading > svg,
+  .progressTrack > span::after { animation: none; }
+  .progressTrack > span { transition: none; }
 }

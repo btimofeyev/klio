@@ -7,7 +7,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { ArrowLeft, ArrowRight, CalendarDays, Check, ChevronRight, ClipboardCheck, Clock3, Ellipsis, FileCheck2, FileUp, GripVertical, LoaderCircle, Plus, RotateCcw, Sparkles, X } from "lucide-react";
 import { InboxWorkspace } from "@/components/inbox-workspace";
 import { SpatialWorkspace, type SpatialCameraState, type SpatialWorkspaceItem } from "@/components/spatial-workspace";
-import { WeeklyFamilyBriefing, weeklyBriefingShouldRender } from "@/components/weekly-family-briefing";
+import { isBriefingTurn, WeeklyFamilyBriefing, weeklyBriefingShouldRender } from "@/components/weekly-family-briefing";
 import type { AdjustmentDTO, AssignmentDTO, AssignmentReviewDTO, CalendarConflictDTO, CurriculumUnitDTO, PlanningProposalDTO, PracticeSessionDTO, SubmissionDTO } from "@/lib/data/operations";
 import type { AgentConversationDTO, AgentTurnDTO, ArtifactDTO, CategoryDTO, EvidenceDTO, KlioInsightDTO, ReminderDTO, StudentDTO, WeeklyBriefingDTO, WeeklyBriefingState, WorkspaceLayoutDTO } from "@/lib/data/workspace";
 import { reorderDayIds } from "@/lib/schedule/day-order";
@@ -113,7 +113,7 @@ export function OperationsWorkspace({ surface, workspace, initialSelectedDate, i
   // Completed conversations belong in the explicit conversation picker. Restoring
   // one as modal state here makes every workspace remount (day, learner, or lesson
   // changes) look like the user asked to reopen chat.
-  const deskTurn = liveAgentTurn && ["queued", "running", "awaiting_parent", "failed"].includes(liveAgentTurn.status)
+  const deskTurn = liveAgentTurn && !isBriefingTurn(liveAgentTurn) && ["queued", "running", "awaiting_parent", "failed"].includes(liveAgentTurn.status)
     ? liveAgentTurn
     : null;
   useEffect(() => {
@@ -141,7 +141,7 @@ export function OperationsWorkspace({ surface, workspace, initialSelectedDate, i
   const captureWorkspace = <InboxWorkspace key={`capture-${studentId}`} familyId={workspace.family.id} students={workspace.students} categories={workspace.categories} initialEvidence={workspace.evidence} initialReminders={workspace.reminders} initialArtifacts={workspace.artifacts} pendingApprovals={workspace.pendingApprovals} initialAgentTurn={deskTurn} initialAgentConversation={workspace.latestAgentConversation} initialStudentId={selectedLearner?.id ?? ""} workspaceDate={selectedDate} assignmentContext={captureAssignment ? { id: captureAssignment.id, studentId: captureAssignment.studentId, title: captureAssignment.title, subject: captureAssignment.subject } : null} onAssignmentDrop={(assignmentId) => setCaptureAssignment(workspace.assignments.find((item) => item.id === assignmentId) ?? null)} onAssignmentContextClear={() => setCaptureAssignment(null)} onPracticeOpen={(artifactId) => void openPractice({ artifactId })} onAgentTurnChange={setLiveAgentTurn} assistantPrefill={assistantPrefill} compact dashboard />;
   const briefingIsVisible = weeklyBriefingShouldRender(workspace.weeklyBriefing, workspace.weeklyBriefingState)
     && workspace.weeklyBriefing?.id !== locallyDismissedBriefingId;
-  const briefingSurface = briefingIsVisible ? <WeeklyFamilyBriefing briefing={workspace.weeklyBriefing} state={workspace.weeklyBriefingState} students={workspace.students} selectedStudentId={studentId} familyTimezone={workspace.family.timezone} planningProposals={visiblePlanningProposals} onAsk={(request) => setAssistantPrefill((current) => ({ key: (current?.key ?? 0) + 1, request }))} onDismissed={() => setLocallyDismissedBriefingId(workspace.weeklyBriefing?.id ?? null)} /> : null;
+  const briefingSurface = briefingIsVisible ? <WeeklyFamilyBriefing briefing={workspace.weeklyBriefing} state={workspace.weeklyBriefingState} familyId={workspace.family.id} students={workspace.students} selectedStudentId={studentId} familyTimezone={workspace.family.timezone} planningProposals={visiblePlanningProposals} activeAgentTurn={isBriefingTurn(liveAgentTurn) ? liveAgentTurn : null} onDismissed={() => setLocallyDismissedBriefingId(workspace.weeklyBriefing?.id ?? null)} /> : null;
 
   function savedConflict(conflict: CalendarConflictDTO, work: ConflictAffectedWork, mode: "created" | "updated") {
     setConflictOverrides((current) => [conflict, ...current.filter((item) => item.id !== conflict.id)]);
