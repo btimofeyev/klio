@@ -49,6 +49,21 @@ export function WeeklyFamilyBriefing({ briefing, state, familyId, students, sele
   }, [briefing, state]);
 
   useEffect(() => {
+    if (!briefing || state !== "available" || briefingTurn) return;
+    const controller = new AbortController();
+    void fetch(`/api/agent/turns?familyId=${encodeURIComponent(familyId)}`, { cache: "no-store", signal: controller.signal })
+      .then(async (response) => response.ok ? response.json() as Promise<{ turns?: AgentTurnDTO[] }> : null)
+      .then((result) => {
+        const restored = result?.turns?.find((turn) => isBriefingTurn(turn) && Date.parse(turn.createdAt) >= Date.parse(briefing.generatedAt));
+        if (restored) setBriefingTurn(restored);
+      })
+      .catch((caught) => {
+        if (!(caught instanceof DOMException && caught.name === "AbortError")) return;
+      });
+    return () => controller.abort();
+  }, [briefing, briefingTurn, familyId, state]);
+
+  useEffect(() => {
     if (!briefingTurnId || !briefingTurnStatus || !["queued", "running"].includes(briefingTurnStatus) || briefingTurnId.startsWith("optimistic:")) return;
     let cancelled = false;
     let timer: number | undefined;

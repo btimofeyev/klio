@@ -128,6 +128,39 @@ describe("weekly family briefing", () => {
     expect(document.querySelectorAll('[data-briefing-side]')).toHaveLength(1);
   });
 
+  it("restores a completed background receipt after a full page refresh", async () => {
+    const restoredTurn: NonNullable<React.ComponentProps<typeof WeeklyFamilyBriefing>["activeAgentTurn"]> = {
+      id: "turn-restored-no-op",
+      status: "completed",
+      goal: "weekly_plan",
+      request: "Take care of the remaining items in the family’s weekly briefing.",
+      result: { schemaVersion: 1, kind: "no_op", message: "The current plan is already simplified.", understood: [], used: ["Current schedule"], changed: [], remaining: [], actions: [] },
+      clarification: null,
+      events: [],
+      tools: [],
+      taskName: "Handling weekly briefing",
+      studentId: null,
+      subject: null,
+      sourceCount: 0,
+      normalizedStep: "finished",
+      expectedOutput: null,
+      createdAt: "2026-07-13T10:00:00.000Z",
+      startedAt: "2026-07-13T10:00:00.000Z",
+      lastHeartbeatAt: "2026-07-13T10:00:10.000Z",
+      lastProgressAt: "2026-07-13T10:00:10.000Z",
+      conversationId: null,
+      interactionMode: "act",
+      streamedMessage: "The current plan is already simplified.",
+    };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => String(input).startsWith("/api/agent/turns?")
+      ? { ok: true, json: async () => ({ turns: [restoredTurn] }) }
+      : { ok: true, json: async () => ({}) }));
+    renderBriefing();
+    await waitFor(() => expect(screen.queryByRole("button", { name: /Ask Klio to handle/ })).not.toBeInTheDocument());
+    expect(screen.getByText("Klio handled the briefing. Nothing else needs your decision.")).toBeInTheDocument();
+    expect(document.querySelectorAll('[data-briefing-side]')).toHaveLength(1);
+  });
+
   it("keeps learner-scoped actions learner-specific", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }));
     const scoped = {
