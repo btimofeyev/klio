@@ -1171,6 +1171,7 @@
 .calendar-conflict-dialog {
   width: min(540px, calc(100% - 28px));
   max-height: calc(100dvh - 28px);
+  margin: auto;
   padding: 0;
   overflow: auto;
   color: #343d35;
