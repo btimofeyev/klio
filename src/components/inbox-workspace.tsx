@@ -580,11 +580,34 @@ export function InboxWorkspace({ familyId, students, categories, initialEvidence
     setAgentTurn({ id: requestId, status: "queued", goal: job.intent, request, result: null, clarification: null, events: [{ sequence: 1, kind: "turn.queued", label: "Received the handoff" }], tools: [], taskName: job.label || "Handling a family handoff", studentId: targetStudentId || null, subject: job.subject ?? assignmentContext?.subject ?? null, sourceCount: job.evidenceIds?.length ?? 0, normalizedStep: "waiting", expectedOutput: job.expectedOutput ?? "A useful response from Klio", createdAt: queuedAt, startedAt: null, lastHeartbeatAt: null, lastProgressAt: queuedAt, conversationId: options?.preserveConversation ? conversationId : null, interactionMode: "act", streamedMessage: null });
     try {
       const response = await fetch("/api/agent", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ familyId, studentId: targetStudentId || null, evidenceIds: job.evidenceIds ?? [], intent: job.intent, request, requestId, contextDate: workspaceDate, assignmentId: targetAssignmentId, conversationId: options?.preserveConversation ? conversationId : undefined }) });
-      const result = await response.json() as { turn?: { id: string }; conversationId?: string; interactionMode?: "answer" | "act"; error?: string };
+      const result = await response.json() as {
+        turn?: { id: string; started_at?: string | null; completed_at?: string | null };
+        conversationId?: string;
+        interactionMode?: "answer" | "act";
+        instantReply?: string;
+        publicResult?: AgentTurnSummary["result"];
+        error?: string;
+      };
       if (!response.ok) throw new Error(result.error ?? "Klio could not start that job.");
       if (!result.turn?.id || !result.conversationId) throw new Error("Klio could not create a durable conversation.");
       setConversationId(result.conversationId);
-      setAgentTurn((current) => current ? { ...current, id: result.turn!.id, conversationId: result.conversationId!, interactionMode: result.interactionMode ?? current.interactionMode } : current);
+      setAgentTurn((current) => {
+        if (!current) return current;
+        const updated = { ...current, id: result.turn!.id, conversationId: result.conversationId!, interactionMode: result.interactionMode ?? current.interactionMode };
+        if (!result.instantReply) return updated;
+        const completedAt = result.turn?.completed_at ?? new Date().toISOString();
+        return {
+          ...updated,
+          status: "completed",
+          result: result.publicResult ?? null,
+          streamedMessage: result.instantReply,
+          normalizedStep: "finished",
+          startedAt: result.turn?.started_at ?? completedAt,
+          completedAt,
+          lastHeartbeatAt: completedAt,
+          lastProgressAt: completedAt,
+        };
+      });
       setText(options?.afterStartText ?? ""); setAgentJob(null); captureInput.current?.blur(); onAssignmentContextClear?.(); onFocusModeChange?.(false);
       void refreshWhenTurnFinishes(result.turn.id, undefined, true, result.conversationId);
     } catch (caught) {

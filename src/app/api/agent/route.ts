@@ -5,12 +5,13 @@ import { createClient } from "@/lib/supabase/server";
 import { checkRateLimit } from "@/lib/security/rate-limit";
 import { enqueueAgentJob, safelyProcessAgentJob } from "@/lib/agent/jobs";
 import type { AgentIntent } from "@/lib/agent/run-agent";
-import { enqueueWorkspaceTurn, interactionModeForRequest, type WorkspaceGoal } from "@/lib/agent/workspace/turns";
+import { completeInstantWorkspaceTurn, enqueueWorkspaceTurn, interactionModeForRequest, type WorkspaceGoal } from "@/lib/agent/workspace/turns";
 import { processWorkspaceTurn } from "@/lib/agent/workspace/runtime";
 import { serverEnv } from "@/lib/env";
 import { postgresUuidSchema } from "@/lib/validation/postgres-uuid";
 import { assignmentGuidanceRequest, explicitlyMentionedStudentId, isAssignmentGuidanceRequest } from "@/lib/agent/workspace/request-routing";
 import { appendAgentConversationMessage, ensureAgentConversation } from "@/lib/agent/workspace/conversations";
+import { instantConversationReply } from "@/lib/agent/workspace/instant-conversation";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -29,23 +30,46 @@ export async function POST(request: Request) {
     const parsed = schema.safeParse(await request.json());
     if (!parsed.success) return NextResponse.json({ error: "Tell Klio what you would like it to take care of." }, { status: 400 });
     const supabase = await createClient();
-    const { data: membership } = await supabase.from("family_members").select("family_id").eq("family_id", parsed.data.familyId).eq("user_id", parent.id).maybeSingle();
+    const [membershipResult, students, assignment] = await Promise.all([
+      supabase.from("family_members").select("family_id").eq("family_id", parsed.data.familyId).eq("user_id", parent.id).maybeSingle(),
+      supabase.from("students").select("id,display_name").eq("family_id", parsed.data.familyId).eq("active", true),
+      parsed.data.assignmentId
+        ? supabase.from("assignments").select("id,student_id,title,subject").eq("family_id", parsed.data.familyId).eq("id", parsed.data.assignmentId).maybeSingle()
+        : Promise.resolve({ data: null, error: null }),
+    ]);
+    if (membershipResult.error) throw membershipResult.error;
+    const membership = membershipResult.data;
     if (!membership) return NextResponse.json({ error: "You do not have access to that workspace." }, { status: 403 });
-    const students = await supabase.from("students").select("id,display_name").eq("family_id", parsed.data.familyId).eq("active", true);
     if (students.error) throw students.error;
-    const assignment = parsed.data.assignmentId ? await supabase.from("assignments").select("id,student_id,title,subject").eq("family_id", parsed.data.familyId).eq("id", parsed.data.assignmentId).maybeSingle() : null;
-    if (assignment?.error) throw assignment.error;
-    if (parsed.data.assignmentId && !assignment?.data) return NextResponse.json({ error: "That lesson is no longer available in this workspace." }, { status: 404 });
+    if (assignment.error) throw assignment.error;
+    if (parsed.data.assignmentId && !assignment.data) return NextResponse.json({ error: "That lesson is no longer available in this workspace." }, { status: 404 });
     if (serverEnv.klioAgentRuntime === "codex_app_server") {
       const goal = intentGoal(parsed.data.intent);
       const idempotencyKey = `workspace:${parsed.data.requestId}`;
-      const assignmentGuidance = Boolean(assignment?.data && isAssignmentGuidanceRequest(parsed.data.request));
-      const contextualRequest = assignment?.data && assignmentGuidance ? assignmentGuidanceRequest({ title: assignment.data.title, subject: assignment.data.subject, request: parsed.data.request }) : parsed.data.request;
+      const assignmentGuidance = Boolean(assignment.data && isAssignmentGuidanceRequest(parsed.data.request));
+      const contextualRequest = assignment.data && assignmentGuidance ? assignmentGuidanceRequest({ title: assignment.data.title, subject: assignment.data.subject, request: parsed.data.request }) : parsed.data.request;
       const interactionMode = interactionModeForRequest({ goal, request: parsed.data.request, assignmentGuidance });
       const mentionedStudentId = explicitlyMentionedStudentId(parsed.data.request, students.data.map((student) => ({ id: student.id, displayName: student.display_name })));
-      const effectiveStudentId = assignment?.data?.student_id ?? mentionedStudentId ?? parsed.data.studentId;
+      const effectiveStudentId = assignment.data?.student_id ?? mentionedStudentId ?? parsed.data.studentId;
       const conversationId = await ensureAgentConversation({ familyId: parsed.data.familyId, requestedBy: parent.id, conversationId: parsed.data.conversationId, studentId: effectiveStudentId, openingRequest: parsed.data.request });
-      const presentation = requestPresentation(parsed.data.intent, contextualRequest, assignment?.data, interactionMode);
+      const instantReply = parsed.data.intent === "general" && !parsed.data.evidenceIds.length && !assignment.data
+        ? instantConversationReply(parsed.data.request)
+        : null;
+      if (instantReply) {
+        const workspace = await completeInstantWorkspaceTurn({
+          familyId: parsed.data.familyId,
+          requestedBy: parent.id,
+          studentId: effectiveStudentId,
+          idempotencyKey,
+          request: parsed.data.request,
+          message: instantReply,
+          conversationId,
+        });
+        await appendAgentConversationMessage({ conversationId, familyId: parsed.data.familyId, role: "user", content: parsed.data.request, agentTurnId: workspace.turn.id, idempotencyKey: `turn:${parsed.data.requestId}:user` });
+        await appendAgentConversationMessage({ conversationId, familyId: parsed.data.familyId, role: "assistant", content: instantReply, agentTurnId: workspace.turn.id, idempotencyKey: `turn:${workspace.turn.id}:assistant` });
+        return NextResponse.json({ turn: workspace.turn, conversationId, interactionMode: "answer", instantReply, publicResult: workspace.publicResult }, { status: 200 });
+      }
+      const presentation = requestPresentation(parsed.data.intent, contextualRequest, assignment.data, interactionMode);
       const workspace = await enqueueWorkspaceTurn({ familyId: parsed.data.familyId, requestedBy: parent.id, evidenceIds: parsed.data.evidenceIds, studentId: effectiveStudentId, trigger: "parent_message", goal, idempotencyKey, request: contextualRequest, contextDate: parsed.data.contextDate, conversationId, interactionMode, ...presentation });
       await appendAgentConversationMessage({ conversationId, familyId: parsed.data.familyId, role: "user", content: parsed.data.request, agentTurnId: workspace.turn.id, idempotencyKey: `turn:${parsed.data.requestId}:user` });
       if (serverEnv.klioAgentInline && !workspace.duplicate) after(() => processWorkspaceTurn(workspace.turn.id));

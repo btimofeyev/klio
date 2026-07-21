@@ -1,10 +1,13 @@
 import "server-only";
 
+import { createHash } from "node:crypto";
 import { issueWorkspaceCapability } from "./capability";
 import { workspaceToolNames, type WorkspaceToolName } from "./contracts";
 import { buildFamilyWorkspaceSnapshot } from "./snapshot";
+import { buildHostPublicResult } from "./public-result";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { serverEnv } from "@/lib/env";
+import type { Json } from "@/lib/supabase/database.types";
 
 export type WorkspaceGoal = "capture" | "dashboard" | "lesson" | "practice" | "weekly_plan" | "portfolio" | "records" | "general";
 export type InteractionMode = "answer" | "act";
@@ -17,29 +20,16 @@ export async function enqueueWorkspaceTurn(input: {
   conversationId?: string | null; interactionMode?: InteractionMode;
 }) {
   const admin = createAdminClient();
-  const preflight = await buildStableSnapshot({ familyId: input.familyId, evidenceIds: input.evidenceIds, studentId: input.studentId, familyWide: Boolean(input.conversationId) });
-  let threadQuery = admin.from("agent_threads").select("id").eq("family_id", input.familyId).eq("agent_kind", "family_workspace").in("status", ["active", "awaiting_parent", "replacing"]);
-  threadQuery = input.conversationId ? threadQuery.eq("conversation_id", input.conversationId) : threadQuery.is("conversation_id", null);
-  const threadLookup = await threadQuery.maybeSingle();
-  let thread = threadLookup.data;
-  const threadError = threadLookup.error;
-  if (threadError) throw threadError;
-  if (!thread) {
-    const created = await admin.from("agent_threads").insert({ family_id: input.familyId, provider: "codex_app_server", status: "active", conversation_id: input.conversationId ?? null }).select("id").single();
-    if (created.error) {
-      let existingQuery = admin.from("agent_threads").select("id").eq("family_id", input.familyId).eq("agent_kind", "family_workspace").in("status", ["active", "awaiting_parent", "replacing"]);
-      existingQuery = input.conversationId ? existingQuery.eq("conversation_id", input.conversationId) : existingQuery.is("conversation_id", null);
-      const existing = await existingQuery.single();
-      if (existing.error) throw created.error;
-      thread = existing.data;
-    } else thread = created.data;
-  }
+  const [snapshotIdentity, thread] = await Promise.all([
+    readSnapshotIdentity(admin, input.familyId),
+    ensureWorkspaceThread(admin, input.familyId, input.conversationId),
+  ]);
   const evidenceIds = [...new Set(input.evidenceIds ?? [])];
   const createdTurn = await admin.from("agent_turns").insert({
     thread_id: thread.id, family_id: input.familyId, requested_by: input.requestedBy,
     source_evidence_id: evidenceIds[0] ?? null, trigger: input.trigger, goal: input.goal,
-    idempotency_key: input.idempotencyKey, initial_snapshot_version: preflight.version,
-    current_snapshot_version: preflight.version, snapshot_hash: preflight.hash,
+    idempotency_key: input.idempotencyKey, initial_snapshot_version: snapshotIdentity.version,
+    current_snapshot_version: snapshotIdentity.version, snapshot_hash: snapshotIdentity.hash,
     student_id: input.studentId ?? null, task_name: input.taskName?.trim().slice(0, 200) || taskNameForGoal(input.goal),
     subject: input.subject?.trim().slice(0, 80) || null, source_count: evidenceIds.length,
     normalized_step: "waiting", expected_output: input.expectedOutput?.trim().slice(0, 300) || expectedOutputForGoal(input.goal),
@@ -51,13 +41,82 @@ export async function enqueueWorkspaceTurn(input: {
     if (createdTurn.error.code === "23505") {
       const existing = await admin.from("agent_turns").select("id, thread_id, family_id, status, initial_snapshot_version, snapshot_hash").eq("family_id", input.familyId).eq("idempotency_key", input.idempotencyKey).single();
       if (existing.error) throw existing.error;
-      return { turn: existing.data, snapshot: preflight.snapshot, duplicate: true };
+      return { turn: existing.data, duplicate: true };
     }
     throw createdTurn.error;
   }
   await admin.from("agent_events").insert({ family_id: input.familyId, turn_id: createdTurn.data.id, sequence: 1, kind: "turn.queued", payload: { goal: input.goal } });
   if (evidenceIds.length) await admin.from("evidence_items").update({ processing_status: "queued", error_message: null }).eq("family_id", input.familyId).in("id", evidenceIds).neq("processing_status", "ready");
-  return { turn: createdTurn.data, snapshot: preflight.snapshot, duplicate: false };
+  return { turn: createdTurn.data, duplicate: false };
+}
+
+export async function completeInstantWorkspaceTurn(input: {
+  familyId: string;
+  requestedBy: string;
+  studentId?: string | null;
+  idempotencyKey: string;
+  request: string;
+  message: string;
+  conversationId: string;
+}) {
+  const admin = createAdminClient();
+  const [snapshotIdentity, thread] = await Promise.all([
+    readSnapshotIdentity(admin, input.familyId, "instant_conversation"),
+    ensureWorkspaceThread(admin, input.familyId, input.conversationId),
+  ]);
+  const now = new Date().toISOString();
+  const publicResult = buildHostPublicResult({
+    terminal: { kind: "completed", message: input.message, understood: [], used: [], changed: [], remaining: [] },
+    toolResults: [],
+    waitingForClarification: false,
+  });
+  const createdTurn = await admin.from("agent_turns").insert({
+    thread_id: thread.id,
+    family_id: input.familyId,
+    requested_by: input.requestedBy,
+    trigger: "parent_message",
+    goal: "general",
+    status: "completed",
+    outcome: "none",
+    idempotency_key: input.idempotencyKey,
+    initial_snapshot_version: snapshotIdentity.version,
+    current_snapshot_version: snapshotIdentity.version,
+    snapshot_hash: snapshotIdentity.hash,
+    snapshot_summary: { evidence_ids: [], student_id: input.studentId ?? null, request: input.request, context_date: null },
+    attempt_count: 1,
+    started_at: now,
+    completed_at: now,
+    last_heartbeat_at: now,
+    last_progress_at: now,
+    public_result: publicResult as Json,
+    streamed_message: input.message,
+    normalized_step: "finished",
+    task_name: "Answering your message",
+    expected_output: "A clear answer",
+    student_id: input.studentId ?? null,
+    conversation_id: input.conversationId,
+    interaction_mode: "answer",
+  }).select("id, thread_id, family_id, status, initial_snapshot_version, snapshot_hash, started_at, completed_at").single();
+  if (createdTurn.error) {
+    if (createdTurn.error.code === "23505") {
+      const existing = await admin.from("agent_turns").select("id, thread_id, family_id, status, initial_snapshot_version, snapshot_hash, started_at, completed_at").eq("family_id", input.familyId).eq("idempotency_key", input.idempotencyKey).single();
+      if (existing.error) throw existing.error;
+      return { turn: existing.data, duplicate: true, publicResult };
+    }
+    throw createdTurn.error;
+  }
+  const events = await admin.from("agent_events").insert([
+    { family_id: input.familyId, turn_id: createdTurn.data.id, sequence: 1, kind: "turn.queued", payload: { goal: "general", instant: true } },
+    { family_id: input.familyId, turn_id: createdTurn.data.id, sequence: 2, kind: "turn.started", payload: { instant: true } },
+    { family_id: input.familyId, turn_id: createdTurn.data.id, sequence: 3, kind: "turn.completed", payload: { message: input.message, instant: true } },
+  ]);
+  if (events.error) throw events.error;
+  const updatedThread = await admin.from("agent_threads").update({
+    last_turn_at: now,
+    turn_count: thread.turn_count + 1,
+  }).eq("id", thread.id);
+  if (updatedThread.error) throw updatedThread.error;
+  return { turn: createdTurn.data, duplicate: false, publicResult };
 }
 
 export async function claimWorkspaceTurn(turnId: string) {
@@ -182,4 +241,29 @@ async function buildStableSnapshot(input: Parameters<typeof buildFamilyWorkspace
     catch (error) { if (!(error instanceof Error) || error.message !== "SNAPSHOT_CHANGED_DURING_BUILD") throw error; lastError = error; }
   }
   throw lastError ?? new Error("SNAPSHOT_UNSTABLE");
+}
+
+async function readSnapshotIdentity(admin: ReturnType<typeof createAdminClient>, familyId: string, purpose = "queued_workspace_turn") {
+  const family = await admin.from("families").select("agent_context_version").eq("id", familyId).single();
+  if (family.error) throw family.error;
+  const version = family.data.agent_context_version;
+  // Queuing needs only a durable version marker. claimWorkspaceTurn replaces
+  // this marker with the hash of the one authoritative snapshot it builds.
+  const hash = createHash("sha256").update(JSON.stringify({ familyId, version, purpose })).digest("hex");
+  return { version, hash };
+}
+
+async function ensureWorkspaceThread(admin: ReturnType<typeof createAdminClient>, familyId: string, conversationId?: string | null) {
+  let threadQuery = admin.from("agent_threads").select("id,status,turn_count").eq("family_id", familyId).eq("agent_kind", "family_workspace").in("status", ["active", "awaiting_parent", "replacing"]);
+  threadQuery = conversationId ? threadQuery.eq("conversation_id", conversationId) : threadQuery.is("conversation_id", null);
+  const threadLookup = await threadQuery.maybeSingle();
+  if (threadLookup.error) throw threadLookup.error;
+  if (threadLookup.data) return threadLookup.data;
+  const created = await admin.from("agent_threads").insert({ family_id: familyId, provider: "codex_app_server", status: "active", conversation_id: conversationId ?? null }).select("id,status,turn_count").single();
+  if (!created.error) return created.data;
+  let existingQuery = admin.from("agent_threads").select("id,status,turn_count").eq("family_id", familyId).eq("agent_kind", "family_workspace").in("status", ["active", "awaiting_parent", "replacing"]);
+  existingQuery = conversationId ? existingQuery.eq("conversation_id", conversationId) : existingQuery.is("conversation_id", null);
+  const existing = await existingQuery.single();
+  if (existing.error) throw created.error;
+  return existing.data;
 }
