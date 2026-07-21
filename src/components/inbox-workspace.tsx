@@ -88,6 +88,7 @@ export function InboxWorkspace({ familyId, students, categories, initialEvidence
   const captureShell = useRef<HTMLElement>(null);
   const conversationButton = useRef<HTMLButtonElement>(null);
   const conversationPicker = useRef<HTMLElement>(null);
+  const conversationSelectionEpoch = useRef(0);
   const capabilityLibraryButton = useRef<HTMLButtonElement>(null);
   const capabilityLibraryPanel = useRef<HTMLElement>(null);
   const appliedAssistantPrefillKey = useRef<number | null>(null);
@@ -167,11 +168,14 @@ export function InboxWorkspace({ familyId, students, categories, initialEvidence
 
   useEffect(() => {
     if (!agentTurn?.id) return;
+    const selectionEpoch = conversationSelectionEpoch.current;
+    let cancelled = false;
     const supabase = createSupabaseClient();
     const refreshLiveTurn = async () => {
       const response = await fetch(`/api/agent/turns?familyId=${familyId}${conversationId ? `&conversationId=${encodeURIComponent(conversationId)}` : ""}`, { cache: "no-store" });
       if (!response.ok) return;
       const body = await response.json() as { turns?: AgentTurnSummary[]; conversation?: { id: string; messages: Array<{ role: string; content: string; turnId?: string | null }> } | null };
+      if (cancelled || selectionEpoch !== conversationSelectionEpoch.current) return;
       const turn = body.turns?.find((item) => item.id === agentTurn.id);
       if (turn) applyAgentTurn(turn);
       if (body.conversation?.id) {
@@ -183,7 +187,7 @@ export function InboxWorkspace({ familyId, students, categories, initialEvidence
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "agent_turns", filter: `id=eq.${agentTurn.id}` }, () => { void refreshLiveTurn(); });
     if (conversationId) channel.on("postgres_changes", { event: "INSERT", schema: "public", table: "agent_conversation_messages", filter: `conversation_id=eq.${conversationId}` }, () => { void refreshLiveTurn(); });
     channel.subscribe();
-    return () => { void supabase.removeChannel(channel); };
+    return () => { cancelled = true; void supabase.removeChannel(channel); };
   }, [agentTurn?.id, conversationId, familyId]);
 
   useEffect(() => {
@@ -454,11 +458,15 @@ export function InboxWorkspace({ familyId, students, categories, initialEvidence
   }
 
   async function openAgentConversation(nextConversationId: string) {
+    const selectionEpoch = nextConversationId === conversationId
+      ? conversationSelectionEpoch.current
+      : ++conversationSelectionEpoch.current;
     const response = await fetch(`/api/agent/turns?familyId=${encodeURIComponent(familyId)}&conversationId=${encodeURIComponent(nextConversationId)}`, { cache: "no-store" });
     const body = await response.json() as { turns?: AgentTurnSummary[]; conversation?: { id: string; studentId?: string | null; messages: Array<{ role: string; content: string; turnId?: string | null }> } | null; error?: string };
     if (!response.ok) throw new Error(body.error ?? "Klio could not open that conversation.");
     const selectedTurn = body.turns?.[0];
     if (!selectedTurn || !body.conversation) throw new Error("That conversation is no longer available.");
+    if (selectionEpoch !== conversationSelectionEpoch.current) return;
     setConversationId(body.conversation.id);
     setConversationHistory(body.conversation.messages
       .filter((item) => item.turnId !== selectedTurn.id)
@@ -514,6 +522,7 @@ export function InboxWorkspace({ familyId, students, categories, initialEvidence
   }
 
   function startNewAgentConversation() {
+    conversationSelectionEpoch.current += 1;
     setConversationPickerOpen(false);
     setConversationId(null);
     setConversationHistory([]);
@@ -567,6 +576,7 @@ export function InboxWorkspace({ familyId, students, categories, initialEvidence
   }
 
   async function runAgentJob(job: AgentJob, request: string, options?: { studentId?: string | null; assignmentId?: string; preserveConversation?: boolean; afterStartText?: string }) {
+    const selectionEpoch = ++conversationSelectionEpoch.current;
     const requestId = createClientUuid();
     const targetStudentId = options?.studentId ?? captureStudentId;
     const targetAssignmentId = options?.assignmentId ?? assignmentContext?.id;
@@ -590,6 +600,7 @@ export function InboxWorkspace({ familyId, students, categories, initialEvidence
       };
       if (!response.ok) throw new Error(result.error ?? "Klio could not start that job.");
       if (!result.turn?.id || !result.conversationId) throw new Error("Klio could not create a durable conversation.");
+      if (selectionEpoch !== conversationSelectionEpoch.current) return;
       setConversationId(result.conversationId);
       setAgentTurn((current) => {
         if (!current) return current;
@@ -609,7 +620,7 @@ export function InboxWorkspace({ familyId, students, categories, initialEvidence
         };
       });
       setText(options?.afterStartText ?? ""); setAgentJob(null); captureInput.current?.blur(); onAssignmentContextClear?.(); onFocusModeChange?.(false);
-      void refreshWhenTurnFinishes(result.turn.id, undefined, true, result.conversationId);
+      void refreshWhenTurnFinishes(result.turn.id, undefined, true, result.conversationId, selectionEpoch);
     } catch (caught) {
       setAgentTurn(null); setMessage(caught instanceof Error ? caught.message : "Klio could not start that job.");
     } finally { setBusy(false); }
@@ -718,13 +729,15 @@ export function InboxWorkspace({ familyId, students, categories, initialEvidence
     finally { setBusy(false); }
   }
 
-  async function refreshWhenTurnFinishes(turnId: string, evidenceId?: string, showProgress = false, activeConversationId?: string) {
+  async function refreshWhenTurnFinishes(turnId: string, evidenceId?: string, showProgress = false, activeConversationId?: string, selectionEpoch = conversationSelectionEpoch.current) {
     for (let attempt = 0; attempt < 400; attempt += 1) {
       await delay(1500);
+      if (selectionEpoch !== conversationSelectionEpoch.current) return;
       try {
         const response = await fetch(`/api/agent/turns?familyId=${familyId}${activeConversationId ? `&conversationId=${encodeURIComponent(activeConversationId)}` : ""}`, { cache: "no-store" });
         if (!response.ok) return;
         const body = await response.json();
+        if (selectionEpoch !== conversationSelectionEpoch.current) return;
         const turn = body.turns?.find((item: AgentTurnSummary) => item.id === turnId) as AgentTurnSummary | undefined;
         if (body.conversation?.id) {
           setConversationId(body.conversation.id);

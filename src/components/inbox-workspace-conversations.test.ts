@@ -120,4 +120,83 @@ describe("InboxWorkspace recent conversations", () => {
       { cache: "no-store" },
     );
   });
+
+  it("ignores a stale refresh after switching conversations", async () => {
+    vi.stubGlobal("ResizeObserver", MockResizeObserver);
+    const nextConversationId = "66666666-6666-4666-8666-666666666666";
+    const nextTurnId = "77777777-7777-4777-8777-777777777777";
+    const nextTurn: AgentTurnDTO = {
+      ...turn,
+      id: nextTurnId,
+      request: "Show me the new conversation.",
+      result: { ...turn.result!, message: "This is the new conversation response." },
+      conversationId: nextConversationId,
+    };
+    const nextConversation: AgentConversationDTO = {
+      id: nextConversationId,
+      title: "The new conversation",
+      studentId: null,
+      messages: [
+        { id: "88888888-8888-4888-8888-888888888888", role: "user", content: nextTurn.request, turnId: nextTurnId, createdAt: now },
+        { id: "99999999-9999-4999-8999-999999999999", role: "assistant", content: nextTurn.result!.message, turnId: nextTurnId, createdAt: now },
+      ],
+    };
+    let resolveStaleRefresh!: (response: Response) => void;
+    const staleRefresh = new Promise<Response>((resolve) => { resolveStaleRefresh = resolve; });
+    let oldConversationRequests = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes(`conversationId=${encodeURIComponent(conversationId)}`)) {
+        oldConversationRequests += 1;
+        if (oldConversationRequests === 1) return staleRefresh;
+        return new Response(JSON.stringify({ turns: [turn], conversation }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.includes(`conversationId=${encodeURIComponent(nextConversationId)}`)) {
+        return new Response(JSON.stringify({ turns: [nextTurn], conversation: nextConversation }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({
+        turns: [nextTurn, turn],
+        conversations: [
+          { id: nextConversationId, title: nextConversation.title, studentId: null, updatedAt: now },
+          { id: conversationId, title: conversation.title, studentId: null, updatedAt: now },
+        ],
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(React.createElement(InboxWorkspace, {
+      familyId,
+      students: [],
+      categories: [],
+      initialEvidence: [],
+      initialReminders: [],
+      initialArtifacts: [],
+      pendingApprovals: 0,
+      initialAgentTurn: turn,
+      initialAgentConversation: conversation,
+      compact: true,
+    }));
+
+    await user.click(screen.getByRole("button", { name: "Open conversations" }));
+    await user.click(await screen.findByRole("button", { name: /Review the family’s recent approved learning records/ }));
+    await waitFor(() => expect(oldConversationRequests).toBe(1));
+    await user.click(screen.getByRole("button", { name: "Open conversations" }));
+    await user.click(await screen.findByRole("button", { name: /The new conversation/ }));
+    expect(await screen.findByText("This is the new conversation response.")).toBeTruthy();
+
+    resolveStaleRefresh(new Response(JSON.stringify({ turns: [turn], conversation }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }));
+
+    await waitFor(() => expect(screen.getByText("This is the new conversation response.")).toBeTruthy());
+    expect(screen.queryByText("The recent learning records are organized and ready to review.")).toBeNull();
+  });
 });
