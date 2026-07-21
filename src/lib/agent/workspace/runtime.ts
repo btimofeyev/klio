@@ -14,6 +14,7 @@ import { waitsForParent } from "./turn-status";
 import type { Json } from "@/lib/supabase/database.types";
 import { buildHostPublicResult, modelTerminalSchema } from "./public-result";
 import { appendTurnAssistantMessage, readConversationRecoveryContext } from "./conversations";
+import { streamedTerminalMessage } from "./streamed-terminal-message";
 
 const terminalSchema = modelTerminalSchema.extend({
   proposedTool: z.object({ name: z.enum(workspaceToolNames), argumentsJson: z.string().max(50_000) }).nullable(),
@@ -143,9 +144,23 @@ export async function processWorkspaceTurn(turnId: string) {
       ];
       const streamed = await thread.runStreamed(input, { outputSchema: z.toJSONSchema(terminalSchema), signal: cancellation.signal });
       let finalText = "";
+      let visibleMessage = "";
+      let lastStreamPersistedAt = 0;
       for await (const event of streamed.events) {
         finalText = finalMessage(event, finalText);
         providerFailure = providerError(event) ?? providerFailure;
+        if ((event.type === "item.updated" || event.type === "item.completed") && event.item.type === "agent_message") {
+          const nextVisibleMessage = streamedTerminalMessage(event.item.text, visibleMessage);
+          if (nextVisibleMessage !== visibleMessage) {
+            visibleMessage = nextVisibleMessage;
+            const now = Date.now();
+            if (event.type === "item.completed" || now - lastStreamPersistedAt >= 250) {
+              lastStreamPersistedAt = now;
+              const progressAt = new Date(now).toISOString();
+              await admin.from("agent_turns").update({ streamed_message: visibleMessage, last_heartbeat_at: progressAt, last_progress_at: progressAt }).eq("id", claimed.turn.id).eq("status", "running");
+            }
+          }
+        }
         const normalized = normalizeEvent(event);
         if (normalized) {
           const progressAt = new Date().toISOString();
