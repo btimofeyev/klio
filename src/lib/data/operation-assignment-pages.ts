@@ -24,6 +24,10 @@ export const ASSIGNMENT_SELECT_COLUMNS = [
   "source_kind",
   "attention_mode",
   "parent_attention_minutes",
+  "curriculum_item_kind",
+  "curriculum_item_state",
+  "curriculum_path",
+  "curriculum_scope_suggestion_id",
 ].join(",");
 
 const calendarDateSchema = z.iso.date();

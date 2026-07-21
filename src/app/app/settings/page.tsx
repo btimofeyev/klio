@@ -32,7 +32,10 @@ export default async function SettingsPage({ searchParams }: { searchParams: Set
     <main className={`fixed-dashboard ${styles.dashboard}`}>
       <header className={styles.header}>
         <div><span>Family workspace</span><h1>Students</h1><p>{workspace.students.length} {workspace.students.length === 1 ? "learner" : "learners"} in {workspace.family.name}</p></div>
-        <Link className={styles.primaryAction} href="/app/settings/learners/new"><Plus size={16} />Add learner</Link>
+        <div className={styles.headerActions}>
+          <Link className={styles.curriculumAction} href="/app/assignments?student=all"><BookOpenText size={15} />All curriculum</Link>
+          <Link className={styles.primaryAction} href="/app/settings/learners/new"><Plus size={16} />Add learner</Link>
+        </div>
       </header>
 
       <nav className={styles.views} aria-label="Student workspace sections">
@@ -61,7 +64,11 @@ export default async function SettingsPage({ searchParams }: { searchParams: Set
           {selectedStudent ? <article className={styles.learnerDetail}>
             <header>
               <div><span>Learning setup</span><h2>{selectedStudent.displayName}</h2><p>{stageLabel(selectedStudent.gradeBand)}</p></div>
-              <div className={styles.detailActions}><Link href={`/app/records?student=${selectedStudent.id}`}>View records</Link><Link className={styles.editAction} href={`/app/settings/learners/${selectedStudent.id}`}>Edit setup<ChevronRight size={15} /></Link></div>
+              <div className={styles.detailActions}>
+                <Link className={styles.curriculumAction} href={`/app/assignments?student=${selectedStudent.id}`}><BookOpenText size={14} />Curriculum &amp; lessons</Link>
+                <Link className={styles.recordsAction} href={`/app/records?student=${selectedStudent.id}`}>View records</Link>
+                <Link className={styles.editAction} href={`/app/settings/learners/${selectedStudent.id}`}>Edit setup<ChevronRight size={15} /></Link>
+              </div>
             </header>
             <div className={styles.metrics}>
               <div><Clock3 size={16} /><span><strong>{selectedStudent.dailyCapacityMinutes ?? 180} min</strong><small>Daily capacity</small></span></div>

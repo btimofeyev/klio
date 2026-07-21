@@ -41,6 +41,24 @@ describe("weekly family briefing builder", () => {
     expect(result.actions).toEqual([]);
   });
 
+  it("does not mistake unscheduled annual curriculum scope for unfinished weekly work", () => {
+    const result = buildWeeklyFamilyBriefing(input({ assignments: [
+      ...input().assignments,
+      { familyId, id: "future-curriculum", studentId: "maya", curriculumUnitId: "algebra", title: "Algebra · Lesson 42", subject: "Math", status: "planned", scheduledDate: null, estimatedMinutes: 40 },
+    ] }));
+    expect(result.unscheduledWork).toEqual([]);
+    expect(result.actions.some((action) => action.kind === "schedule_work")).toBe(false);
+  });
+
+  it("still surfaces genuinely loose unscheduled work", () => {
+    const result = buildWeeklyFamilyBriefing(input({ assignments: [
+      ...input().assignments,
+      { familyId, id: "loose-project", studentId: "maya", curriculumUnitId: null, title: "Science fair board", subject: "Science", status: "planned", scheduledDate: null, estimatedMinutes: 40 },
+    ] }));
+    expect(result.unscheduledWork).toEqual([{ assignmentId: "loose-project", studentId: "maya", title: "Science fair board", subject: "Science" }]);
+    expect(result.actions.some((action) => action.kind === "schedule_work")).toBe(true);
+  });
+
   it("handles a family with no active learners", () => {
     const result = buildWeeklyFamilyBriefing(input({ students: [], assignments: [] }));
     expect(result.learners).toEqual([]);

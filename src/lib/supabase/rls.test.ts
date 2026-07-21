@@ -434,6 +434,57 @@ describe("family RLS isolation", () => {
     expect(forgedInsert.error).not.toBeNull();
   });
 
+  it("isolates curriculum materials and suggestions across two families", async () => {
+    const student = await clients[0].from("students").insert({
+      family_id: families[0], display_name: "Curriculum material learner",
+    }).select("id").single();
+    if (student.error) throw student.error;
+    const unit = await clients[0].from("curriculum_units").insert({
+      family_id: families[0], student_id: student.data.id, created_by: users[0],
+      subject: "Science", title: "Private science",
+    }).select("id").single();
+    if (unit.error) throw unit.error;
+    const assignment = await clients[0].from("assignments").insert({
+      family_id: families[0], student_id: student.data.id, curriculum_unit_id: unit.data.id,
+      created_by: users[0], title: "Private science · Lesson 1", subject: "Science",
+      sequence_number: 1, curriculum_item_kind: "lesson", curriculum_item_state: "placeholder",
+    }).select("id").single();
+    if (assignment.error) throw assignment.error;
+    const evidence = await clients[0].from("evidence_items").insert({
+      family_id: families[0], created_by: users[0], kind: "note", raw_text: "Private teacher material",
+    }).select("id").single();
+    if (evidence.error) throw evidence.error;
+    const material = await clients[0].from("assignment_materials").insert({
+      family_id: families[0], assignment_id: assignment.data.id, evidence_id: evidence.data.id,
+    });
+    if (material.error) throw material.error;
+    const lessonSuggestion = await clients[0].from("curriculum_material_suggestions").insert({
+      family_id: families[0], assignment_id: assignment.data.id, evidence_id: evidence.data.id,
+      requested_by: users[0], status: "queued",
+    }).select("id").single();
+    if (lessonSuggestion.error) throw lessonSuggestion.error;
+    const scopeSuggestion = await clients[0].from("curriculum_scope_suggestions").insert({
+      family_id: families[0], curriculum_unit_id: unit.data.id, requested_by: users[0],
+      status: "ready", source_kind: "parent_evidence", source_fingerprint: `parent-evidence-${suffix}`,
+      identity_status: "verified", source_evidence_ids: [evidence.data.id],
+    }).select("id").single();
+    if (scopeSuggestion.error) throw scopeSuggestion.error;
+    const scopeEvidence = await clients[0].from("curriculum_scope_suggestion_evidence").insert({
+      family_id: families[0], suggestion_id: scopeSuggestion.data.id, evidence_id: evidence.data.id,
+    });
+    if (scopeEvidence.error) throw scopeEvidence.error;
+
+    expect((await clients[1].from("assignment_materials").select("assignment_id").eq("assignment_id", assignment.data.id)).data).toEqual([]);
+    expect((await clients[1].from("curriculum_material_suggestions").select("id").eq("id", lessonSuggestion.data.id)).data).toEqual([]);
+    expect((await clients[1].from("curriculum_scope_suggestions").select("id").eq("id", scopeSuggestion.data.id)).data).toEqual([]);
+    expect((await clients[1].from("curriculum_scope_suggestion_evidence").select("suggestion_id").eq("suggestion_id", scopeSuggestion.data.id)).data).toEqual([]);
+
+    expect((await clients[1].from("assignment_materials").insert({ family_id: families[0], assignment_id: assignment.data.id, evidence_id: evidence.data.id })).error).not.toBeNull();
+    expect((await clients[1].from("curriculum_material_suggestions").insert({ family_id: families[0], assignment_id: assignment.data.id, evidence_id: evidence.data.id, requested_by: users[1] })).error).not.toBeNull();
+    expect((await clients[1].from("curriculum_scope_suggestions").insert({ family_id: families[0], curriculum_unit_id: unit.data.id, requested_by: users[1], source_kind: "model_prior", source_fingerprint: `forged-${suffix}` })).error).not.toBeNull();
+    expect((await clients[1].from("curriculum_scope_suggestion_evidence").insert({ family_id: families[0], suggestion_id: scopeSuggestion.data.id, evidence_id: evidence.data.id })).error).not.toBeNull();
+  });
+
   it("does not trust an unexpired token after its Auth user is deleted", async () => {
     const email = `deleted-session-${crypto.randomUUID()}@example.test`;
     const created = await admin.auth.admin.createUser({ email, password, email_confirm: true });

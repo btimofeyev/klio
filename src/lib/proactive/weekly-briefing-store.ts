@@ -25,8 +25,8 @@ export async function createWeeklyFamilyBriefing(input: {
   const previousWeekEnd = addLocalDays(weekStart, -1);
 
   let studentsQuery = admin.from("students").select("id,family_id,display_name,daily_capacity_minutes,schedule_preferences,active").eq("family_id", input.familyId).eq("active", true).order("created_at");
-  let scheduledQuery = admin.from("assignments").select("id,family_id,student_id,title,subject,status,scheduled_date,scheduled_time,estimated_minutes,attention_mode,parent_attention_minutes,curriculum_units(attention_mode,parent_attention_minutes)").eq("family_id", input.familyId).gte("scheduled_date", previousWeekStart).lte("scheduled_date", weekEnd).limit(5000);
-  let unscheduledQuery = admin.from("assignments").select("id,family_id,student_id,title,subject,status,scheduled_date,scheduled_time,estimated_minutes,attention_mode,parent_attention_minutes,curriculum_units(attention_mode,parent_attention_minutes)").eq("family_id", input.familyId).is("scheduled_date", null).in("status", ["planned", "doing"]).limit(1000);
+  let scheduledQuery = admin.from("assignments").select("id,family_id,student_id,curriculum_unit_id,title,subject,status,scheduled_date,scheduled_time,estimated_minutes,attention_mode,parent_attention_minutes,curriculum_units(attention_mode,parent_attention_minutes)").eq("family_id", input.familyId).gte("scheduled_date", previousWeekStart).lte("scheduled_date", weekEnd).limit(5000);
+  let unscheduledQuery = admin.from("assignments").select("id,family_id,student_id,curriculum_unit_id,title,subject,status,scheduled_date,scheduled_time,estimated_minutes,attention_mode,parent_attention_minutes,curriculum_units(attention_mode,parent_attention_minutes)").eq("family_id", input.familyId).is("scheduled_date", null).is("curriculum_unit_id", null).in("status", ["planned", "doing"]).limit(1000);
   let submissionsQuery = admin.from("assignment_submissions").select("id,family_id,assignment_id,student_id,submitted_at,assignment_reviews(status)").eq("family_id", input.familyId).gte("submitted_at", `${previousWeekStart}T00:00:00.000Z`).lte("submitted_at", `${previousWeekEnd}T23:59:59.999Z`).limit(1000);
   let checkpointsQuery = admin.from("pacing_checkpoints").select("id,family_id,student_id,goal_id,state,feasible,actual_value,expected_value,as_of_date,learning_goals(title)").eq("family_id", input.familyId).lte("as_of_date", weekEnd).order("as_of_date", { ascending: false }).limit(1000);
   let reviewsQuery = admin.from("assignment_reviews").select("id,family_id,student_id,score,reviewed_at,status,grading_state,written_review_required,written_review_completed,assignments(subject)").eq("family_id", input.familyId).eq("status", "approved").eq("grading_state", "final").gte("reviewed_at", `${previousWeekStart}T00:00:00.000Z`).lte("reviewed_at", `${previousWeekEnd}T23:59:59.999Z`).not("score", "is", null).order("reviewed_at").limit(1000);
@@ -59,6 +59,7 @@ export async function createWeeklyFamilyBriefing(input: {
         familyId: assignment.family_id,
         id: assignment.id,
         studentId: assignment.student_id,
+        curriculumUnitId: assignment.curriculum_unit_id,
         title: assignment.title,
         subject: assignment.subject,
         status: assignment.status,

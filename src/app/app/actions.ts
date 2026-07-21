@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import { z } from "zod";
 import { requireParent } from "@/lib/auth/require-parent";
 import { createClient } from "@/lib/supabase/server";
@@ -11,6 +12,9 @@ import { normalizePracticeSpec } from "@/lib/practice/spec";
 import { subjectSlug } from "@/lib/onboarding/subjects";
 import { FamilyWeekPlanError, planFamilyWeek } from "@/lib/assignments/plan-family-week";
 import { mergeSchedulePreferences } from "@/lib/schedule/availability";
+import { ensureCurriculumScope, resizeCurriculumScope } from "@/lib/curriculum/scope-store";
+import { inferCourseIdentityFromName, normalizeCourseIdentity, normalizeIsbn } from "@/lib/curriculum/course-identity";
+import { queueWebScopeSuggestion } from "@/lib/curriculum/scope-suggestion-store";
 
 const reviewSchema = z.object({
   familyId: z.uuid(), entityId: z.uuid(), entityType: z.enum(["artifact", "skill_observation"]),
@@ -61,6 +65,11 @@ export async function togglePlanItemAction(formData: FormData) {
 export type LearnerSetupState = { error: string | null; success: string | null };
 export type NewLearnerState = { error: string | null };
 
+const isbnInputSchema = z.string().trim().max(32).refine((value) => {
+  try { normalizeIsbn(value); return true; }
+  catch { return false; }
+}, "Enter a valid ISBN-10 or ISBN-13.");
+
 const newLearnerSchema = z.object({
   familyId: z.uuid(),
   displayName: z.string().trim().min(1, "Add the learner’s first name.").max(80),
@@ -81,8 +90,11 @@ const learnerSubjectsSchema = z.array(z.object({
   name: z.string().trim().min(1).max(80),
   courseName: z.string().trim().max(120),
   weeklyFrequency: z.number().int().min(1).max(7),
+  targetLessonCount: z.number().int().min(1).max(500).default(100),
+  estimatedMinutes: z.number().int().min(5).max(480).default(40),
   attentionMode: z.enum(["unspecified", "parent_led", "independent", "flexible"]),
   parentAttentionMinutes: z.number().int().min(1).max(480).nullable(),
+  publisher: z.string().trim().max(120).default(""), productName: z.string().trim().max(200).default(""), gradeLabel: z.string().trim().max(80).default(""), editionLabel: z.string().trim().max(120).default(""), isbn: isbnInputSchema.default(""),
 }).superRefine((subject, context) => {
   if (subject.attentionMode === "flexible" && subject.parentAttentionMinutes === null) context.addIssue({ code: "custom", path: ["parentAttentionMinutes"], message: `Add the minutes together for ${subject.name}.` });
   if (subject.attentionMode !== "flexible" && subject.parentAttentionMinutes !== null) context.addIssue({ code: "custom", path: ["parentAttentionMinutes"], message: `Minutes together are only used for Start together.` });
@@ -189,7 +201,7 @@ function readLearnerSetup(formData: FormData) {
 }
 
 async function replaceLearnerSubjects(supabase: Awaited<ReturnType<typeof createClient>>, input: { familyId: string; studentId: string; parentId: string; subjects: z.infer<typeof learnerSubjectsSchema> }) {
-  const curricula = await supabase.from("curriculum_units").select("id,subject,title,status,default_minutes,schedule_rule,attention_mode,parent_attention_minutes").eq("family_id", input.familyId).eq("student_id", input.studentId);
+  const curricula = await supabase.from("curriculum_units").select("id,family_id,student_id,subject,title,status,sequence_label,default_minutes,target_lesson_count,schedule_rule,attention_mode,parent_attention_minutes,publisher,product_name,grade_label,edition_label,isbn,identity_status").eq("family_id", input.familyId).eq("student_id", input.studentId);
   if (curricula.error) throw curricula.error;
   const inheritedAssignments = curricula.data.length
     ? await supabase.from("assignments").select("curriculum_unit_id,estimated_minutes").eq("family_id", input.familyId).eq("student_id", input.studentId).in("curriculum_unit_id", curricula.data.map((unit) => unit.id)).is("attention_mode", null)
@@ -200,7 +212,7 @@ async function replaceLearnerSubjects(supabase: Awaited<ReturnType<typeof create
     const title = subject.courseName || subject.name;
     const match = curricula.data.find((unit) => unit.subject.toLowerCase() === subject.name.toLowerCase() && unit.title.toLowerCase() === title.toLowerCase());
     const concreteMinutes = match ? inheritedAssignments.data.filter((assignment) => assignment.curriculum_unit_id === match.id).map((assignment) => assignment.estimated_minutes ?? 0) : [];
-    const maximum = Math.min(match?.default_minutes ?? 40, ...concreteMinutes);
+    const maximum = Math.min(subject.estimatedMinutes, match?.default_minutes ?? subject.estimatedMinutes, ...concreteMinutes);
     if (subject.parentAttentionMinutes! > maximum) throw new Error(`${subject.name} minutes together cannot be longer than its shortest ${maximum}-minute lesson.`);
   }
   const existingSubjects = await supabase.from("student_subjects").select("id").eq("family_id", input.familyId).eq("student_id", input.studentId);
@@ -223,17 +235,24 @@ async function replaceLearnerSubjects(supabase: Awaited<ReturnType<typeof create
   const keep = new Set<string>();
   for (const subject of input.subjects) {
     const title = subject.courseName || subject.name;
+    const inferred = inferCourseIdentityFromName(title, subject.name);
+    const identity = normalizeCourseIdentity({ publisher: subject.publisher || inferred.publisher, productName: subject.productName || inferred.productName, subject: subject.name, gradeLabel: subject.gradeLabel || inferred.gradeLabel, editionLabel: subject.editionLabel || null, isbn: subject.isbn || null }, "parent_input");
     const match = curricula.data.find((unit) => unit.subject.toLowerCase() === subject.name.toLowerCase() && unit.title.toLowerCase() === title.toLowerCase());
     if (match) {
       keep.add(match.id);
       const attentionChanged = match.attention_mode !== subject.attentionMode || match.parent_attention_minutes !== subject.parentAttentionMinutes;
-      const result = await supabase.from("curriculum_units").update({ status: "active", schedule_rule: mergeScheduleRule(match.schedule_rule, subject.weeklyFrequency), attention_mode: subject.attentionMode, parent_attention_minutes: subject.parentAttentionMinutes }).eq("id", match.id).eq("family_id", input.familyId);
+      const resized = await resizeCurriculumScope({ supabase, unit: match, parentId: input.parentId, targetLessonCount: subject.targetLessonCount });
+      if (!resized.allowed) throw new Error(resized.reason);
+      const result = await supabase.from("curriculum_units").update({ status: "active", schedule_rule: mergeScheduleRule(match.schedule_rule, subject.weeklyFrequency), default_minutes: subject.estimatedMinutes, attention_mode: subject.attentionMode, parent_attention_minutes: subject.attentionMode === "flexible" ? subject.parentAttentionMinutes : null, publisher: identity.publisher, product_name: identity.productName, grade_label: identity.gradeLabel, edition_label: identity.editionLabel, isbn: identity.isbn, identity_status: identity.status }).eq("id", match.id).eq("family_id", input.familyId);
       if (result.error) throw result.error;
+      after(() => queueWebScopeSuggestion({ familyId: input.familyId, curriculumUnitId: match.id, requestedBy: input.parentId }));
       if (attentionChanged) await writeAuditEvent(createAdminClient(), { familyId: input.familyId, actorId: input.parentId, actorType: "parent", action: "curriculum.attention_preference_changed", entityType: "curriculum_unit", entityId: match.id, metadata: { attention_mode: subject.attentionMode, parent_attention_minutes: subject.parentAttentionMinutes, existing_schedule_unchanged: true } });
     } else {
-      const result = await supabase.from("curriculum_units").insert({ family_id: input.familyId, student_id: input.studentId, created_by: input.parentId, subject: subject.name, title, schedule_rule: { weeklyFrequency: subject.weeklyFrequency }, attention_mode: subject.attentionMode, parent_attention_minutes: subject.parentAttentionMinutes }).select("id").single();
+      const result = await supabase.from("curriculum_units").insert({ family_id: input.familyId, student_id: input.studentId, created_by: input.parentId, subject: subject.name, title, schedule_rule: { weeklyFrequency: subject.weeklyFrequency }, default_minutes: subject.estimatedMinutes, attention_mode: subject.attentionMode, parent_attention_minutes: subject.attentionMode === "flexible" ? subject.parentAttentionMinutes : null, target_lesson_count: subject.targetLessonCount, next_sequence_number: subject.targetLessonCount + 1, publisher: identity.publisher, product_name: identity.productName, grade_label: identity.gradeLabel, edition_label: identity.editionLabel, isbn: identity.isbn, identity_status: identity.status }).select("id,family_id,student_id,subject,title,sequence_label,default_minutes,target_lesson_count").single();
       if (result.error) throw result.error;
       keep.add(result.data.id);
+      await ensureCurriculumScope({ supabase, unit: result.data, parentId: input.parentId });
+      after(() => queueWebScopeSuggestion({ familyId: input.familyId, curriculumUnitId: result.data.id, requestedBy: input.parentId }));
       if (subject.attentionMode !== "unspecified") await writeAuditEvent(createAdminClient(), { familyId: input.familyId, actorId: input.parentId, actorType: "parent", action: "curriculum.attention_preference_changed", entityType: "curriculum_unit", entityId: result.data.id, metadata: { attention_mode: subject.attentionMode, parent_attention_minutes: subject.parentAttentionMinutes, existing_schedule_unchanged: true } });
     }
   }

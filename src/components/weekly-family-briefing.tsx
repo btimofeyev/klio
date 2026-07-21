@@ -60,6 +60,7 @@ export function WeeklyFamilyBriefing({ briefing, state, students, selectedStuden
   const highlights = presentation.highlights;
   const openHighlights = highlights.filter((item) => item.state === "open");
   const preparedHighlights = highlights.filter((item) => item.state === "prepared");
+  const showActionNote = highlights.length > 0;
   const scopeLabel = learner?.displayName;
   const briefingId = briefing.id;
   const summary = briefingSummary(visibleLearners, presentation, learner?.displayName);
@@ -89,14 +90,15 @@ export function WeeklyFamilyBriefing({ briefing, state, students, selectedStuden
   }
 
   return <section className={styles.notes} aria-labelledby={`weekly-briefing-${briefing.id}`}>
-    <article className={`${styles.note} ${styles.summaryNote}`} data-briefing-side="left">
+    <article className={`${styles.note} ${styles.summaryNote} ${showActionNote ? "" : styles.singleNote}`} data-briefing-side="left">
+      {!showActionNote ? <button type="button" className={styles.dismiss} aria-label="Dismiss weekly briefing" title="Dismiss" onClick={() => void dismissBriefing()} disabled={busy}><X size={14} aria-hidden="true" /></button> : null}
       <span>{scopeLabel ? `${scopeLabel} · ` : ""}{dateRange(snapshot.weekStart, snapshot.weekEnd)}</span>
       <h2 id={`weekly-briefing-${briefing.id}`}>Klio noticed</h2>
       <p>{summary}</p>
       <small>Updated {formatGenerated(presentation.latestChangeAt ?? briefing.generatedAt, familyTimezone)}</small>
     </article>
 
-    <article className={`${styles.note} ${styles.actionNote}`} data-briefing-side="right">
+    {showActionNote ? <article className={`${styles.note} ${styles.actionNote}`} data-briefing-side="right">
       <header><h3>What matters</h3><button type="button" className={styles.dismiss} aria-label="Dismiss weekly briefing" title="Dismiss" onClick={() => void dismissBriefing()} disabled={busy}><X size={14} aria-hidden="true" /></button></header>
       <p className={styles.mobileSummary}>{summary}</p>
       {highlights.length ? <ol className={styles.highlights}>{highlights.map((item) => <li className={item.state === "prepared" ? styles.prepared : undefined} key={item.theme}>
@@ -108,7 +110,7 @@ export function WeeklyFamilyBriefing({ briefing, state, students, selectedStuden
         <p>{briefingTrust(presentation)}</p>
         {error ? <span role="alert">{error}</span> : null}
       </footer>
-    </article>
+    </article> : null}
   </section>;
 }
 
@@ -220,6 +222,10 @@ function proposalStateForTheme(theme: string, actions: BriefingAction[], pacing:
   const prepared = eligible.find(({ proposal }) => proposal.status === "proposed");
   if (prepared) return { state: "prepared", proposal: prepared.proposal };
   const applied = eligible.filter(({ proposal }) => proposal.status === "applied");
+  // A schedule-work briefing intentionally asks for the smallest useful next
+  // placement. Once that bounded placement is approved, resolve the stored
+  // alert instead of inviting a second proposal for the same backlog.
+  if (theme === "schedule_work" && applied.length) return { state: "resolved", proposal: applied[0].proposal };
   const appliedIds = new Set(applied.flatMap(({ ids }) => [...ids]));
   return [...targetIds].every((id) => appliedIds.has(id)) ? { state: "resolved", proposal: applied[0].proposal } : { state: "open" };
 }

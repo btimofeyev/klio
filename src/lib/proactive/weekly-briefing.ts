@@ -68,6 +68,7 @@ export type WeeklyBriefingBuilderInput = {
     familyId: string;
     id: string;
     studentId: string;
+    curriculumUnitId?: string | null;
     title: string;
     subject: string;
     status: string;
@@ -176,7 +177,7 @@ export function buildWeeklyFamilyBriefing(input: WeeklyBriefingBuilderInput): We
     };
   });
 
-  const unscheduledWork = assignments.filter((assignment) => !assignment.scheduledDate && OPEN_STATUSES.has(assignment.status))
+  const unscheduledWork = assignments.filter((assignment) => !assignment.curriculumUnitId && !assignment.scheduledDate && OPEN_STATUSES.has(assignment.status))
     .map((assignment) => ({ assignmentId: assignment.id, studentId: assignment.studentId, title: assignment.title, subject: assignment.subject }))
     .sort((a, b) => a.studentId.localeCompare(b.studentId) || a.subject.localeCompare(b.subject) || a.title.localeCompare(b.title));
 

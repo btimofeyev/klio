@@ -21,8 +21,8 @@ import { createClient } from "@/lib/supabase/server";
 import type { Database } from "@/lib/supabase/database.types";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-export type AssignmentDTO = { id: string; artifactId: string | null; studentId: string; curriculumUnitId: string | null; title: string; subject: string; instructions: string | null; sequenceNumber: number | null; status: string; scheduledDate: string | null; dueAt: string | null; scheduledTime: string | null; estimatedMinutes: number | null; completedAt: string | null; submittedAt: string | null; sourceKind: string; attentionMode: AttentionMode | null; parentAttentionMinutes: number | null; resolvedAttentionMode: AttentionMode; resolvedParentMinutes: number; attentionInherited: boolean; attentionSource: AttentionSource };
-export type CurriculumUnitDTO = { id: string; studentId: string; subject: string; title: string; sequenceLabel: string; nextSequenceNumber: number; defaultMinutes: number; weeklyFrequency: number; status: string; scheduleRule: unknown; curriculumUrl: string | null; attentionMode: AttentionMode; parentAttentionMinutes: number | null; assignmentCount: number; completedCount: number; activeCount: number };
+export type AssignmentDTO = { id: string; artifactId: string | null; studentId: string; curriculumUnitId: string | null; title: string; subject: string; instructions: string | null; sequenceNumber: number | null; status: string; scheduledDate: string | null; dueAt: string | null; scheduledTime: string | null; estimatedMinutes: number | null; completedAt: string | null; submittedAt: string | null; sourceKind: string; curriculumItemKind?: string | null; curriculumItemState?: string | null; curriculumPath?: unknown; curriculumScopeSuggestionId?: string | null; attentionMode: AttentionMode | null; parentAttentionMinutes: number | null; resolvedAttentionMode: AttentionMode; resolvedParentMinutes: number; attentionInherited: boolean; attentionSource: AttentionSource };
+export type CurriculumUnitDTO = { id: string; studentId: string; subject: string; title: string; sequenceLabel: string; nextSequenceNumber: number; targetLessonCount: number; defaultMinutes: number; weeklyFrequency: number; status: string; scheduleRule: unknown; curriculumUrl: string | null; attentionMode: AttentionMode; parentAttentionMinutes: number | null; publisher: string | null; productName: string | null; gradeLabel: string | null; editionLabel: string | null; isbn: string | null; identityStatus: string; scopeSourceKind: string; scopeConfidence: number | null; assignmentCount: number; completedCount: number; activeCount: number };
 export type SubmissionDTO = { id: string; assignmentId: string; status: string; note: string | null; submittedAt: string; evidenceIds: string[] };
 export type AssignmentReviewDTO = { id: string; assignmentId: string; submissionId: string; status: string; draftScore: number | null; score: number | null; scoreLabel: string | null; draftFeedback: string | null; feedback: string | null; rubric: unknown; masterySignals: unknown; uncertaintyFlags: unknown; reviewedAt: string | null; skillKey: string | null; comparableKey: string | null; evidenceKind: string; evidenceStrength: string; scoreOrigin: string; gradingState: string; writtenReviewRequired: boolean; writtenReviewCompleted: boolean };
 export type AdjustmentDTO = { id: string; studentId: string; weekStart: string; reason: string; summary: string; status: string; snapshotVersion: number; createdAt: string; undoStatus: string; undoExpiresAt: string | null; acknowledgedAt: string | null; acknowledgedBy: string | null; actions: Array<{ id: string; assignmentId: string | null; actionType: string; beforeState: unknown; afterState: unknown; position: number; status: string }> };
@@ -40,7 +40,7 @@ export type OperationsWorkspaceRequest =
 type OperationSupabase = SupabaseClient<Database>;
 export type OperationsBaseWorkspace = NonNullable<Awaited<ReturnType<typeof getWorkspace>>>;
 type AssignmentRow = Database["public"]["Tables"]["assignments"]["Row"];
-type CurriculumUnitRow = Pick<Database["public"]["Tables"]["curriculum_units"]["Row"], "id" | "student_id" | "subject" | "title" | "sequence_label" | "next_sequence_number" | "default_minutes" | "status" | "schedule_rule" | "curriculum_url" | "attention_mode" | "parent_attention_minutes">;
+type CurriculumUnitRow = Pick<Database["public"]["Tables"]["curriculum_units"]["Row"], "id" | "student_id" | "subject" | "title" | "sequence_label" | "next_sequence_number" | "default_minutes" | "status" | "schedule_rule" | "curriculum_url" | "attention_mode" | "parent_attention_minutes"> & Partial<Pick<Database["public"]["Tables"]["curriculum_units"]["Row"], "target_lesson_count" | "publisher" | "product_name" | "grade_label" | "edition_label" | "isbn" | "identity_status" | "scope_source_kind" | "scope_confidence">>;
 
 export async function getOperationsWorkspace(request: OperationsWorkspaceRequest) {
   const workspace = await getWorkspace();
@@ -143,6 +143,7 @@ export async function loadOperationsWorkspace(
       title: item.title,
       sequenceLabel: item.sequence_label,
       nextSequenceNumber: item.next_sequence_number,
+      targetLessonCount: item.target_lesson_count ?? 100,
       defaultMinutes: item.default_minutes,
       weeklyFrequency: weeklyFrequency(item.schedule_rule),
       status: item.status,
@@ -150,6 +151,14 @@ export async function loadOperationsWorkspace(
       curriculumUrl: item.curriculum_url,
       attentionMode: validateAttentionMode(item.attention_mode),
       parentAttentionMinutes: item.parent_attention_minutes,
+      publisher: item.publisher ?? null,
+      productName: item.product_name ?? null,
+      gradeLabel: item.grade_label ?? null,
+      editionLabel: item.edition_label ?? null,
+      isbn: item.isbn ?? null,
+      identityStatus: item.identity_status ?? "generic",
+      scopeSourceKind: item.scope_source_kind ?? "generic",
+      scopeConfidence: item.scope_confidence === null ? null : Number(item.scope_confidence),
       assignmentCount: Number(stats?.assignment_count ?? 0),
       completedCount: Number(stats?.completed_count ?? 0),
       activeCount: Number(stats?.active_count ?? 0),
@@ -218,7 +227,7 @@ function resolveAnchorDate(request: OperationsWorkspaceRequest, currentDate: str
 }
 
 async function loadCurriculumUnits(supabase: OperationSupabase, familyId: string) {
-  const result = await supabase.from("curriculum_units").select("id,student_id,subject,title,sequence_label,next_sequence_number,default_minutes,status,schedule_rule,curriculum_url,attention_mode,parent_attention_minutes").eq("family_id", familyId).neq("status", "archived").order("subject").order("title").order("id");
+  const result = await supabase.from("curriculum_units").select("id,student_id,subject,title,sequence_label,next_sequence_number,target_lesson_count,default_minutes,status,schedule_rule,curriculum_url,attention_mode,parent_attention_minutes,publisher,product_name,grade_label,edition_label,isbn,identity_status,scope_source_kind,scope_confidence").eq("family_id", familyId).neq("status", "archived").order("subject").order("title").order("id");
   if (result.error) throw result.error;
   return result.data as CurriculumUnitRow[];
 }
@@ -347,7 +356,7 @@ type CalendarConflictRow = Pick<Database["public"]["Tables"]["calendar_conflicts
 function toAssignmentDTO(row: AssignmentRow, unitById: Map<string, CurriculumUnitRow>, artifacts: Map<string, string | null>): AssignmentDTO {
   const unit = row.curriculum_unit_id ? unitById.get(row.curriculum_unit_id) : null;
   const attention = resolveAttentionRequirement({ assignmentMode: row.attention_mode, assignmentParentMinutes: row.parent_attention_minutes, curriculumMode: unit?.attention_mode, curriculumParentMinutes: unit?.parent_attention_minutes, lessonMinutes: row.estimated_minutes });
-  return { id: row.id, artifactId: artifacts.get(row.id) ?? null, studentId: row.student_id, curriculumUnitId: row.curriculum_unit_id, title: row.title, subject: row.subject, instructions: row.instructions, sequenceNumber: row.sequence_number, status: row.status, scheduledDate: row.scheduled_date, dueAt: row.due_at, scheduledTime: row.scheduled_time, estimatedMinutes: row.estimated_minutes, completedAt: row.completed_at, submittedAt: row.submitted_at, sourceKind: row.source_kind, attentionMode: row.attention_mode === null ? null : validateAttentionMode(row.attention_mode), parentAttentionMinutes: row.parent_attention_minutes, resolvedAttentionMode: attention.mode, resolvedParentMinutes: attention.parentMinutes, attentionInherited: attention.inherited, attentionSource: attention.source };
+  return { id: row.id, artifactId: artifacts.get(row.id) ?? null, studentId: row.student_id, curriculumUnitId: row.curriculum_unit_id, title: row.title, subject: row.subject, instructions: row.instructions, sequenceNumber: row.sequence_number, status: row.status, scheduledDate: row.scheduled_date, dueAt: row.due_at, scheduledTime: row.scheduled_time, estimatedMinutes: row.estimated_minutes, completedAt: row.completed_at, submittedAt: row.submitted_at, sourceKind: row.source_kind, curriculumItemKind: row.curriculum_item_kind, curriculumItemState: row.curriculum_item_state, curriculumPath: row.curriculum_path, curriculumScopeSuggestionId: row.curriculum_scope_suggestion_id, attentionMode: row.attention_mode === null ? null : validateAttentionMode(row.attention_mode), parentAttentionMinutes: row.parent_attention_minutes, resolvedAttentionMode: attention.mode, resolvedParentMinutes: attention.parentMinutes, attentionInherited: attention.inherited, attentionSource: attention.source };
 }
 
 function toSubmissionDTO(item: SubmissionRow): SubmissionDTO {

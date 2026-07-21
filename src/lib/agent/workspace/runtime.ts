@@ -20,6 +20,10 @@ const terminalSchema = modelTerminalSchema.extend({
 }).strict();
 
 const workspaceRuntimeVersion = "family-workspace-2026-07-17.1-parent-attention";
+const vercelCodexPath = path.join(
+  process.cwd(),
+  "node_modules/.pnpm/@openai+codex@0.144.1-linux-x64/node_modules/@openai/codex/vendor/x86_64-unknown-linux-musl/bin/codex",
+);
 
 const instructions = `You are Klio, a persistent homeschool family-workspace agent. You converse naturally with the parent and, when the host authorizes action tools, you also complete work for them.
 The host-provided authorized_snapshot is the current Supabase source of truth for this turn. Thread history is supplemental and can be stale. Use academicTerms, learningGoals, curriculumPacingTargets, pacingCheckpoints, currentAssignments, pendingSubmissions, draftAssignmentReviews, approvedAssignmentResults, and scheduleAdjustments when relevant. Treat draft reviews as provisional; only finalized parent-approved results are learner facts.
@@ -96,6 +100,7 @@ export async function processWorkspaceTurn(turnId: string) {
     if (!openAiApiKey) throw new Error("OPENAI_API_KEY_NOT_CONFIGURED");
     const codex = new Codex({
       apiKey: openAiApiKey,
+      codexPathOverride: process.env.VERCEL ? vercelCodexPath : undefined,
       config: {
         developer_instructions: instructions, approval_policy: "never", web_search: "disabled",
         features: { apps: false, memories: false, multi_agent: false, remote_plugin: false, shell_snapshot: false, shell_tool: false, unified_exec: false },

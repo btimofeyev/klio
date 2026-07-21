@@ -1,10 +1,10 @@
--- Repeatable local-development seed for btimofeyev@gmail.com.
+-- Repeatable synthetic local-development seed for demo@klio.local.
 -- Bootstraps the family when the Auth account is new, preserves existing
 -- learners, adds Maya (7th) and Noah (2nd), and builds a configurable number
 -- of completed school weeks plus the current week for all three learners.
 -- Run with:
 --   psql 'postgresql://postgres:postgres@127.0.0.1:56322/postgres' \
---     -v ON_ERROR_STOP=1 -f scripts/seed-timofeyev-eight-weeks.sql
+--     -v ON_ERROR_STOP=1 -f scripts/seed-demo-eight-weeks.sql
 -- For one realistic month plus the current week, add: -v completed_weeks=4
 
 \if :{?completed_weeks}
@@ -22,14 +22,14 @@ declare
 begin
   select id into target_parent
   from auth.users
-  where lower(email) = 'btimofeyev@gmail.com' and deleted_at is null;
+  where lower(email) = 'demo@klio.local' and deleted_at is null;
 
   if target_parent is null then
-    raise exception 'Create the local Auth account btimofeyev@gmail.com before applying this seed';
+    raise exception 'Create the local Auth account demo@klio.local before applying this seed';
   end if;
 
   insert into public.parent_profiles(user_id, display_name)
-  values (target_parent, 'Ben Timofeyev')
+  values (target_parent, 'Klio Demo')
   on conflict (user_id) do update set display_name = excluded.display_name;
 
   select count(*), min(fm.family_id::text)::uuid
@@ -38,10 +38,10 @@ begin
   where fm.user_id = target_parent and fm.role = 'owner';
 
   if owner_family_count > 1 then
-    raise exception 'Expected at most one owner workspace for btimofeyev@gmail.com';
+    raise exception 'Expected at most one owner workspace for demo@klio.local';
   elsif owner_family_count = 0 then
     insert into public.families(name, created_by, timezone, available_days, weekly_minutes)
-    values ('Timofeyev Family', target_parent, 'America/New_York', '["Monday","Tuesday","Wednesday","Thursday","Friday"]'::jsonb, 3000)
+    values ('Klio Demo Family', target_parent, 'America/New_York', '["Monday","Tuesday","Wednesday","Thursday","Friday"]'::jsonb, 3000)
     returning id into target_family;
     insert into public.family_members(family_id, user_id, role)
     values (target_family, target_parent, 'owner');
@@ -69,12 +69,12 @@ select u.id as parent_id, f.id as family_id
 from auth.users u
 join public.family_members fm on fm.user_id = u.id and fm.role = 'owner'
 join public.families f on f.id = fm.family_id
-where lower(u.email) = 'btimofeyev@gmail.com';
+where lower(u.email) = 'demo@klio.local';
 
 do $$
 begin
   if (select count(*) from _seed_context) <> 1 then
-    raise exception 'Expected exactly one owner workspace for btimofeyev@gmail.com';
+    raise exception 'Expected exactly one owner workspace for demo@klio.local';
   end if;
 end
 $$;
@@ -373,7 +373,7 @@ select evidence_id, family_id, parent_id, 'grade', course_name || ' · Week ' ||
       when score >= 70 then 'The core idea is developing; the next lesson should revisit the demonstrated error.'
       else 'The source supports additional focused review before the next assessment.' end),
   scheduled_date::timestamp + time '15:00', 'ready',
-  jsonb_build_object('seed','timofeyev-eight-weeks-v1','week',week_index + 1,'assignment_id',assignment_id),
+  jsonb_build_object('seed','klio-demo-eight-weeks-v1','week',week_index + 1,'assignment_id',assignment_id),
   'learning', md5(family_id::text || ':capture:' || assignment_id::text)::uuid,
   scheduled_date::timestamp + time '15:00'
 from _seed_assessments
@@ -602,7 +602,7 @@ insert into public.proactive_evaluations
   (id, family_id, student_id, requested_by, event_kind, entity_type, entity_id, idempotency_key, status)
 select md5(a.family_id::text || ':evaluation:jacob-biology-eight-weeks')::uuid,
   a.family_id, a.student_id, a.parent_id, 'grade_approved', 'assignment_review', a.review_id,
-  'seed:timofeyev-eight-weeks:jacob-biology-trend', 'queued'
+  'seed:klio-demo-eight-weeks:jacob-biology-trend', 'queued'
 from _seed_assessments a
 where a.display_name = 'Jacob' and a.subject_name = 'Science' and a.week_index = (:completed_weeks - 1)
 on conflict (family_id, idempotency_key) do nothing;
@@ -610,12 +610,12 @@ on conflict (family_id, idempotency_key) do nothing;
 insert into public.audit_events
   (family_id, actor_id, actor_type, action, entity_type, entity_id, metadata)
 select c.family_id, c.parent_id, 'system', 'development.seed_applied', 'family', c.family_id,
-  jsonb_build_object('seed','timofeyev-eight-weeks-v1','learners',jsonb_build_array('Jacob','Maya','Noah'),'completed_weeks',:completed_weeks)
+  jsonb_build_object('seed','klio-demo-eight-weeks-v1','learners',jsonb_build_array('Jacob','Maya','Noah'),'completed_weeks',:completed_weeks)
 from _seed_context c
 where not exists (
   select 1 from public.audit_events e
   where e.family_id = c.family_id and e.action = 'development.seed_applied'
-    and e.metadata->>'seed' = 'timofeyev-eight-weeks-v1'
+    and e.metadata->>'seed' = 'klio-demo-eight-weeks-v1'
 );
 
 commit;

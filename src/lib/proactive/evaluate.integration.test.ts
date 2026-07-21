@@ -174,11 +174,12 @@ describe("proactive operating loop", () => {
     const scheduled = await admin.from("proactive_evaluations").select("id,event_kind,status,idempotency_key").eq("family_id", familyId).in("event_kind", ["day_preparation", "day_reconciliation", "weekly_boundary"]);
     if (scheduled.error) throw scheduled.error;
     expect(scheduled.data.map((item) => item.event_kind).sort()).toEqual(["day_preparation", "day_reconciliation", "weekly_boundary"]);
-    const result = await processProactiveEvaluation(scheduled.data[0].id);
+    const preparation = scheduled.data.find((item) => item.event_kind === "day_preparation")!;
+    const result = await processProactiveEvaluation(preparation.id);
     expect(result?.outcome).toBe("no_action");
-    expect((await admin.from("klio_insights").select("id", { count: "exact", head: true }).eq("evaluation_id", scheduled.data[0].id)).count).toBe(0);
+    expect((await admin.from("klio_insights").select("id", { count: "exact", head: true }).eq("evaluation_id", preparation.id)).count).toBe(0);
     const weekly = scheduled.data.find((item) => item.event_kind === "weekly_boundary")!;
-    if (weekly.id !== scheduled.data[0].id) await processProactiveEvaluation(weekly.id);
+    await processProactiveEvaluation(weekly.id);
     const briefings = await admin.from("weekly_briefings").select("id,week_start,status,sections,evaluation_id").eq("family_id", familyId).eq("week_start", "2026-07-13");
     expect(briefings.error).toBeNull();
     expect(briefings.data).toHaveLength(1);

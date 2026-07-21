@@ -1,12 +1,21 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { requireParent } from "@/lib/auth/require-parent";
 import { subjectSlug } from "@/lib/onboarding/subjects";
+import { ensureCurriculumScope } from "@/lib/curriculum/scope-store";
+import { inferCourseIdentityFromName, normalizeCourseIdentity, normalizeIsbn } from "@/lib/curriculum/course-identity";
+import { queueWebScopeSuggestion } from "@/lib/curriculum/scope-suggestion-store";
 
 export type OnboardingState = { error: string | null };
+
+const isbnInputSchema = z.string().trim().max(32).refine((value) => {
+  try { normalizeIsbn(value); return true; }
+  catch { return false; }
+}, "Enter a valid ISBN-10 or ISBN-13.");
 
 const schema = z.object({
   familyName: z.string().trim().min(1, "Name your family workspace.").max(100),
@@ -21,6 +30,14 @@ const subjectSetupSchema = z.array(z.object({
   name: z.string().trim().min(1).max(80),
   courseName: z.string().trim().max(120),
   weeklyFrequency: z.number().int().min(1).max(7),
+  targetLessonCount: z.number().int().min(1).max(500).default(100),
+  estimatedMinutes: z.number().int().min(5).max(480).default(40),
+  attentionMode: z.enum(["unspecified", "parent_led", "independent", "flexible"]).default("unspecified"),
+  parentAttentionMinutes: z.number().int().min(1).max(480).nullable().default(null),
+  publisher: z.string().trim().max(120).default(""), productName: z.string().trim().max(200).default(""), gradeLabel: z.string().trim().max(80).default(""), editionLabel: z.string().trim().max(120).default(""), isbn: isbnInputSchema.default(""),
+}).superRefine((subject, context) => {
+  if (subject.attentionMode === "flexible" && subject.parentAttentionMinutes === null) context.addIssue({ code: "custom", path: ["parentAttentionMinutes"], message: `Add the minutes together for ${subject.name}.` });
+  if (subject.attentionMode !== "flexible" && subject.parentAttentionMinutes !== null) context.addIssue({ code: "custom", path: ["parentAttentionMinutes"], message: "Minutes together only apply to Start together." });
 })).min(1, "Add at least one subject so Klio knows what this learner is studying.").max(16);
 
 export async function createWorkspaceAction(_: OnboardingState, formData: FormData): Promise<OnboardingState> {
@@ -81,18 +98,38 @@ export async function createWorkspaceAction(_: OnboardingState, formData: FormDa
     return { error: subjectsError.message };
   }
 
-  const curriculumRows = subjectSetup.data.map((subject) => ({
+  const curriculumRows = subjectSetup.data.map((subject) => {
+    const inferred = inferCourseIdentityFromName(subject.courseName || subject.name, subject.name);
+    const identity = normalizeCourseIdentity({ publisher: subject.publisher || inferred.publisher, productName: subject.productName || inferred.productName, subject: subject.name, gradeLabel: subject.gradeLabel || inferred.gradeLabel, editionLabel: subject.editionLabel || null, isbn: subject.isbn || null }, "parent_input");
+    return {
       family_id: family.id,
       student_id: student.id,
       created_by: parent.id,
       subject: subject.name,
       title: subject.courseName || subject.name,
       schedule_rule: { weeklyFrequency: subject.weeklyFrequency },
-  }));
-  const { error: curriculumError } = await supabase.from("curriculum_units").insert(curriculumRows);
+      target_lesson_count: subject.targetLessonCount,
+      next_sequence_number: subject.targetLessonCount + 1,
+      default_minutes: subject.estimatedMinutes,
+      attention_mode: subject.attentionMode,
+      parent_attention_minutes: subject.attentionMode === "flexible" ? subject.parentAttentionMinutes : null,
+      publisher: identity.publisher, product_name: identity.productName, grade_label: identity.gradeLabel, edition_label: identity.editionLabel, isbn: identity.isbn, identity_status: identity.status,
+    };
+  });
+  const { data: curricula, error: curriculumError } = await supabase.from("curriculum_units").insert(curriculumRows)
+    .select("id,family_id,student_id,subject,title,sequence_label,default_minutes,target_lesson_count,identity_status");
   if (curriculumError) {
     await supabase.from("families").delete().eq("id", family.id);
     return { error: curriculumError.message };
+  }
+  try {
+    for (const unit of curricula) {
+      await ensureCurriculumScope({ supabase, unit, parentId: parent.id });
+      after(() => queueWebScopeSuggestion({ familyId: family.id, curriculumUnitId: unit.id, requestedBy: parent.id }));
+    }
+  } catch (scopeError) {
+    await supabase.from("families").delete().eq("id", family.id);
+    return { error: scopeError instanceof Error ? scopeError.message : "Klio could not prepare the curriculum scope." };
   }
 
   const categoryRows = subjectSetup.data.map((subject, position) => ({

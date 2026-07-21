@@ -19,7 +19,7 @@ export default async function LearnerSetupPage({ params }: { params: Promise<{ i
   const [studentResult, subjectsResult, curriculumResult] = await Promise.all([
     supabase.from("students").select("schedule_preferences").eq("id", id).eq("family_id", workspace.family.id).eq("active", true).maybeSingle(),
     supabase.from("student_subjects").select("id,student_id,name,course_name,weekly_frequency,position").eq("family_id", workspace.family.id).eq("status", "active").order("position"),
-    supabase.from("curriculum_units").select("id,subject,title,attention_mode,parent_attention_minutes").eq("family_id", workspace.family.id).eq("student_id", id).neq("status", "archived"),
+    supabase.from("curriculum_units").select("id,subject,title,target_lesson_count,default_minutes,attention_mode,parent_attention_minutes,publisher,product_name,grade_label,edition_label,isbn").eq("family_id", workspace.family.id).eq("student_id", id).neq("status", "archived"),
   ]);
   if (studentResult.error) throw studentResult.error;
   if (subjectsResult.error) throw subjectsResult.error;
@@ -38,7 +38,7 @@ export default async function LearnerSetupPage({ params }: { params: Promise<{ i
   const subjects = subjectsResult.data.filter((subject) => subject.student_id === id).map((subject) => {
     const title = subject.course_name || subject.name;
     const curriculum = curriculumResult.data.find((unit) => unit.subject.toLowerCase() === subject.name.toLowerCase() && unit.title.toLowerCase() === title.toLowerCase());
-    return { id: subject.id, name: subject.name, courseName: subject.course_name ?? "", weeklyFrequency: subject.weekly_frequency, attentionMode: curriculum ? validateAttentionMode(curriculum.attention_mode) : "unspecified" as const, parentAttentionMinutes: curriculum?.parent_attention_minutes ?? null };
+    return { id: subject.id, name: subject.name, courseName: subject.course_name ?? "", weeklyFrequency: subject.weekly_frequency, targetLessonCount: curriculum?.target_lesson_count ?? 100, estimatedMinutes: curriculum?.default_minutes ?? 40, attentionMode: curriculum ? validateAttentionMode(curriculum.attention_mode) : "unspecified" as const, parentAttentionMinutes: curriculum?.parent_attention_minutes ?? null, publisher: curriculum?.publisher ?? "", productName: curriculum?.product_name ?? "", gradeLabel: curriculum?.grade_label ?? "", editionLabel: curriculum?.edition_label ?? "", isbn: curriculum?.isbn ?? "" };
   });
 
   const schedule = parseSchedulePreferences(studentResult.data.schedule_preferences, workspace.family.available_days);
@@ -54,8 +54,8 @@ export default async function LearnerSetupPage({ params }: { params: Promise<{ i
         </div>
       </div>
       <div className={styles.headerActions}>
-        <Link href={`/app/records?student=${student.id}`}><FileText size={15} />View records</Link>
-        <span><BookOpenText size={15} />Klio plans from this setup</span>
+        <Link href={`/app/assignments?student=${student.id}`}><BookOpenText size={15} />Curriculum &amp; lessons</Link>
+        <Link className={styles.recordsAction} href={`/app/records?student=${student.id}`}><FileText size={15} />View records</Link>
       </div>
     </header>
     <section className={styles.viewport} aria-label={`${student.displayName} learning setup`}>

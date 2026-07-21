@@ -1,15 +1,22 @@
 export type FirstWeekUnit = {
   id: string;
   subject: string;
-  title: string;
-  sequenceLabel: string;
-  nextSequenceNumber: number;
   defaultMinutes: number;
   weeklyFrequency: number;
-  curriculumUrl: string | null;
   scheduledTime: string | null;
   attentionMode?: "unspecified" | "parent_led" | "independent" | "flexible";
   parentAttentionMinutes?: number | null;
+};
+
+export type FirstWeekCandidate = {
+  id: string;
+  curriculumUnitId: string;
+  subject: string;
+  title: string;
+  sequenceNumber: number;
+  curriculumItemKind: "lesson" | "assessment" | "review" | "project" | "activity";
+  estimatedMinutes: number;
+  curriculumUrl: string | null;
 };
 
 export type ExistingWeekAssignment = {
@@ -25,25 +32,27 @@ export type DateAvailability = {
   teachingWindow?: { start: string; end: string } | null;
 };
 
-export type FirstWeekAssignment = {
-  curriculumUnitId: string;
-  subject: string;
-  title: string;
-  sequenceNumber: number;
+export type FirstWeekAssignment = FirstWeekCandidate & {
+  assignmentId: string;
   scheduledDate: string;
   scheduledTime: string | null;
-  estimatedMinutes: number;
-  curriculumUrl: string | null;
 };
 
 export function buildFirstWeekAssignments(input: {
   units: FirstWeekUnit[];
+  candidates: FirstWeekCandidate[];
   dates: string[];
   existing: ExistingWeekAssignment[];
   dailyCapacityMinutes: number;
   availabilityByDate?: Record<string, DateAvailability>;
 }) {
-  const activeUnits = input.units.filter((unit) => unit.defaultMinutes <= Math.max(input.dailyCapacityMinutes, ...input.dates.map(capacityForDate)));
+  const candidatesByUnit = new Map(input.units.map((unit) => [unit.id, input.candidates
+    .filter((candidate) => candidate.curriculumUnitId === unit.id)
+    .sort((a, b) => a.sequenceNumber - b.sequenceNumber || a.id.localeCompare(b.id))]));
+  const activeUnits = input.units.filter((unit) => {
+    const first = candidatesByUnit.get(unit.id)?.[0];
+    return first && first.estimatedMinutes <= Math.max(input.dailyCapacityMinutes, ...input.dates.map(capacityForDate));
+  });
 
   const existingByUnit = new Map<string, number>();
   const baseUsedByDate = new Map(input.dates.map((date) => [date, 0]));
@@ -57,60 +66,54 @@ export function buildFirstWeekAssignments(input: {
   }
 
   const remainingByUnit = new Map(activeUnits.map((unit) => [unit.id, Math.max(0, Math.min(unit.weeklyFrequency, input.dates.length) - (existingByUnit.get(unit.id) ?? 0))]));
-  const availableMinutes = input.dates.reduce((sum, date) => sum + Math.max(0, capacityForDate(date) - (baseUsedByDate.get(date) ?? 0)), 0);
-  const requestedMinutes = activeUnits.reduce((sum, unit) => sum + (remainingByUnit.get(unit.id) ?? 0) * unit.defaultMinutes, 0);
-  const sessionCount = [...remainingByUnit.values()].reduce((sum, count) => sum + count, 0);
-  if (!sessionCount || sessionCount * 15 > availableMinutes) return [];
-  const scale = requestedMinutes > availableMinutes ? availableMinutes / requestedMinutes : 1;
-  const durationByUnit = new Map(activeUnits.map((unit) => [unit.id, Math.max(minimumDuration(unit), Math.floor(unit.defaultMinutes * scale / 5) * 5)]));
-
   const sessions = activeUnits.flatMap((unit) => {
     const count = remainingByUnit.get(unit.id) ?? 0;
-    return Array.from({ length: count }, (_, occurrence) => ({
+    return (candidatesByUnit.get(unit.id) ?? []).slice(0, count).map((candidate, occurrence) => ({
       unit,
+      candidate,
       idealIndex: Math.min(input.dates.length - 1, Math.round(((occurrence + 0.5) * input.dates.length / count) - 0.5)),
     }));
-  }).sort((a, b) => a.idealIndex - b.idealIndex || b.unit.weeklyFrequency - a.unit.weeklyFrequency || a.unit.subject.localeCompare(b.unit.subject));
+  }).sort((a, b) => a.idealIndex - b.idealIndex || b.unit.weeklyFrequency - a.unit.weeklyFrequency || a.unit.subject.localeCompare(b.unit.subject) || a.candidate.sequenceNumber - b.candidate.sequenceNumber);
 
-  let placed = placeSessions(durationByUnit);
-  while (placed.length < sessionCount && activeUnits.some((unit) => (durationByUnit.get(unit.id) ?? minimumDuration(unit)) > minimumDuration(unit))) {
-    for (const unit of activeUnits) durationByUnit.set(unit.id, Math.max(minimumDuration(unit), (durationByUnit.get(unit.id) ?? unit.defaultMinutes) - 5));
-    placed = placeSessions(durationByUnit);
+  const availableMinutes = input.dates.reduce((sum, date) => sum + Math.max(0, capacityForDate(date) - (baseUsedByDate.get(date) ?? 0)), 0);
+  const requestedMinutes = sessions.reduce((sum, session) => sum + session.candidate.estimatedMinutes, 0);
+  if (!sessions.length || sessions.length * 15 > availableMinutes) return [];
+  const scale = requestedMinutes > availableMinutes ? availableMinutes / requestedMinutes : 1;
+  const durationByAssignment = new Map(sessions.map(({ unit, candidate }) => [candidate.id, Math.max(minimumDuration(unit), Math.floor(candidate.estimatedMinutes * scale / 5) * 5)]));
+
+  let placed = placeSessions(durationByAssignment);
+  while (placed.length < sessions.length && sessions.some(({ unit, candidate }) => (durationByAssignment.get(candidate.id) ?? minimumDuration(unit)) > minimumDuration(unit))) {
+    for (const { unit, candidate } of sessions) durationByAssignment.set(candidate.id, Math.max(minimumDuration(unit), (durationByAssignment.get(candidate.id) ?? candidate.estimatedMinutes) - 5));
+    placed = placeSessions(durationByAssignment);
   }
 
-  const nextSequence = new Map(activeUnits.map((unit) => [unit.id, unit.nextSequenceNumber]));
   return placed
-    .sort((a, b) => a.scheduledDate.localeCompare(b.scheduledDate) || a.unit.subject.localeCompare(b.unit.subject))
-    .map(({ unit, scheduledDate, duration }): FirstWeekAssignment => {
-      const sequenceNumber = nextSequence.get(unit.id) ?? unit.nextSequenceNumber;
-      nextSequence.set(unit.id, sequenceNumber + 1);
-      return {
-        curriculumUnitId: unit.id,
-        subject: unit.subject,
-        title: `${unit.title} · ${unit.sequenceLabel} ${sequenceNumber}`,
-        sequenceNumber,
-        scheduledDate,
-        scheduledTime: unit.scheduledTime,
-        estimatedMinutes: duration,
-        curriculumUrl: unit.curriculumUrl,
-      };
-    });
+    .sort((a, b) => a.scheduledDate.localeCompare(b.scheduledDate) || a.unit.subject.localeCompare(b.unit.subject) || a.candidate.sequenceNumber - b.candidate.sequenceNumber)
+    .map(({ unit, candidate, scheduledDate, duration }): FirstWeekAssignment => ({
+      ...candidate,
+      assignmentId: candidate.id,
+      scheduledDate,
+      scheduledTime: unit.scheduledTime,
+      estimatedMinutes: duration,
+    }));
 
   function placeSessions(durations: Map<string, number>) {
     const usedByDate = new Map(baseUsedByDate);
     const occupiedByDate = new Map([...baseOccupiedByDate].map(([date, units]) => [date, new Set(units)]));
-    const result: Array<{ unit: FirstWeekUnit; scheduledDate: string; duration: number }> = [];
+    const lastDateIndexByUnit = new Map<string, number>();
+    const result: Array<{ unit: FirstWeekUnit; candidate: FirstWeekCandidate; scheduledDate: string; duration: number }> = [];
     for (const session of sessions) {
-      const duration = durations.get(session.unit.id) ?? session.unit.defaultMinutes;
+      const duration = durations.get(session.candidate.id) ?? session.candidate.estimatedMinutes;
       const scheduledDate = [...input.dates]
         .sort((a, b) => {
           const aIndex = input.dates.indexOf(a); const bIndex = input.dates.indexOf(b);
-          return (usedByDate.get(a) ?? 0) - (usedByDate.get(b) ?? 0) || Math.abs(aIndex - session.idealIndex) - Math.abs(bIndex - session.idealIndex) || a.localeCompare(b);
+          return Math.abs(aIndex - session.idealIndex) - Math.abs(bIndex - session.idealIndex) || (usedByDate.get(a) ?? 0) - (usedByDate.get(b) ?? 0) || a.localeCompare(b);
         })
-        .find((date) => !occupiedByDate.get(date)?.has(session.unit.id) && (usedByDate.get(date) ?? 0) + duration <= capacityForDate(date) && timedPlacementFits(date, session.unit.scheduledTime, duration));
+        .find((date) => input.dates.indexOf(date) >= (lastDateIndexByUnit.get(session.unit.id) ?? 0) && !occupiedByDate.get(date)?.has(session.unit.id) && (usedByDate.get(date) ?? 0) + duration <= capacityForDate(date) && timedPlacementFits(date, session.unit.scheduledTime, duration));
       if (!scheduledDate) continue;
-      result.push({ unit: session.unit, scheduledDate, duration });
+      result.push({ unit: session.unit, candidate: session.candidate, scheduledDate, duration });
       occupiedByDate.get(scheduledDate)?.add(session.unit.id);
+      lastDateIndexByUnit.set(session.unit.id, input.dates.indexOf(scheduledDate));
       usedByDate.set(scheduledDate, (usedByDate.get(scheduledDate) ?? 0) + duration);
     }
     return result;

@@ -30,6 +30,12 @@
 .header h1 { margin: 4px 0 1px; font-size: 32px; line-height: 1; letter-spacing: -.045em; }
 .header p { margin: 0; color: #747b74; font-size: 11px; }
 
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .primaryAction,
 .editAction {
   min-height: 40px;
@@ -49,6 +55,25 @@
 .editAction:hover { background: #435e48; }
 .primaryAction:active,
 .editAction:active { transform: translateY(1px); }
+
+.curriculumAction {
+  min-height: 40px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  color: #49614d;
+  background: rgba(255, 254, 250, .72);
+  border: 1px solid rgba(53, 62, 53, .18);
+  border-radius: 7px;
+  font-size: 10px;
+  font-weight: 760;
+  white-space: nowrap;
+}
+
+.curriculumAction:hover { color: #304b35; background: #edf0e9; border-color: rgba(53, 75, 57, .28); }
+.curriculumAction:active { transform: translateY(1px); }
 
 .views {
   min-height: 52px;
@@ -109,7 +134,8 @@
 .learnerDetail h2 { margin: 3px 0 2px; font-size: 27px; line-height: 1.08; letter-spacing: -.04em; }
 .learnerDetail > header p { margin: 0; color: #747c74; font-size: 11px; }
 .detailActions { display: flex; align-items: center; gap: 8px; }
-.detailActions > a:first-child { min-height: 40px; padding: 0 10px; display: inline-flex; align-items: center; color: #506652; font-size: 10px; font-weight: 750; }
+.recordsAction { min-height: 40px; padding: 0 7px; display: inline-flex; align-items: center; color: #506652; font-size: 10px; font-weight: 750; white-space: nowrap; }
+.recordsAction:hover { color: #304b35; }
 
 .metrics { min-height: 92px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-bottom: 1px solid rgba(53, 62, 53, .13); }
 .metrics > div { min-width: 0; padding: 18px 18px 16px 0; display: flex; align-items: center; gap: 10px; }
@@ -173,6 +199,7 @@
   .views a { min-width: max-content; min-height: 42px; }
   .viewport { padding-top: 16px; }
   .studentsLayout { grid-template-columns: 210px minmax(0, 1fr); gap: 24px; }
+  .recordsAction { display: none; }
   .accountPanel { grid-template-columns: 1fr; gap: 0; overflow: auto; }
   .accountPanel > section { padding: 18px 0; }
   .accountPanel > section + section { border-left: 0; border-top: 1px solid rgba(53, 62, 53, .14); }
@@ -182,6 +209,7 @@
   .dashboard { padding-inline: 14px; }
   .header p { display: none; }
   .primaryAction { min-height: 38px; padding-inline: 11px; }
+  .headerActions > .curriculumAction { display: none; }
   .views { gap: 15px; }
   .views a { font-size: 10px; }
   .studentsLayout { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); gap: 14px; }
@@ -195,7 +223,7 @@
   .learnerRow small { font-size: 8px; }
   .learnerDetail > header { min-height: 64px; }
   .learnerDetail h2 { font-size: 22px; }
-  .detailActions > a:first-child { display: none; }
+  .detailActions .curriculumAction { min-height: 38px; padding-inline: 9px; }
   .metrics { min-height: 74px; }
   .metrics > div { padding: 12px 8px 12px 0; gap: 7px; }
   .metrics > div + div { padding-left: 8px; }
@@ -211,5 +239,5 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .primaryAction,.editAction { transition: none; }
+  .primaryAction,.editAction,.curriculumAction { transition: none; }
 }

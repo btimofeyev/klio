@@ -185,7 +185,8 @@ test("a stale worker heartbeat stops the working claim and keeps the source safe
     expect(agentRequests).toHaveLength(1);
     expect(agentRequests[0].conversationId).toBeUndefined();
     await expect(conversation.getByRole("button", { name: "Conversations" })).toBeVisible();
-    await expect(conversation.getByRole("button", { name: "New conversation" })).toBeVisible();
+    const newConversationButton = conversation.locator(".klio-conversation-controls").getByRole("button", { name: "New conversation" });
+    await expect(newConversationButton).toBeVisible();
     await conversation.getByRole("button", { name: "Conversations" }).click();
     await expect(conversation.getByText("Recent conversations", { exact: true })).toBeVisible();
     await conversation.getByRole("button", { name: "Conversations" }).click();
@@ -206,7 +207,7 @@ test("a stale worker heartbeat stops the working claim and keeps the source safe
     await conversation.getByRole("button", { name: "Send message" }).last().click();
     await expect.poll(() => agentRequests.at(-1)?.intent).toBe("general");
     await expect.poll(() => agentRequests.at(-1)?.conversationId).toBe(nextConversationId);
-    await conversation.getByRole("button", { name: "New conversation" }).click();
+    await newConversationButton.click();
     await expect(conversation).toHaveCount(0);
     await expect(homeComposer).toBeVisible();
     await expect(universalInput).toBeFocused();

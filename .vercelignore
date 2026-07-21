@@ -1,0 +1,16 @@
+/.git
+/.next
+/.next-e2e
+/node_modules
+/coverage
+/test-results
+/playwright-report
+/proofs
+/plans
+/e2e
+/supabase
+/.env*
+/*.tsbuildinfo
+**/*.test.*
+/playwright.config.ts
+/vitest.config.ts

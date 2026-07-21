@@ -15,11 +15,25 @@ import { createHash } from "node:crypto";
 import { enqueueProactiveEvaluation } from "@/lib/proactive/evaluate";
 import { referenceUrlSchema } from "@/lib/security/reference-url";
 import { postgresUuidSchema } from "@/lib/validation/postgres-uuid";
+import { processCurriculumMaterialSuggestion } from "@/lib/curriculum/material-ingestion";
+import { processCurriculumScopeSuggestion, queueParentEvidenceScopeSuggestion } from "@/lib/curriculum/scope-ingestion";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
-const inputSchema = z.object({ familyId: postgresUuidSchema, studentId: postgresUuidSchema, assignmentId: postgresUuidSchema.optional(), text: z.string().max(20000).optional(), linkUrl: referenceUrlSchema.optional(), kind: z.enum(["note", "grade", "book", "activity"]).default("note") });
+const inputSchema = z.object({
+  familyId: postgresUuidSchema,
+  studentId: postgresUuidSchema,
+  assignmentId: postgresUuidSchema.optional(),
+  curriculumUnitId: postgresUuidSchema.optional(),
+  capturePurpose: z.enum(["learning_evidence", "curriculum_material", "curriculum_identity"]).default("learning_evidence"),
+  text: z.string().max(20000).optional(),
+  linkUrl: referenceUrlSchema.optional(),
+  kind: z.enum(["note", "grade", "book", "activity"]).default("note"),
+}).superRefine((value, context) => {
+  if (value.capturePurpose === "curriculum_material" && !value.assignmentId) context.addIssue({ code: "custom", path: ["assignmentId"], message: "Choose a curriculum lesson for this material." });
+  if (value.capturePurpose === "curriculum_identity" && !value.curriculumUnitId) context.addIssue({ code: "custom", path: ["curriculumUnitId"], message: "Choose a curriculum for this source." });
+});
 const intentsSchema = z.array(z.enum(["organize", "understand", "update_records", "next_step", "weekly_plan", "lesson", "summary", "practice", "portfolio"])).min(1).max(3);
 const allowedTypes = new Set(["image/jpeg", "image/png", "image/webp", "application/pdf", "audio/webm", "audio/mpeg", "audio/mp4", "audio/wav", "text/csv"]);
 
@@ -32,6 +46,8 @@ export async function POST(request: Request) {
     const conversationAttachment = form.get("conversationAttachment") === "true";
     const parsed = inputSchema.safeParse({
       familyId: form.get("familyId"), studentId: form.get("studentId"), assignmentId: typeof form.get("assignmentId") === "string" && form.get("assignmentId") ? form.get("assignmentId") : undefined,
+      curriculumUnitId: typeof form.get("curriculumUnitId") === "string" && form.get("curriculumUnitId") ? form.get("curriculumUnitId") : undefined,
+      capturePurpose: typeof form.get("capturePurpose") === "string" ? form.get("capturePurpose") : "learning_evidence",
       text: typeof form.get("text") === "string" ? form.get("text") : undefined,
       linkUrl: typeof form.get("linkUrl") === "string" && form.get("linkUrl") ? form.get("linkUrl") : undefined,
       kind: typeof form.get("kind") === "string" ? form.get("kind") : "note",
@@ -56,10 +72,20 @@ export async function POST(request: Request) {
     ]);
     if (!membership || !learners?.some((learner) => learner.id === parsed.data.studentId)) return NextResponse.json({ error: "You do not have access to that workspace." }, { status: 403 });
     const linkedAssignment = parsed.data.assignmentId
-      ? await supabase.from("assignments").select("id,student_id,title,subject").eq("id", parsed.data.assignmentId).eq("family_id", parsed.data.familyId).maybeSingle()
+      ? await supabase.from("assignments").select("id,student_id,curriculum_unit_id,title,subject,instructions,estimated_minutes,curriculum_item_kind,curriculum_path,status,scheduled_date,version").eq("id", parsed.data.assignmentId).eq("family_id", parsed.data.familyId).maybeSingle()
       : { data: null, error: null };
     if (linkedAssignment.error) throw linkedAssignment.error;
     if (parsed.data.assignmentId && !linkedAssignment.data) return NextResponse.json({ error: "That lesson is not available in this family workspace." }, { status: 404 });
+    if (parsed.data.capturePurpose === "curriculum_material" && (!linkedAssignment.data?.curriculum_unit_id || linkedAssignment.data.student_id !== parsed.data.studentId)) {
+      return NextResponse.json({ error: "Curriculum material must be attached to the selected learner’s curriculum lesson." }, { status: 400 });
+    }
+    const linkedCurriculum = parsed.data.curriculumUnitId
+      ? await supabase.from("curriculum_units").select("id,student_id").eq("id", parsed.data.curriculumUnitId).eq("family_id", parsed.data.familyId).maybeSingle()
+      : { data: null, error: null };
+    if (linkedCurriculum.error) throw linkedCurriculum.error;
+    if (parsed.data.capturePurpose === "curriculum_identity" && linkedCurriculum.data?.student_id !== parsed.data.studentId) {
+      return NextResponse.json({ error: "That curriculum is not available for the selected learner." }, { status: 400 });
+    }
     const text = parsed.data.text?.trim() || null;
     const namedLearner = text ? inferNamedLearner(text, learners) : null;
     const effectiveStudentId = linkedAssignment.data?.student_id ?? namedLearner?.id ?? parsed.data.studentId;
@@ -85,7 +111,7 @@ export async function POST(request: Request) {
       raw_text: index === 0 ? text ?? (parsed.data.linkUrl ? `Reference URL: ${parsed.data.linkUrl}` : null) : null, storage_path: file ? storagePaths[index] : null,
       capture_submission_id: captureSubmissionId,
       mime_type: file?.type || null, file_size: file?.size || null,
-      provenance: { source: "klio_inbox", original_filename: file?.name ?? null, assignment_id: linkedAssignment.data?.id ?? null, reference_url: index === 0 ? parsed.data.linkUrl ?? null : null, retrieved: false },
+      provenance: { source: "klio_inbox", capture_purpose: parsed.data.capturePurpose, original_filename: file?.name ?? null, assignment_id: linkedAssignment.data?.id ?? null, curriculum_unit_id: linkedCurriculum.data?.id ?? null, reference_url: index === 0 ? parsed.data.linkUrl ?? null : null, retrieved: false },
     }));
     const { error: evidenceError } = await supabase.from("evidence_items").insert(evidence);
     if (evidenceError) {
@@ -96,6 +122,61 @@ export async function POST(request: Request) {
     const ids = captures.map(({ id }) => id);
     const { error: linkError } = await supabase.from("evidence_students").insert(ids.map((id) => ({ evidence_id: id, student_id: effectiveStudentId, family_id: parsed.data.familyId })));
     if (linkError) return NextResponse.json({ error: linkError.message }, { status: 400 });
+
+    if (parsed.data.capturePurpose === "curriculum_material" && linkedAssignment.data) {
+      const admin = createAdminClient();
+      const materials = await supabase.from("assignment_materials").insert(ids.map((evidenceId, position) => ({
+        family_id: parsed.data.familyId,
+        assignment_id: linkedAssignment.data!.id,
+        evidence_id: evidenceId,
+        role: position === 0 ? "primary" as const : "supporting" as const,
+        position,
+      })));
+      if (materials.error) throw materials.error;
+      const beforeSnapshot = {
+        version: linkedAssignment.data.version,
+        title: linkedAssignment.data.title,
+        instructions: linkedAssignment.data.instructions,
+        estimated_minutes: linkedAssignment.data.estimated_minutes,
+        curriculum_item_kind: linkedAssignment.data.curriculum_item_kind,
+        curriculum_path: linkedAssignment.data.curriculum_path,
+        status: linkedAssignment.data.status,
+        scheduled_date: linkedAssignment.data.scheduled_date,
+      };
+      const suggestions = await supabase.from("curriculum_material_suggestions").insert(ids.map((evidenceId) => ({
+        family_id: parsed.data.familyId,
+        assignment_id: linkedAssignment.data!.id,
+        evidence_id: evidenceId,
+        requested_by: parent.id,
+        status: "queued" as const,
+        before_snapshot: beforeSnapshot,
+      }))).select("id,status,evidence_id");
+      if (suggestions.error) throw suggestions.error;
+      const marked = await supabase.from("assignments").update({ curriculum_item_state: "enriched" }).eq("id", linkedAssignment.data.id).eq("family_id", parsed.data.familyId);
+      if (marked.error) throw marked.error;
+      const ready = await admin.from("evidence_items").update({ capture_route: "learning", processing_status: "ready" }).eq("family_id", parsed.data.familyId).in("id", ids);
+      if (ready.error) throw ready.error;
+      await writeAuditEvent(admin, {
+        familyId: parsed.data.familyId,
+        actorId: parent.id,
+        actorType: "parent",
+        action: "curriculum_material.attached",
+        entityType: "assignment",
+        entityId: linkedAssignment.data.id,
+        metadata: { evidence_ids: ids, suggestion_ids: suggestions.data.map((suggestion) => suggestion.id), assignment_id: linkedAssignment.data.id },
+      });
+      after(async () => { for (const suggestion of suggestions.data) await processCurriculumMaterialSuggestion(suggestion.id); });
+      return NextResponse.json({ id: ids[0], ids, status: "ready", materialStatus: "queued", materials: ids.map((evidenceId, position) => ({ evidenceId, position })), suggestions: suggestions.data, studentId: effectiveStudentId, assignmentId: linkedAssignment.data.id }, { status: 201 });
+    }
+    if (parsed.data.capturePurpose === "curriculum_identity" && linkedCurriculum.data) {
+      const admin = createAdminClient();
+      const ready = await admin.from("evidence_items").update({ capture_route: "learning", processing_status: "ready" }).eq("family_id", parsed.data.familyId).in("id", ids);
+      if (ready.error) throw ready.error;
+      const suggestion = await queueParentEvidenceScopeSuggestion({ familyId: parsed.data.familyId, curriculumUnitId: linkedCurriculum.data.id, requestedBy: parent.id, evidenceIds: ids });
+      await writeAuditEvent(admin, { familyId: parsed.data.familyId, actorId: parent.id, actorType: "parent", action: "curriculum_scope.evidence_attached", entityType: "curriculum_unit", entityId: linkedCurriculum.data.id, metadata: { evidence_ids: ids, suggestion_id: suggestion.id } });
+      after(() => processCurriculumScopeSuggestion(suggestion.id));
+      return NextResponse.json({ id: ids[0], ids, status: "ready", scopeStatus: "queued", suggestion, studentId: effectiveStudentId, curriculumUnitId: linkedCurriculum.data.id }, { status: 201 });
+    }
 
     await writeAuditEvent(createAdminClient(), {
       familyId: parsed.data.familyId, actorId: parent.id, actorType: "parent",
@@ -191,6 +272,10 @@ export async function POST(request: Request) {
   } catch (error) {
     if (error instanceof Error && error.message === "UNAUTHORIZED") return NextResponse.json({ error: "Sign in to continue." }, { status: 401 });
     if (error instanceof Error && (error.message === "aborted" || "code" in error && error.code === "ECONNRESET")) return NextResponse.json({ error: "Those files are too large to upload together. Try fewer files at a time." }, { status: 413 });
+    console.error("Evidence capture failed", {
+      name: error instanceof Error ? error.name : "UnknownError",
+      code: typeof error === "object" && error && "code" in error ? String(error.code) : null,
+    });
     return NextResponse.json({ error: "Klio could not save this capture." }, { status: 500 });
   }
 }

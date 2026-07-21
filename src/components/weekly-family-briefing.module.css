@@ -108,7 +108,9 @@
   transition: opacity 140ms ease, background 140ms ease;
 }
 .actionNote:hover .dismiss,
+.summaryNote:hover > .dismiss,
 .dismiss:focus-visible { opacity: 1; }
+.summaryNote > .dismiss { position: absolute; top: 3px; right: 3px; }
 .dismiss:hover { background: rgba(73, 88, 75, .07); }
 .dismiss:active { transform: scale(.96); }
 .dismiss:disabled { cursor: wait; opacity: .5; }
@@ -179,6 +181,8 @@
 @media (max-width: 760px) {
   .notes { display: block; }
   .summaryNote { display: none; }
+  .summaryNote.singleNote { width: 100%; padding: 32px 13px 16px; display: block; transform: none; }
+  .summaryNote.singleNote > .dismiss { opacity: 1; }
   .actionNote { width: 100%; padding: 9px 10px; transform: none; box-shadow: none; border: 1px solid rgba(67, 82, 69, .14); }
   .actionNote::before { display: none; }
   .actionNote > header { position: static; min-height: 32px; }

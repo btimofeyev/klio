@@ -71,8 +71,9 @@ describe("weekly family briefing", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }));
     const quiet = { ...briefing, snapshot: { ...briefing.snapshot, onTrack: true, actions: [], summary: "5 assignments and 170 planned minutes are on the family schedule. Current records show no capacity, review, or pacing concern." } };
     render(React.createElement(WeeklyFamilyBriefing, { briefing: quiet, state: "available", students, selectedStudentId: "all", familyTimezone: "America/New_York", onAsk: vi.fn() }));
-    expect(screen.getAllByText("The week is ready. Nothing needs your decision.")).toHaveLength(2);
-    expect(screen.getByText("Everyone fits within the current plan.")).toBeInTheDocument();
+    expect(screen.getAllByText("The week is ready. Nothing needs your decision.")).toHaveLength(1);
+    expect(screen.queryByText("Everyone fits within the current plan.")).not.toBeInTheDocument();
+    expect(document.querySelectorAll('[data-briefing-side]')).toHaveLength(1);
   });
 
   it("prefills Ask Klio through its callback and never performs an agent submission", async () => {
@@ -96,7 +97,7 @@ describe("weekly family briefing", () => {
       },
     };
     render(React.createElement(WeeklyFamilyBriefing, { briefing: scoped, state: "available", students, selectedStudentId: "maya", familyTimezone: "America/New_York", onAsk: vi.fn() }));
-    expect(screen.getAllByText("Maya’s week is ready. Nothing needs your decision.")).toHaveLength(2);
+    expect(screen.getAllByText("Maya’s week is ready. Nothing needs your decision.")).toHaveLength(1);
     expect(screen.queryByText("Some work still needs a place")).not.toBeInTheDocument();
   });
 
@@ -196,10 +197,32 @@ describe("weekly family briefing", () => {
       onAsk: vi.fn(),
     }));
 
-    expect(screen.getAllByText("Klio handled the briefing. Nothing else needs your decision.")).toHaveLength(3);
+    expect(screen.getAllByText("Klio handled the briefing. Nothing else needs your decision.")).toHaveLength(1);
     expect(screen.queryByText("One lesson is still open")).not.toBeInTheDocument();
-    expect(screen.getByText("Only parent-approved changes were applied.")).toBeInTheDocument();
+    expect(screen.queryByText("Only parent-approved changes were applied.")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Ask Klio/ })).not.toBeInTheDocument();
+    expect(document.querySelector('[data-briefing-side="right"]')).not.toBeInTheDocument();
+  });
+
+  it("resolves a broad schedule-work alert after its bounded placement is applied", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }));
+    const proposalBriefing = briefingWithActions([
+      { kind: "schedule_work", label: "Place unscheduled work", explanation: "Many curriculum placeholders have no day.", priority: 74, target: { href: "/app/assignments", assignmentIds: ["assignment-next", "assignment-later"] }, evidenceRefs: [{ type: "assignment", id: "assignment-next" }, { type: "assignment", id: "assignment-later" }] },
+    ]);
+    render(React.createElement(WeeklyFamilyBriefing, {
+      briefing: proposalBriefing,
+      state: "available",
+      students,
+      selectedStudentId: "all",
+      familyTimezone: "America/New_York",
+      planningProposals: [planningProposal({ status: "applied", assignmentId: "assignment-next" })],
+      onAsk: vi.fn(),
+    }));
+
+    expect(screen.getAllByText("Klio handled the briefing. Nothing else needs your decision.")).toHaveLength(1);
+    expect(screen.queryByText("Some work still needs a place")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Ask Klio/ })).not.toBeInTheDocument();
+    expect(document.querySelector('[data-briefing-side="right"]')).not.toBeInTheDocument();
   });
 
   it("asks Klio only about work that has not already been prepared", async () => {

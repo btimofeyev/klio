@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildFirstWeekAssignments } from "./first-week";
+import { buildFirstWeekAssignments as build } from "./first-week";
 
 const units = ["Math", "English", "Science", "History", "Bible"].map((subject, index) => ({
   id: `unit-${index}`,
@@ -13,6 +13,22 @@ const units = ["Math", "English", "Science", "History", "Bible"].map((subject, i
   scheduledTime: null,
 }));
 
+function buildFirstWeekAssignments(input: Omit<Parameters<typeof build>[0], "candidates">) {
+  return build({
+    ...input,
+    candidates: input.units.flatMap((unit) => Array.from({ length: 7 }, (_, index) => ({
+      id: `${unit.id}-assignment-${index + 1}`,
+      curriculumUnitId: unit.id,
+      subject: unit.subject,
+      title: `${"title" in unit ? unit.title : unit.subject} · Lesson ${index + 1}`,
+      sequenceNumber: index + 1,
+      curriculumItemKind: "lesson" as const,
+      estimatedMinutes: unit.defaultMinutes,
+      curriculumUrl: null,
+    }))),
+  });
+}
+
 describe("buildFirstWeekAssignments", () => {
   it("balances curricula across the week without exceeding daily capacity", () => {
     const result = buildFirstWeekAssignments({ units, dates: ["2026-07-13", "2026-07-14"], existing: [], dailyCapacityMinutes: 120 });
@@ -23,6 +39,7 @@ describe("buildFirstWeekAssignments", () => {
     expect(result.every((item) => item.estimatedMinutes === 20)).toBe(true);
     expect(result.find((item) => item.curriculumUnitId === "unit-1")?.sequenceNumber).toBe(1);
     expect(result.filter((item) => item.curriculumUnitId === "unit-1").at(-1)?.sequenceNumber).toBe(2);
+    expect(result.find((item) => item.curriculumUnitId === "unit-1")?.assignmentId).toBe("unit-1-assignment-1");
   });
 
   it("keeps existing work and does not repeat a curriculum on the same day", () => {
@@ -97,5 +114,14 @@ describe("buildFirstWeekAssignments", () => {
     });
     expect(result).toHaveLength(1);
     expect(result[0].scheduledDate).toBe("2026-07-14");
+  });
+
+  it("uses enriched candidate identity, title, kind, and duration without inventing a row", () => {
+    const unit = { ...units[0], weeklyFrequency: 1 };
+    const result = build({
+      units: [unit], dates: ["2026-07-13"], existing: [], dailyCapacityMinutes: 180,
+      candidates: [{ id: "stable-enriched-id", curriculumUnitId: unit.id, subject: "Math", title: "Publisher review quiz", sequenceNumber: 1, curriculumItemKind: "assessment", estimatedMinutes: 25, curriculumUrl: "https://example.test/course" }],
+    });
+    expect(result).toEqual([expect.objectContaining({ assignmentId: "stable-enriched-id", title: "Publisher review quiz", curriculumItemKind: "assessment", estimatedMinutes: 25 })]);
   });
 });

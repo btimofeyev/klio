@@ -33,6 +33,12 @@ test("Klio builds a balanced first week from onboarding curriculum", async ({ pa
 
     const users = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
     userId = users.data.users.find((user) => user.email === email)?.id ?? null;
+    const family = await admin.from("families").select("id").eq("created_by", userId!).single();
+    const beforePlan = await admin.from("assignments").select("id,scheduled_date,curriculum_unit_id,sequence_number").eq("family_id", family.data!.id);
+    expect(beforePlan.data).toHaveLength(600);
+    expect(beforePlan.data?.every((item) => item.scheduled_date === null)).toBe(true);
+    expect((await admin.from("weekly_plan_items").select("id").eq("family_id", family.data!.id)).data).toEqual([]);
+    const stableIds = new Set(beforePlan.data?.map((item) => item.id));
 
     await page.goto("/app/week");
     await expect(page.getByRole("button", { name: "Build this week" }).first()).toBeVisible();
@@ -52,14 +58,14 @@ test("Klio builds a balanced first week from onboarding curriculum", async ({ pa
     expect(quietSchedule!.width).toBeGreaterThan(quietWorkspace!.width * .8);
     expect(Math.abs(quietSchedule!.x + quietSchedule!.width / 2 - (quietWorkspace!.x + quietWorkspace!.width / 2))).toBeLessThanOrEqual(1);
 
-    const family = await admin.from("families").select("id").eq("created_by", userId!).single();
     const artCurriculum = await admin.from("curriculum_units").select("subject,title,status").eq("family_id", family.data!.id).eq("subject", "Art").single();
     expect(artCurriculum.data).toMatchObject({ subject: "Art", title: "Art", status: "active" });
     const assignments = await admin.from("assignments").select("id,scheduled_date,estimated_minutes,curriculum_unit_id").eq("family_id", family.data!.id);
-    expect(assignments.data?.length).toBeGreaterThan(0);
+    expect(assignments.data).toHaveLength(600);
     expect(new Set(assignments.data?.map((item) => item.curriculum_unit_id)).size).toBe(6);
-    expect(assignments.data?.every((item) => item.estimated_minutes === 30)).toBe(true);
-    const firstWeekAssignmentIds = new Set(assignments.data?.map((item) => item.id));
+    expect(assignments.data?.filter((item) => item.scheduled_date).every((item) => item.estimated_minutes === 30)).toBe(true);
+    expect(new Set(assignments.data?.map((item) => item.id))).toEqual(stableIds);
+    const firstWeekAssignmentIds = new Set(assignments.data?.filter((item) => item.scheduled_date).map((item) => item.id));
     const firstWeekAnchor = assignments.data?.map((item) => item.scheduled_date).filter((date): date is string => Boolean(date)).sort()[0];
     if (!firstWeekAnchor) throw new Error("The first planned week has no scheduled date.");
 
@@ -74,10 +80,12 @@ test("Klio builds a balanced first week from onboarding curriculum", async ({ pa
     await page.goto(`/app/week?date=${firstWeekAnchor}`);
     await page.getByRole("button", { name: "Plan next week" }).click();
     await expect(page.getByText(/Klio planned Mira’s week: 6 subjects across \d+ lessons\. Lesson lengths were adjusted to fit each learner’s available time\./)).toBeVisible();
-    const nextAssignments = await admin.from("assignments").select("id,subject").eq("family_id", family.data!.id);
-    const addedNextWeek = nextAssignments.data?.filter((item) => !firstWeekAssignmentIds.has(item.id)) ?? [];
-    expect(addedNextWeek.length).toBeGreaterThan(0);
-    expect(addedNextWeek.filter((item) => item.subject === "Math")).toHaveLength(3);
+    const nextAssignments = await admin.from("assignments").select("id,subject,scheduled_date,sequence_number").eq("family_id", family.data!.id);
+    expect(nextAssignments.data).toHaveLength(600);
+    const scheduledNextWeek = nextAssignments.data?.filter((item) => item.scheduled_date && !firstWeekAssignmentIds.has(item.id)) ?? [];
+    expect(scheduledNextWeek.length).toBeGreaterThan(0);
+    expect(scheduledNextWeek.filter((item) => item.subject === "Math")).toHaveLength(3);
+    expect(scheduledNextWeek.filter((item) => item.subject === "Math").map((item) => item.sequence_number)).toEqual([6, 7, 8]);
 
     await page.goto("/app");
     await page.setViewportSize({ width: 390, height: 844 });

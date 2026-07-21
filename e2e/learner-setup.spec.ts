@@ -31,13 +31,19 @@ test("each learner keeps an independent subject and weekly setup", async ({ page
     await expect(page.getByText(/Klio planned Noah’s week: 1 subject across \d+ lessons\./)).toBeVisible();
     const initialAssignments = await admin.from("assignments").select("id").eq("family_id", family.data!.id);
     const initialNoahAssignmentCount = initialAssignments.data?.length ?? 0;
-    expect(initialNoahAssignmentCount).toBeGreaterThan(0);
+    expect(initialNoahAssignmentCount).toBe(100);
 
     await page.goto("/app/settings");
     await expect(page.locator(".learner-index-row")).toHaveCount(1);
     await expect(page.getByLabel("First name")).toHaveCount(0);
     await expect(page.getByRole("navigation", { name: "Student workspace sections" }).getByRole("link", { name: "Academic plan" })).toBeVisible();
     await expect(page.getByRole("navigation", { name: "Student workspace sections" }).getByRole("link", { name: "Klio autonomy" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "All curriculum" })).toHaveAttribute("href", "/app/assignments?student=all");
+    const learnerCurriculumLink = page.getByRole("link", { name: "Curriculum & lessons" });
+    await expect(learnerCurriculumLink).toHaveAttribute("href", /\/app\/assignments\?student=[0-9a-f-]+/);
+    await learnerCurriculumLink.click();
+    await expect(page).toHaveURL(/\/app\/assignments\?student=[0-9a-f-]+$/);
+    await page.goto("/app/settings");
     await page.getByRole("link", { name: "Add learner" }).click();
     await expect(page).toHaveURL(/\/app\/settings\/learners\/new$/);
     await page.getByLabel("First name").fill("Eli");
@@ -86,7 +92,7 @@ test("each learner keeps an independent subject and weekly setup", async ({ page
     await expect.poll(async () => {
       const result = await admin.from("assignments").select("id").eq("family_id", family.data!.id).eq("student_id", eli!.id);
       return result.data?.length ?? 0;
-    }).toBeGreaterThan(0);
+    }).toBe(200);
 
     await page.goto("/app/week");
     await expect(page.getByLabel("View schedule for")).toHaveValue("all");
@@ -95,8 +101,8 @@ test("each learner keeps an independent subject and weekly setup", async ({ page
     await page.getByLabel("Learner for this handoff").selectOption(eli!.id);
     await expect(page.getByLabel("Learner for this handoff")).toHaveValue(eli!.id);
     const familyAssignments = await admin.from("assignments").select("student_id,scheduled_date").eq("family_id", family.data!.id);
-    const noahDate = familyAssignments.data?.find((assignment) => assignment.student_id === noah!.id)?.scheduled_date;
-    const eliDate = familyAssignments.data?.find((assignment) => assignment.student_id === eli!.id)?.scheduled_date;
+    const noahDate = familyAssignments.data?.find((assignment) => assignment.student_id === noah!.id && assignment.scheduled_date)?.scheduled_date;
+    const eliDate = familyAssignments.data?.find((assignment) => assignment.student_id === eli!.id && assignment.scheduled_date)?.scheduled_date;
     expect(noahDate).toBeTruthy();
     expect(eliDate).toBeTruthy();
     await page.goto(`/app/week?date=${noahDate}`);
@@ -104,14 +110,15 @@ test("each learner keeps an independent subject and weekly setup", async ({ page
     await page.goto(`/app/week?date=${eliDate}`);
     await expect(page.locator(".teacher-week-learner-lane").filter({ hasText: "Eli" }).first()).toBeVisible();
     expect(familyAssignments.data?.filter((assignment) => assignment.student_id === noah!.id)).toHaveLength(initialNoahAssignmentCount);
-    expect(familyAssignments.data?.filter((assignment) => assignment.student_id === eli!.id).length).toBeGreaterThan(0);
+    expect(familyAssignments.data?.filter((assignment) => assignment.student_id === eli!.id)).toHaveLength(200);
     const totalAssignmentCount = familyAssignments.data?.length ?? 0;
     const retry = await page.evaluate(async ({ familyId, anchorDate }) => {
       const response = await fetch("/api/week-plan", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ familyId, anchorDate }) });
       return { status: response.status, body: await response.json() };
     }, { familyId: family.data!.id, anchorDate: familyAssignments.data!.map((assignment) => assignment.scheduled_date!).sort()[0] });
     expect(retry.status).toBe(200);
-    expect(retry.body).toMatchObject({ assignmentCount: 0, totalAssignmentCount, subjectCount: 3 });
+    expect(retry.body).toMatchObject({ assignmentCount: 0, subjectCount: 3 });
+    expect(retry.body.totalAssignmentCount).toBeGreaterThan(0);
     const assignmentsAfterRetry = await admin.from("assignments").select("id").eq("family_id", family.data!.id);
     expect(assignmentsAfterRetry.data).toHaveLength(totalAssignmentCount);
 

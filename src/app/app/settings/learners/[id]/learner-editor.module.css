@@ -30,10 +30,9 @@
 .title p { margin: 0; overflow: hidden; color: #777e77; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 
 .headerActions { flex: 0 0 auto; display: flex; align-items: center; gap: 16px; }
-.headerActions a,.headerActions span { min-height: 38px; display: inline-flex; align-items: center; gap: 7px; color: #58695b; font-size: 10px; font-weight: 730; }
+.headerActions a { min-height: 38px; display: inline-flex; align-items: center; gap: 7px; color: #58695b; font-size: 10px; font-weight: 730; }
 .headerActions a { padding: 0 11px; border: 1px solid rgba(53, 62, 53, .16); border-radius: 7px; }
 .headerActions a:hover { color: #334d39; background: rgba(235, 239, 231, .65); }
-.headerActions span { color: #7a827a; font-weight: 600; }
 
 .viewport { min-height: 0; padding-top: 20px; overflow: hidden; }
 
@@ -167,7 +166,7 @@
 .viewport :global(.learner-setup-form > footer .outline-button:disabled) { opacity: .45; cursor: default; }
 
 @media (max-width: 980px) {
-  .headerActions span { display: none; }
+  .recordsAction { display: none !important; }
   .viewport :global(.learner-setup-form) { grid-template-columns: 174px minmax(0, 1fr); column-gap: 24px; }
   .viewport :global(.learner-subjects-pane .learner-setup-block) { grid-template-columns: 180px minmax(360px, 1fr); column-gap: 20px; }
   .viewport :global(.learner-setup-form .selected-subjects article) { grid-template-columns: 22px 96px minmax(120px, 1fr) 66px minmax(120px, .7fr) auto; gap: 7px; }

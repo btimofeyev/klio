@@ -1222,6 +1222,55 @@ export type Database = {
           },
         ]
       }
+      assignment_materials: {
+        Row: {
+          assignment_id: string
+          created_at: string
+          evidence_id: string
+          family_id: string
+          position: number
+          role: string
+        }
+        Insert: {
+          assignment_id: string
+          created_at?: string
+          evidence_id: string
+          family_id: string
+          position?: number
+          role?: string
+        }
+        Update: {
+          assignment_id?: string
+          created_at?: string
+          evidence_id?: string
+          family_id?: string
+          position?: number
+          role?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "assignment_materials_assignment_id_family_id_fkey"
+            columns: ["assignment_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "assignments"
+            referencedColumns: ["id", "family_id"]
+          },
+          {
+            foreignKeyName: "assignment_materials_evidence_id_family_id_fkey"
+            columns: ["evidence_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "evidence_items"
+            referencedColumns: ["id", "family_id"]
+          },
+          {
+            foreignKeyName: "assignment_materials_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       assignment_reviews: {
         Row: {
           agent_turn_id: string | null
@@ -1465,6 +1514,10 @@ export type Database = {
           created_at: string
           created_by: string | null
           created_by_type: string
+          curriculum_item_kind: string | null
+          curriculum_item_state: string | null
+          curriculum_path: Json | null
+          curriculum_scope_suggestion_id: string | null
           curriculum_unit_id: string | null
           due_at: string | null
           estimated_minutes: number | null
@@ -1491,6 +1544,10 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           created_by_type?: string
+          curriculum_item_kind?: string | null
+          curriculum_item_state?: string | null
+          curriculum_path?: Json | null
+          curriculum_scope_suggestion_id?: string | null
           curriculum_unit_id?: string | null
           due_at?: string | null
           estimated_minutes?: number | null
@@ -1517,6 +1574,10 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           created_by_type?: string
+          curriculum_item_kind?: string | null
+          curriculum_item_state?: string | null
+          curriculum_path?: Json | null
+          curriculum_scope_suggestion_id?: string | null
           curriculum_unit_id?: string | null
           due_at?: string | null
           estimated_minutes?: number | null
@@ -1551,6 +1612,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "families"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "assignments_scope_suggestion_family_fkey"
+            columns: ["curriculum_scope_suggestion_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "curriculum_scope_suggestions"
+            referencedColumns: ["id", "family_id"]
           },
           {
             foreignKeyName: "assignments_student_id_fkey"
@@ -1709,6 +1777,100 @@ export type Database = {
           },
         ]
       }
+      curriculum_material_suggestions: {
+        Row: {
+          assignment_id: string
+          before_snapshot: Json
+          confidence: number | null
+          created_at: string
+          error_code: string | null
+          evidence_id: string
+          family_id: string
+          id: string
+          model: string | null
+          proposed_instructions: string | null
+          proposed_kind: string | null
+          proposed_minutes: number | null
+          proposed_path: Json | null
+          proposed_title: string | null
+          rationale: string | null
+          requested_by: string
+          reviewed_at: string | null
+          reviewed_by: string | null
+          status: string
+          uncertainty_flags: Json
+          updated_at: string
+        }
+        Insert: {
+          assignment_id: string
+          before_snapshot?: Json
+          confidence?: number | null
+          created_at?: string
+          error_code?: string | null
+          evidence_id: string
+          family_id: string
+          id?: string
+          model?: string | null
+          proposed_instructions?: string | null
+          proposed_kind?: string | null
+          proposed_minutes?: number | null
+          proposed_path?: Json | null
+          proposed_title?: string | null
+          rationale?: string | null
+          requested_by: string
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: string
+          uncertainty_flags?: Json
+          updated_at?: string
+        }
+        Update: {
+          assignment_id?: string
+          before_snapshot?: Json
+          confidence?: number | null
+          created_at?: string
+          error_code?: string | null
+          evidence_id?: string
+          family_id?: string
+          id?: string
+          model?: string | null
+          proposed_instructions?: string | null
+          proposed_kind?: string | null
+          proposed_minutes?: number | null
+          proposed_path?: Json | null
+          proposed_title?: string | null
+          rationale?: string | null
+          requested_by?: string
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: string
+          uncertainty_flags?: Json
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "curriculum_material_suggestions_assignment_id_family_id_fkey"
+            columns: ["assignment_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "assignments"
+            referencedColumns: ["id", "family_id"]
+          },
+          {
+            foreignKeyName: "curriculum_material_suggestions_evidence_id_family_id_fkey"
+            columns: ["evidence_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "evidence_items"
+            referencedColumns: ["id", "family_id"]
+          },
+          {
+            foreignKeyName: "curriculum_material_suggestions_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       curriculum_pacing_targets: {
         Row: {
           constraints: string | null
@@ -1814,6 +1976,151 @@ export type Database = {
           },
         ]
       }
+      curriculum_scope_suggestion_evidence: {
+        Row: {
+          created_at: string
+          evidence_id: string
+          family_id: string
+          suggestion_id: string
+        }
+        Insert: {
+          created_at?: string
+          evidence_id: string
+          family_id: string
+          suggestion_id: string
+        }
+        Update: {
+          created_at?: string
+          evidence_id?: string
+          family_id?: string
+          suggestion_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "curriculum_scope_suggestion_eviden_suggestion_id_family_id_fkey"
+            columns: ["suggestion_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "curriculum_scope_suggestions"
+            referencedColumns: ["id", "family_id"]
+          },
+          {
+            foreignKeyName: "curriculum_scope_suggestion_evidence_evidence_id_family_id_fkey"
+            columns: ["evidence_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "evidence_items"
+            referencedColumns: ["id", "family_id"]
+          },
+          {
+            foreignKeyName: "curriculum_scope_suggestion_evidence_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      curriculum_scope_suggestions: {
+        Row: {
+          assumptions: Json
+          before_snapshot: Json
+          confidence: number | null
+          created_at: string
+          curriculum_unit_id: string
+          edition_label: string | null
+          error_code: string | null
+          family_id: string
+          grade_label: string | null
+          id: string
+          identity_status: string
+          isbn: string | null
+          model: string | null
+          product_name: string | null
+          proposed_items: Json
+          proposed_target_count: number | null
+          publisher: string | null
+          requested_by: string
+          reviewed_at: string | null
+          reviewed_by: string | null
+          source_evidence_ids: string[]
+          source_fingerprint: string
+          source_kind: string
+          source_urls: Json
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          assumptions?: Json
+          before_snapshot?: Json
+          confidence?: number | null
+          created_at?: string
+          curriculum_unit_id: string
+          edition_label?: string | null
+          error_code?: string | null
+          family_id: string
+          grade_label?: string | null
+          id?: string
+          identity_status?: string
+          isbn?: string | null
+          model?: string | null
+          product_name?: string | null
+          proposed_items?: Json
+          proposed_target_count?: number | null
+          publisher?: string | null
+          requested_by: string
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          source_evidence_ids?: string[]
+          source_fingerprint: string
+          source_kind: string
+          source_urls?: Json
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          assumptions?: Json
+          before_snapshot?: Json
+          confidence?: number | null
+          created_at?: string
+          curriculum_unit_id?: string
+          edition_label?: string | null
+          error_code?: string | null
+          family_id?: string
+          grade_label?: string | null
+          id?: string
+          identity_status?: string
+          isbn?: string | null
+          model?: string | null
+          product_name?: string | null
+          proposed_items?: Json
+          proposed_target_count?: number | null
+          publisher?: string | null
+          requested_by?: string
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          source_evidence_ids?: string[]
+          source_fingerprint?: string
+          source_kind?: string
+          source_urls?: Json
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "curriculum_scope_suggestions_curriculum_unit_id_family_id_fkey"
+            columns: ["curriculum_unit_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "curriculum_units"
+            referencedColumns: ["id", "family_id"]
+          },
+          {
+            foreignKeyName: "curriculum_scope_suggestions_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       curriculum_units: {
         Row: {
           attention_mode: string
@@ -1821,15 +2128,25 @@ export type Database = {
           created_by: string
           curriculum_url: string | null
           default_minutes: number
+          edition_label: string | null
           family_id: string
+          grade_label: string | null
           id: string
+          identity_status: string
+          isbn: string | null
           next_sequence_number: number
           parent_attention_minutes: number | null
+          product_name: string | null
+          publisher: string | null
           schedule_rule: Json
+          scope_confidence: number | null
+          scope_source_kind: string
+          scope_verified_at: string | null
           sequence_label: string
           status: string
           student_id: string
           subject: string
+          target_lesson_count: number
           title: string
           updated_at: string
         }
@@ -1839,15 +2156,25 @@ export type Database = {
           created_by: string
           curriculum_url?: string | null
           default_minutes?: number
+          edition_label?: string | null
           family_id: string
+          grade_label?: string | null
           id?: string
+          identity_status?: string
+          isbn?: string | null
           next_sequence_number?: number
           parent_attention_minutes?: number | null
+          product_name?: string | null
+          publisher?: string | null
           schedule_rule?: Json
+          scope_confidence?: number | null
+          scope_source_kind?: string
+          scope_verified_at?: string | null
           sequence_label?: string
           status?: string
           student_id: string
           subject: string
+          target_lesson_count?: number
           title: string
           updated_at?: string
         }
@@ -1857,15 +2184,25 @@ export type Database = {
           created_by?: string
           curriculum_url?: string | null
           default_minutes?: number
+          edition_label?: string | null
           family_id?: string
+          grade_label?: string | null
           id?: string
+          identity_status?: string
+          isbn?: string | null
           next_sequence_number?: number
           parent_attention_minutes?: number | null
+          product_name?: string | null
+          publisher?: string | null
           schedule_rule?: Json
+          scope_confidence?: number | null
+          scope_source_kind?: string
+          scope_verified_at?: string | null
           sequence_label?: string
           status?: string
           student_id?: string
           subject?: string
+          target_lesson_count?: number
           title?: string
           updated_at?: string
         }
@@ -4081,6 +4418,15 @@ export type Database = {
         }
         Returns: Json
       }
+      apply_curriculum_scope_suggestion: {
+        Args: {
+          p_actor_id: string
+          p_family_id: string
+          p_items: Json
+          p_suggestion_id: string
+        }
+        Returns: Json
+      }
       apply_grade_return_proposal: {
         Args: { p_actor_id: string; p_proposal_id: string }
         Returns: Json
@@ -4143,6 +4489,10 @@ export type Database = {
           created_at: string
           created_by: string | null
           created_by_type: string
+          curriculum_item_kind: string | null
+          curriculum_item_state: string | null
+          curriculum_path: Json | null
+          curriculum_scope_suggestion_id: string | null
           curriculum_unit_id: string | null
           due_at: string | null
           estimated_minutes: number | null
@@ -4187,6 +4537,10 @@ export type Database = {
           created_at: string
           created_by: string | null
           created_by_type: string
+          curriculum_item_kind: string | null
+          curriculum_item_state: string | null
+          curriculum_path: Json | null
+          curriculum_scope_suggestion_id: string | null
           curriculum_unit_id: string | null
           due_at: string | null
           estimated_minutes: number | null
@@ -4234,6 +4588,10 @@ export type Database = {
       release_voice_transcription: {
         Args: { p_lease_token: string; p_user_id: string }
         Returns: boolean
+      }
+      schedule_curriculum_assignments: {
+        Args: { p_actor_id: string; p_family_id: string; p_placements: Json }
+        Returns: Json
       }
       undo_klio_adjustment: {
         Args: { p_actor_id: string; p_proposal_id: string }

@@ -14,7 +14,7 @@ begin
   join public.families f on f.id = s.family_id
   join auth.users u on u.id = f.created_by
   where lower(s.display_name) = 'jacob'
-    and lower(u.email) = 'btimofeyev@gmail.com'
+    and lower(u.email) = 'demo@klio.local'
   limit 1;
 
   if target_student is null then

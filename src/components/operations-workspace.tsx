@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowLeft, ArrowRight, CalendarDays, Check, ChevronRight, ClipboardCheck, Clock3, Ellipsis, FileCheck2, GripVertical, LoaderCircle, Plus, RotateCcw, Sparkles, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, CalendarDays, Check, ChevronRight, ClipboardCheck, Clock3, Ellipsis, FileCheck2, FileUp, GripVertical, LoaderCircle, Plus, RotateCcw, Sparkles, X } from "lucide-react";
 import { InboxWorkspace } from "@/components/inbox-workspace";
 import { SpatialWorkspace, type SpatialCameraState, type SpatialWorkspaceItem } from "@/components/spatial-workspace";
 import { WeeklyFamilyBriefing, weeklyBriefingShouldRender } from "@/components/weekly-family-briefing";
@@ -25,6 +25,7 @@ import { ParentSupportControl, ParentSupportLabel } from "@/components/parent-su
 import { findParentAttentionConflicts } from "@/lib/schedule/parent-attention";
 import { buildScheduleDecisionPresentation, planningProposalNeedsDecision, scheduleDecisionProposalState, scheduleDecisionTurnState } from "@/lib/product/workspace-insight-presentation";
 import { dedupeAssignmentsById } from "@/lib/data/operation-assignment-pages";
+import type { CurriculumResearchResult } from "@/lib/curriculum/curriculum-research";
 
 type Surface = "today" | "week" | "assignments" | "review" | "adjustments";
 type PracticeDismissalReason = "learned_in_curriculum" | "already_understands" | "not_right_fit";
@@ -916,6 +917,197 @@ function AssignmentRow({ item, busy, onUpdate, onSubmit, onAdjust }: { item: Ass
   </motion.article>;
 }
 
+type MaterialSuggestionView = { id: string; status: string; evidence_id: string; proposed_title: string | null; proposed_kind: string | null; proposed_instructions: string | null; proposed_minutes: number | null; proposed_path: unknown; confidence: number | null; rationale: string | null; uncertainty_flags: unknown; error_code: string | null };
+type MaterialView = { evidence_id: string; role: string; position: number; evidence_items: { title: string | null } | Array<{ title: string | null }> | null };
+
+function CurriculumAssignmentRow(props: { familyId: string; item: AssignmentDTO; busy: boolean; onUpdate: (item: AssignmentDTO, status: "doing" | "completed" | "planned" | "skipped") => void; onSubmit: (item: AssignmentDTO) => void; onApplied: (changes: Partial<AssignmentDTO>) => void }) {
+  const [materials, setMaterials] = useState<MaterialView[]>([]);
+  const [suggestions, setSuggestions] = useState<MaterialSuggestionView[]>([]);
+  const [state, setState] = useState<"idle" | "loading" | "uploading" | "saving" | "error">("idle");
+  const [message, setMessage] = useState<string | null>(null);
+  const historical = ["doing", "submitted", "needs_review", "completed", "skipped"].includes(props.item.status);
+  const inputId = `material-${props.item.id}`;
+
+  async function loadMaterials() {
+    setState("loading");
+    const response = await fetch(`/api/assignments/${props.item.id}/materials`);
+    const result = await response.json() as { materials?: MaterialView[]; suggestions?: MaterialSuggestionView[]; error?: string };
+    if (!response.ok) { setState("error"); setMessage(result.error ?? "Could not load material."); return; }
+    setMaterials(result.materials ?? []); setSuggestions(result.suggestions ?? []); setState("idle");
+  }
+  async function upload(file: File) {
+    setState("uploading"); setMessage(null);
+    const body = new FormData();
+    body.set("familyId", props.familyId); body.set("studentId", props.item.studentId); body.set("assignmentId", props.item.id); body.set("capturePurpose", "curriculum_material"); body.set("kind", "note"); body.append("file", file);
+    const response = await fetch("/api/evidence", { method: "POST", body });
+    const result = await response.json() as { error?: string };
+    if (!response.ok) { setState("error"); setMessage(result.error ?? "Could not attach material."); return; }
+    setMessage("Material saved. Klio is preparing an optional suggestion.");
+    await loadMaterials();
+  }
+  async function decide(suggestion: MaterialSuggestionView, action: "apply" | "dismiss" | "retry", form?: HTMLFormElement) {
+    setState("saving"); setMessage(null);
+    const data = form ? new FormData(form) : null;
+    const edits = data ? { title: String(data.get("title") ?? ""), itemKind: String(data.get("itemKind") ?? "lesson"), instructions: String(data.get("instructions") ?? ""), minutes: Number(data.get("minutes")), path: String(data.get("path") ?? "").split("/").map((part) => part.trim()).filter(Boolean) } : undefined;
+    const response = await fetch(`/api/assignments/${props.item.id}/materials`, { method: action === "retry" ? "POST" : "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(action === "retry" ? { action, suggestionId: suggestion.id } : { action, suggestionId: suggestion.id, ...(action === "apply" ? { edits } : {}) }) });
+    const result = await response.json() as { error?: string };
+    if (!response.ok) { setState("error"); setMessage(result.error ?? "Could not save that decision."); return; }
+    if (action === "apply" && edits) props.onApplied({ title: edits.title, instructions: edits.instructions, estimatedMinutes: edits.minutes, curriculumItemKind: edits.itemKind, curriculumPath: edits.path, curriculumItemState: "enriched" });
+    setMessage(action === "apply" ? historical ? "The source is attached; historical lesson details stayed unchanged." : "Suggestion applied to this stable lesson." : action === "dismiss" ? "Suggestion dismissed. The source remains attached." : "Extraction queued again.");
+    await loadMaterials();
+  }
+  const latest = suggestions[0];
+  return <section className={`curriculum-assignment-row ${state === "uploading" ? "uploading" : ""}`} onDragOver={(event) => { if (!historical || event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={(event) => { event.preventDefault(); const file = event.dataTransfer.files[0]; if (file) void upload(file); }}>
+    <AssignmentRow item={props.item} busy={props.busy} onUpdate={props.onUpdate} onSubmit={props.onSubmit} />
+    <div className="curriculum-item-meta"><span>{props.item.sequenceNumber ? `#${props.item.sequenceNumber}` : "Unnumbered"}</span><span>{props.item.curriculumItemKind ?? "lesson"}</span><span>{props.item.curriculumItemState === "enriched" ? "Source-enriched" : "Generic"}</span>{Array.isArray(props.item.curriculumPath) && props.item.curriculumPath.length ? <span>{props.item.curriculumPath.join(" / ")}</span> : null}</div>
+    <details onToggle={(event) => { if (event.currentTarget.open && state === "idle" && !materials.length && !suggestions.length) void loadMaterials(); }}><summary><FileUp size={12} />Add material{materials.length ? ` · ${materials.length} saved` : ""}</summary><div className="curriculum-material-panel">
+      <label htmlFor={inputId} className="material-upload-button">{state === "uploading" ? "Saving material…" : "Choose a file"}</label><input id={inputId} type="file" accept="image/jpeg,image/png,image/webp,application/pdf,text/csv" onChange={(event) => { const file = event.target.files?.[0]; if (file) void upload(file); event.currentTarget.value = ""; }} disabled={state === "uploading"} /><small>Or drop a supported teacher source onto this lesson. This is curriculum material, not learner work.</small>
+      {materials.map((material) => { const evidence = Array.isArray(material.evidence_items) ? material.evidence_items[0] : material.evidence_items; return <a href={`/api/evidence/${material.evidence_id}/download`} key={material.evidence_id}>{evidence?.title ?? "Saved source"}</a>; })}
+      {latest?.status === "ready" ? historical ? <p>This lesson already has history. You can inspect or add sources, but Klio will not rewrite its identity.</p> : <form onSubmit={(event) => { event.preventDefault(); void decide(latest, "apply", event.currentTarget); }} className="material-suggestion"><span><Sparkles size={12} />Review Klio’s suggestion</span><label>Title<input name="title" defaultValue={latest.proposed_title ?? props.item.title} /></label><div className="field-pair"><label>Kind<select name="itemKind" defaultValue={latest.proposed_kind ?? "lesson"}><option>lesson</option><option>assessment</option><option>review</option><option>project</option><option>activity</option></select></label><label>Minutes<input name="minutes" type="number" min="5" max="480" defaultValue={latest.proposed_minutes ?? props.item.estimatedMinutes ?? 40} /></label></div><label>Path<input name="path" defaultValue={Array.isArray(latest.proposed_path) ? latest.proposed_path.join(" / ") : ""} /></label><label>Directions<textarea name="instructions" defaultValue={latest.proposed_instructions ?? ""} /></label>{latest.rationale ? <p>{latest.rationale}</p> : null}<div><button type="button" onClick={() => void decide(latest, "dismiss")}>Keep current lesson</button><button type="submit" disabled={state === "saving"}>{state === "saving" ? "Applying…" : "Apply suggestion"}</button></div></form> : null}
+      {latest?.status === "failed" ? <p>Klio could not extract a suggestion ({latest.error_code?.toLowerCase().replaceAll("_", " ")}). The source is still saved. <button type="button" onClick={() => void decide(latest, "retry")}>Retry</button></p> : null}
+      {latest && ["queued", "processing"].includes(latest.status) ? <p>Klio is preparing an optional suggestion. <button type="button" onClick={() => void loadMaterials()}>Check status</button></p> : null}
+      {latest && ["applied", "dismissed"].includes(latest.status) ? <p>{latest.status === "applied" ? "Suggestion applied." : "Suggestion dismissed; source retained."}</p> : null}
+      {message ? <p role={state === "error" ? "alert" : "status"}>{message}</p> : null}
+    </div></details>
+  </section>;
+}
+
+type ScopeSuggestionView = { id: string; status: string; source_kind: string; identity_status: string; source_urls: unknown; assumptions: unknown; proposed_target_count: number | null; pacing: CurriculumResearchResult["pacing"] | null; confidenceWording: string | null; error_code: string | null; diff: Array<{ sequenceNumber: number; beforeTitle: string | null; disposition: "safe" | "review" | "protected" | "append"; proposed: { title: string; kind: string; path: string[]; minutes?: number | null } }> };
+
+function safeScopeSources(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  const sources = new Map<string, { url: string; label: string; title: string }>();
+  for (const candidate of value) {
+    if (!candidate || typeof candidate !== "object") continue;
+    const url = (candidate as { url?: unknown }).url;
+    const title = (candidate as { title?: unknown }).title;
+    if (typeof url !== "string") continue;
+    try {
+      const parsed = new URL(url);
+      if (!["https:", "http:"].includes(parsed.protocol)) continue;
+      const label = parsed.hostname.replace(/^www\./, "");
+      if (!sources.has(label)) sources.set(label, { url: parsed.toString(), label, title: typeof title === "string" && title.trim() ? title.trim() : label });
+    } catch {
+      // Parent-facing links are limited to valid HTTP(S) sources.
+    }
+  }
+  return [...sources.values()].slice(0, 5);
+}
+
+function CourseScopePanel(props: { familyId: string; unit: CurriculumUnitDTO; onAddIdentity: () => void; setNotice: (value: string | null) => void; onChanged: () => void }) {
+  const [suggestions, setSuggestions] = useState<ScopeSuggestionView[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [pollState, setPollState] = useState({ unitId: props.unit.id, count: 0 });
+  const pollCount = pollState.unitId === props.unit.id ? pollState.count : 0;
+  const load = useCallback(async () => {
+    const response = await fetch(`/api/curriculum/${props.unit.id}/scope-suggestions`);
+    const result = await response.json() as { suggestions?: ScopeSuggestionView[] };
+    if (response.ok) setSuggestions(result.suggestions ?? []);
+  }, [props.unit.id]);
+  useEffect(() => {
+    let active = true;
+    void fetch(`/api/curriculum/${props.unit.id}/scope-suggestions`).then(async (response) => ({ response, result: await response.json() as { suggestions?: ScopeSuggestionView[] } })).then(({ response, result }) => {
+      if (active && response.ok) setSuggestions(result.suggestions ?? []);
+    });
+    return () => { active = false; };
+  }, [props.unit.id]);
+  const waitingForSearch = suggestions.some((suggestion) => ["queued", "processing"].includes(suggestion.status));
+  useEffect(() => {
+    if (!waitingForSearch || pollCount >= 40) return;
+    const timeout = window.setTimeout(() => {
+      void load().finally(() => setPollState((current) => current.unitId === props.unit.id ? { ...current, count: current.count + 1 } : { unitId: props.unit.id, count: 1 }));
+    }, 2_500);
+    return () => window.clearTimeout(timeout);
+  }, [load, pollCount, props.unit.id, waitingForSearch]);
+  async function upload(file: File) {
+    setBusy(true);
+    const body = new FormData(); body.set("familyId", props.familyId); body.set("studentId", props.unit.studentId); body.set("curriculumUnitId", props.unit.id); body.set("capturePurpose", "curriculum_identity"); body.set("kind", "book"); body.append("file", file);
+    const response = await fetch("/api/evidence", { method: "POST", body }); const result = await response.json() as { error?: string }; setBusy(false);
+    if (!response.ok) return props.setNotice(result.error ?? "Could not attach that course source.");
+    props.setNotice("Course source saved. Klio is preparing a source-grounded outline proposal."); await load();
+  }
+  async function decide(suggestion: ScopeSuggestionView, action: "apply" | "dismiss" | "retry", form?: HTMLFormElement) {
+    setBusy(true);
+    const data = form ? new FormData(form) : null;
+    const compactPacingReview = suggestion.pacing?.sourceGranularity === "container";
+    const selections = suggestion.diff.filter((item) => item.disposition !== "protected" && (compactPacingReview || !data || data.has(`include-${item.sequenceNumber}`))).map((item) => {
+      if (!data || compactPacingReview) return { sequenceNumber: item.sequenceNumber };
+      const minutes = String(data.get(`minutes-${item.sequenceNumber}`) ?? "").trim();
+      return {
+        sequenceNumber: item.sequenceNumber,
+        title: String(data.get(`title-${item.sequenceNumber}`) ?? item.proposed.title),
+        kind: String(data.get(`kind-${item.sequenceNumber}`) ?? item.proposed.kind),
+        path: String(data.get(`path-${item.sequenceNumber}`) ?? "").split("/").map((part) => part.trim()).filter(Boolean),
+        minutes: minutes ? Number(minutes) : null,
+      };
+    });
+    const response = await fetch(`/api/curriculum/${props.unit.id}/scope-suggestions`, { method: action === "retry" ? "POST" : "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(action === "apply" ? { action, suggestionId: suggestion.id, selections } : { action, suggestionId: suggestion.id }) });
+    const result = await response.json() as { error?: string }; setBusy(false);
+    if (!response.ok) return props.setNotice(result.error ?? "Could not save that outline decision.");
+    if (action === "retry") setPollState({ unitId: props.unit.id, count: 0 });
+    if (action === "apply" || action === "dismiss") setReviewOpen(false);
+    props.setNotice(action === "apply" ? "Suggested outline applied to safe stable lessons." : action === "dismiss" ? "Generic lessons kept. The source remains available." : "Outline search queued again."); await load(); props.onChanged();
+  }
+  async function refreshResearch() {
+    setBusy(true);
+    const response = await fetch(`/api/curriculum/${props.unit.id}/scope-suggestions`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "refresh" }) });
+    const result = await response.json() as { error?: string };
+    setBusy(false);
+    if (!response.ok) return props.setNotice(result.error ?? "Could not research that curriculum again.");
+    setReviewOpen(false);
+    setPollState({ unitId: props.unit.id, count: 0 });
+    props.setNotice("Klio is researching this curriculum again with the latest course details.");
+    await load();
+  }
+  const current = suggestions.find((suggestion) => suggestion.status === "ready")
+    ?? suggestions.find((suggestion) => ["queued", "processing"].includes(suggestion.status))
+    ?? suggestions.find((suggestion) => suggestion.status === "failed");
+  const sources = safeScopeSources(current?.source_urls);
+  const eligibleCount = current?.diff.filter((item) => item.disposition !== "protected").length ?? 0;
+  const pacingSummary = current?.pacing?.sourceGranularity === "container" && current.pacing.containerCount
+    ? `${current.pacing.containerCount} ${current.pacing.containerLabel?.toLowerCase() ?? "module"}s paced as ${current.proposed_target_count ?? eligibleCount} daily sessions`
+    : `${eligibleCount} lesson updates`;
+  const pacingDetail = current?.pacing?.recommendedWeekCount && current.pacing.recommendedWeeklyFrequency
+    ? `${current.pacing.recommendedWeekCount} weeks · ${current.pacing.recommendedWeeklyFrequency}× per week${current.pacing.minutesPerSession ? ` · ${current.pacing.minutesPerSession} minutes` : ""}`
+    : "Review Klio’s proposed titles before changing anything.";
+  const compactPacingReview = current?.pacing?.sourceGranularity === "container";
+  const moduleSummaries = current?.diff.reduce<Array<{ title: string; count: number }>>((summaries, item) => {
+    const title = item.proposed.path[0];
+    if (!title) return summaries;
+    const existing = summaries.find((summary) => summary.title === title);
+    if (existing) existing.count += 1;
+    else summaries.push({ title, count: 1 });
+    return summaries;
+  }, []) ?? [];
+  const inputId = `course-evidence-${props.unit.id}`;
+  return <aside className="course-scope-panel" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); const file = event.dataTransfer.files[0]; if (file) void upload(file); }}>
+    <div className="course-scope-summary"><strong>{props.unit.identityStatus === "verified" ? "Verified course identity" : props.unit.identityStatus === "recognized" ? "Recognized course · edition unverified" : "Generic annual scope"}</strong><p>{props.unit.identityStatus === "recognized" ? "The edition is not confirmed, so any outline is a starting point—not an exact publisher map." : `${props.unit.targetLessonCount} stable lessons are ready without scheduling the year.`}</p>{current?.confidenceWording ? <small>{current.confidenceWording}</small> : null}{Array.isArray(current?.assumptions) && current.assumptions.length ? <small className="course-scope-assumptions">{current.assumptions.join(" ")}</small> : null}{sources.length ? <nav className="course-scope-sources" aria-label="Sources Klio used"><small>Sources Klio used</small><div>{sources.map((source) => <a href={source.url} target="_blank" rel="noreferrer" title={source.title} aria-label={`${source.title} — ${source.label}`} key={source.url}>{source.label}</a>)}</div></nav> : null}</div>
+    <div className="course-scope-actions"><label htmlFor={inputId}><FileUp size={12} />{busy ? "Saving…" : "Add course source"}</label><input id={inputId} type="file" accept="image/jpeg,image/png,image/webp,application/pdf" onChange={(event) => { const file = event.target.files?.[0]; if (file) void upload(file); event.currentTarget.value = ""; }} disabled={busy} /><button type="button" onClick={props.onAddIdentity}>Add edition or ISBN</button><button type="button" onClick={() => void refreshResearch()} disabled={busy || waitingForSearch}>{waitingForSearch ? "Researching…" : "Research again"}</button></div>
+    {current?.status === "ready" && current.diff.length ? <div className="course-scope-review-callout"><div><Sparkles size={16} /><p><strong>{pacingSummary} are ready</strong><small>{pacingDetail}</small></p></div><button type="button" onClick={() => setReviewOpen(true)}>Review outline</button></div> : null}
+    {current?.status === "ready" && !current.diff.length ? <div className="course-scope-empty"><p>Klio did not find enough reliable table-of-contents detail to rename these lessons.</p><button type="button" onClick={() => void decide(current, "dismiss")} disabled={busy}>Keep generic lessons</button></div> : null}
+    {current?.status === "failed" ? <p className="course-scope-state">The outline could not be prepared ({current.error_code?.toLowerCase().replaceAll("_", " ")}). <button type="button" onClick={() => void decide(current, "retry")}>Retry</button></p> : null}
+    {current && ["queued", "processing"].includes(current.status) ? <p className="course-scope-state">Klio is searching for a matching table of contents. This page will update automatically. <button type="button" onClick={() => void load()}>Check now</button></p> : null}
+    <AnimatePresence>{reviewOpen && current?.status === "ready" && current.diff.length ? <motion.div className="scope-review-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onMouseDown={() => setReviewOpen(false)}>
+      <motion.form className="scope-review-dialog course-scope-diff" role="dialog" aria-modal="true" aria-labelledby={`scope-review-title-${props.unit.id}`} onMouseDown={(event) => event.stopPropagation()} onSubmit={(event) => { event.preventDefault(); void decide(current, "apply", event.currentTarget); }} initial={{ opacity: 0, y: 18, scale: .985 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 10, scale: .99 }} transition={{ duration: .18 }}>
+        <header><div><span>Curriculum outline</span><strong id={`scope-review-title-${props.unit.id}`}>Review proposed daily work</strong><small>{current.pacing?.sourceGranularity === "container" ? `${current.pacing.containerCount} ${current.pacing.containerLabel?.toLowerCase() ?? "module"}s stay organized as the course hierarchy; these rows are the sessions Klio schedules.` : "Select only the rows you want. Lessons with history stay unchanged."}</small></div><div className="scope-review-heading-actions"><span>{eligibleCount} eligible</span><button type="button" onClick={() => setReviewOpen(false)} aria-label="Close outline review"><X size={18} /></button></div></header>
+        {compactPacingReview ? <div className="course-pacing-review">
+          <section className="course-pacing-metrics" aria-label="Proposed course pacing"><div><span>Course structure</span><strong>{current.pacing?.containerCount} {current.pacing?.containerLabel?.toLowerCase()}s</strong></div><div><span>Daily work</span><strong>{current.proposed_target_count} sessions</strong></div><div><span>School year</span><strong>{current.pacing?.recommendedWeekCount} weeks</strong></div><div><span>Weekly rhythm</span><strong>{current.pacing?.recommendedWeeklyFrequency}× · {current.pacing?.minutesPerSession ?? props.unit.defaultMinutes} min</strong></div></section>
+          <div className="course-pacing-modules" aria-label="Module session distribution">{moduleSummaries.map((module, index) => <div key={module.title}><span>{String(index + 1).padStart(2, "0")}</span><strong>{module.title.replace(/^(module|chapter|unit|week)\s+\d+\s*:\s*/i, "")}</strong><small>{module.count} sessions</small></div>)}</div>
+          <p>These are pacing placeholders organized under the publisher’s module titles. Upload the publisher’s daily schedule later to replace “Session 1” with exact reading, lab, review, and test work.</p>
+        </div> : <div className="course-scope-diff-list">{current.diff.map((item) => <fieldset key={item.sequenceNumber} disabled={item.disposition === "protected" || busy}>
+          <label className="course-scope-select"><input type="checkbox" name={`include-${item.sequenceNumber}`} defaultChecked={item.disposition !== "protected"} /><span>{current.pacing?.sourceGranularity === "container" ? "Session" : "Lesson"} {item.sequenceNumber}</span><small>{item.disposition === "protected" ? "Protected history" : item.disposition === "review" ? "Scheduled or enriched · review" : item.disposition === "append" ? "New stable session" : "Safe placeholder"}</small></label>
+          <div className="course-scope-before"><span>Current</span><p>{item.beforeTitle ?? "Not created yet"}</p></div>
+          <div className="course-scope-after"><label>Suggested title<input name={`title-${item.sequenceNumber}`} defaultValue={item.proposed.title} /></label><label>Kind<select name={`kind-${item.sequenceNumber}`} defaultValue={item.proposed.kind}><option>lesson</option><option>assessment</option><option>review</option><option>project</option><option>activity</option></select></label><label>Minutes<input name={`minutes-${item.sequenceNumber}`} type="number" min="5" max="480" defaultValue={item.proposed.minutes ?? ""} /></label><label>Path<input name={`path-${item.sequenceNumber}`} defaultValue={item.proposed.path.join(" / ")} /></label></div>
+        </fieldset>)}</div>}
+        <footer><button type="button" onClick={() => void decide(current, "dismiss")} disabled={busy}>Keep generic lessons</button><button type="submit" disabled={busy}>{busy ? "Applying…" : compactPacingReview ? `Use ${current.pacing?.recommendedWeekCount}-week schedule` : "Use suggested outline"}</button></footer>
+      </motion.form>
+    </motion.div> : null}</AnimatePresence>
+  </aside>;
+}
+
+const DEFAULT_LESSONS_PER_DASHBOARD_PAGE = 4;
+
 function AssignmentsSurface(props: { familyId: string; studentId: string; selectedUnitId: string | null; nextCursor: string | null; navigationPending: boolean; navigate: (href: string) => void; students: StudentDTO[]; enabledWeekdays: number[]; units: CurriculumUnitDTO[]; assignments: AssignmentDTO[]; busy: string | null; setBusy: (value: string | null) => void; setNotice: (value: string | null) => void; showCurriculum: boolean; setShowCurriculum: (value: boolean) => void; onSubmit: (item: AssignmentDTO) => void; onUpdate: (item: AssignmentDTO, status: "doing" | "completed" | "planned" | "skipped") => Promise<boolean> }) {
   const router = useRouter();
   const isFamilyView = props.studentId === "all";
@@ -925,13 +1117,43 @@ function AssignmentsSurface(props: { familyId: string; studentId: string; select
   const [statusOverrides, setStatusOverrides] = useState<Record<string, AssignmentDTO["status"]>>({});
   const [nextCursor, setNextCursor] = useState(props.nextCursor);
   const [pageState, setPageState] = useState<"idle" | "loading" | "error">("idle");
+  const [lessonPage, setLessonPage] = useState(0);
+  const [lessonsPerPage, setLessonsPerPage] = useState(DEFAULT_LESSONS_PER_DASHBOARD_PAGE);
+  const [curriculumResearch, setCurriculumResearch] = useState<CurriculumResearchResult | null>(null);
+  const [researchState, setResearchState] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [researchMessage, setResearchMessage] = useState<string | null>(null);
+  const [researchMode, setResearchMode] = useState<"detected" | "generic">("generic");
+  const [scopeDraft, setScopeDraft] = useState({ sequenceLabel: "Lesson", targetLessonCount: 100 });
+  const [rhythmDraft, setRhythmDraft] = useState({ weeklyFrequency: 5, estimatedMinutes: 40 });
   const selectedUnit = props.units.find((unit) => unit.id === props.selectedUnitId) ?? null;
   const displayedAssignments = reconcileAssignmentPage(visibleAssignments, props.assignments).map((item) => statusOverrides[item.id] ? { ...item, status: statusOverrides[item.id] } : item);
-  function openCurriculum(unit: CurriculumUnitDTO | null) { setDraftUnit(unit); props.setShowCurriculum(true); }
-  function closeCurriculum() { props.setShowCurriculum(false); setDraftUnit(null); }
+  const lessonStart = lessonPage * lessonsPerPage;
+  const lessonsForPage = displayedAssignments.slice(lessonStart, lessonStart + lessonsPerPage);
+  const hasNextLessonPage = lessonStart + lessonsPerPage < displayedAssignments.length || Boolean(nextCursor);
+  useEffect(() => {
+    const fitDashboard = () => {
+      const nextPageSize = window.innerHeight < 840 ? 2 : window.innerHeight < 1_120 ? 3 : 5;
+      setLessonsPerPage(nextPageSize);
+      setLessonPage(0);
+    };
+    fitDashboard();
+    window.addEventListener("resize", fitDashboard);
+    return () => window.removeEventListener("resize", fitDashboard);
+  }, []);
+  function openCurriculum(unit: CurriculumUnitDTO | null) {
+    setDraftUnit(unit);
+    setCurriculumResearch(null);
+    setResearchState("idle");
+    setResearchMessage(null);
+    setResearchMode("generic");
+    setScopeDraft({ sequenceLabel: unit?.sequenceLabel ?? "Lesson", targetLessonCount: unit?.targetLessonCount ?? 100 });
+    setRhythmDraft({ weeklyFrequency: Math.min(unit?.weeklyFrequency ?? 5, Math.max(1, props.enabledWeekdays.length)), estimatedMinutes: unit?.defaultMinutes ?? 40 });
+    props.setShowCurriculum(true);
+  }
+  function closeCurriculum() { props.setShowCurriculum(false); setDraftUnit(null); setCurriculumResearch(null); setResearchState("idle"); setResearchMessage(null); }
   function selectUnit(unit: CurriculumUnitDTO) { props.navigate(assignmentsViewHref(props.studentId, unit.id)); }
   async function loadMore() {
-    if (!selectedUnit || !nextCursor || pageState === "loading") return;
+    if (!selectedUnit || !nextCursor || pageState === "loading") return false;
     setPageState("loading");
     const params = new URLSearchParams({ familyId: props.familyId, curriculumUnitId: selectedUnit.id, cursor: nextCursor, limit: "50" });
     try {
@@ -941,22 +1163,66 @@ function AssignmentsSurface(props: { familyId: string; studentId: string; select
       setVisibleAssignments((current) => dedupeAssignmentsById([...reconcileAssignmentPage(current, props.assignments), ...result.assignments!]));
       setNextCursor(result.nextCursor ?? null);
       setPageState("idle");
+      return result.assignments.length > 0;
     } catch {
       setPageState("error");
+      return false;
     }
+  }
+  async function showNextLessonPage() {
+    const nextStart = (lessonPage + 1) * lessonsPerPage;
+    if (nextStart < displayedAssignments.length) return setLessonPage((current) => current + 1);
+    if (await loadMore()) setLessonPage((current) => current + 1);
   }
   async function updateCourseAssignment(item: AssignmentDTO, status: "doing" | "completed" | "planned" | "skipped") {
     setStatusOverrides((current) => ({ ...current, [item.id]: status }));
     const saved = await props.onUpdate(item, status);
     if (!saved) setStatusOverrides((current) => { const next = { ...current }; delete next[item.id]; return next; });
   }
+  async function researchCurriculum(form: HTMLFormElement) {
+    const data = new FormData(form);
+    data.set("familyId", props.familyId);
+    setResearchState("loading");
+    setResearchMessage(null);
+    const response = await fetch("/api/curriculum/research", { method: "POST", body: data });
+    const result = await response.json() as { research?: CurriculumResearchResult; error?: string };
+    if (!response.ok || !result.research) {
+      setResearchState("error");
+      setResearchMessage(result.error ?? "Klio could not research that curriculum.");
+      return;
+    }
+    const research = result.research;
+    const detectedCount = research.structure.detectedItemCount;
+    setCurriculumResearch(research);
+    setResearchState("ready");
+    if (detectedCount) {
+      setResearchMode("detected");
+      setScopeDraft({ sequenceLabel: research.structure.sequenceLabel, targetLessonCount: detectedCount });
+      setRhythmDraft((current) => ({ weeklyFrequency: Math.min(research.pacing.recommendedWeeklyFrequency ?? current.weeklyFrequency, Math.max(1, props.enabledWeekdays.length)), estimatedMinutes: research.pacing.minutesPerSession ?? current.estimatedMinutes }));
+      setResearchMessage(research.structure.expandedFromContainers ? `Klio found ${research.structure.containerCount} ${research.structure.containerLabel?.toLowerCase() ?? "module"}s and a source-supported ${detectedCount}-session annual pace.` : `Klio found a source-supported ${detectedCount}-${research.structure.sequenceLabel.toLowerCase()} outline. Confirm how you want to plan it.`);
+    } else {
+      setResearchMode("generic");
+      setScopeDraft({ sequenceLabel: "Lesson", targetLessonCount: 100 });
+      setResearchMessage("Klio found the course, but not a complete schedulable outline. The 100-lesson starting scope is selected.");
+    }
+  }
+  function chooseResearchMode(mode: "detected" | "generic") {
+    setResearchMode(mode);
+    if (mode === "detected" && curriculumResearch?.structure.detectedItemCount) {
+      setScopeDraft({ sequenceLabel: curriculumResearch.structure.sequenceLabel, targetLessonCount: curriculumResearch.structure.detectedItemCount });
+      setRhythmDraft((current) => ({ weeklyFrequency: Math.min(curriculumResearch.pacing.recommendedWeeklyFrequency ?? current.weeklyFrequency, Math.max(1, props.enabledWeekdays.length)), estimatedMinutes: curriculumResearch.pacing.minutesPerSession ?? current.estimatedMinutes }));
+    } else {
+      setScopeDraft({ sequenceLabel: "Lesson", targetLessonCount: 100 });
+    }
+  }
   async function addCurriculum(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault(); const form = event.currentTarget; const data = new FormData(form); props.setBusy("curriculum");
-    const response = await fetch("/api/curriculum", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ curriculumUnitId: draftUnit?.id ?? null, familyId: props.familyId, studentId: draftUnit?.studentId ?? props.studentId, subject: data.get("subject"), title: data.get("title"), sequenceLabel: data.get("sequenceLabel"), startSequence: Number(data.get("startSequence")), count: Number(data.get("count")), startDate: data.get("startDate"), weekdays: data.getAll("weekdays").map(Number), scheduledTime: data.get("scheduledTime") || null, estimatedMinutes: Number(data.get("estimatedMinutes")), weeklyFrequency: Number(data.get("weeklyFrequency")), curriculumUrl: data.get("curriculumUrl") || null }) });
-    const result = await response.json() as { assignments?: AssignmentDTO[]; unit?: { id: string; subject: string }; error?: string }; props.setBusy(null);
+    const response = await fetch("/api/curriculum", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ curriculumUnitId: draftUnit?.id ?? null, familyId: props.familyId, studentId: draftUnit?.studentId ?? props.studentId, subject: data.get("subject"), title: data.get("title"), sequenceLabel: data.get("sequenceLabel"), targetLessonCount: Number(data.get("targetLessonCount")), estimatedMinutes: Number(data.get("estimatedMinutes")), weeklyFrequency: Number(data.get("weeklyFrequency")), attentionMode: data.get("attentionMode"), parentAttentionMinutes: data.get("attentionMode") === "flexible" ? Number(data.get("parentAttentionMinutes")) : null, curriculumUrl: data.get("curriculumUrl") || null, publisher: data.get("publisher") || null, productName: data.get("productName") || null, gradeLabel: data.get("gradeLabel") || null, editionLabel: data.get("editionLabel") || null, isbn: data.get("isbn") || null, research: !draftUnit && curriculumResearch ? { result: curriculumResearch, mode: researchMode } : null }) });
+    const result = await response.json() as { assignmentCount?: number; scheduledCount?: number; unit?: { id: string; subject: string; sequence_label?: string }; error?: string }; props.setBusy(null);
     if (!response.ok) return props.setNotice(result.error ?? "Klio could not add that curriculum.");
-    if (!result.unit || !result.assignments) return props.setNotice("Klio could not confirm the curriculum that was added.");
-    closeCurriculum(); props.setNotice(`${result.assignments.length} ${result.unit.subject} assignments added.`);
+    if (!result.unit || typeof result.assignmentCount !== "number") return props.setNotice("Klio could not confirm the curriculum that was added.");
+    const createdItemLabel = curriculumResearch?.structure.expandedFromContainers ? "daily sessions" : `${scopeDraft.sequenceLabel.toLowerCase()}${result.assignmentCount === 1 ? "" : "s"}`;
+    closeCurriculum(); props.setNotice(`${result.assignmentCount} unscheduled ${result.unit.subject} ${createdItemLabel} are ready. Plan the week when you’re ready.`);
     if (selectedUnit?.id === result.unit.id) router.refresh();
     else props.navigate(assignmentsViewHref(props.studentId, result.unit.id));
     form.reset();
@@ -969,7 +1235,7 @@ function AssignmentsSurface(props: { familyId: string; studentId: string; select
     setFrequencyOverrides((current) => ({ ...current, [unit.id]: weeklyFrequency }));
     props.setNotice(`${unit.subject} will be taught ${weeklyFrequency} ${weeklyFrequency === 1 ? "time" : "times"} per week.`); router.refresh();
   }
-  return <div className="assignments-layout">
+  return <div className="assignments-layout assignments-dashboard">
     <aside className="curriculum-index"><header><span>Curriculum</span>{!isFamilyView ? <button type="button" onClick={() => openCurriculum(null)}><Plus size={13} />Add once</button> : null}</header>{props.units.length ? props.units.map((unit) => {
       const active = selectedUnit?.id === unit.id;
       return <section className={active ? "active" : ""} key={unit.id}>
@@ -977,14 +1243,54 @@ function AssignmentsSurface(props: { familyId: string; studentId: string; select
         <button className="curriculum-unit-select" type="button" onClick={() => selectUnit(unit)} disabled={props.navigationPending} aria-current={active ? "page" : undefined}>{unit.title}<ChevronRight size={11} /></button>
         {active ? <div className="curriculum-unit-detail">
           <label className="curriculum-rhythm"><span>Teach</span><select aria-label={`${unit.subject} times per week`} value={frequencyOverrides[unit.id] ?? unit.weeklyFrequency} onChange={(event) => void updateFrequency(unit, Number(event.target.value))} disabled={props.busy === `rhythm-${unit.id}`}>{[1,2,3,4,5,6,7].map((frequency) => <option value={frequency} key={frequency}>{frequency}× / week</option>)}</select></label>
+          <span>{unit.identityStatus === "verified" ? "Edition verified" : unit.identityStatus === "recognized" ? "Publisher recognized · edition unverified" : "Generic scope"}</span>
           <span>{unit.assignmentCount ? `${unit.completedCount} of ${unit.assignmentCount} completed` : "Ready for Klio to plan"}</span>
           <i><b style={{ width: `${unit.assignmentCount ? unit.completedCount / unit.assignmentCount * 100 : 0}%` }} /></i>
-          <button type="button" onClick={() => openCurriculum(unit)}>{unit.assignmentCount ? "Add more lessons" : "Schedule lessons"}<ChevronRight size={11} /></button>
+          <button type="button" onClick={() => openCurriculum(unit)}>Edit course details<ChevronRight size={11} /></button>
         </div> : null}
       </section>;
     }) : <div className="curriculum-empty"><strong>Add each curriculum once.</strong><span>Klio creates the numbered assignments and keeps their order when the week changes.</span></div>}</aside>
-    <main className="assignment-library"><header><div><span>{selectedUnit ? `${isFamilyView ? `${props.students.find((student) => student.id === selectedUnit.studentId)?.displayName ?? "Learner"} · ` : ""}${selectedUnit.subject}` : "Other work"}</span><strong>{selectedUnit?.title ?? "Choose a curriculum"}</strong>{selectedUnit ? <small>{selectedUnit.assignmentCount} total · {selectedUnit.completedCount} completed · {selectedUnit.activeCount} active</small> : null}</div>{!isFamilyView ? <button type="button" onClick={() => openCurriculum(null)}><Plus size={14} />Add curriculum</button> : null}</header><div>{displayedAssignments.map((item) => <AssignmentRow item={item} busy={props.busy === item.id} onUpdate={(assignment, status) => void updateCourseAssignment(assignment, status)} onSubmit={props.onSubmit} key={item.id} />)}</div>{selectedUnit && (nextCursor || pageState === "error") ? <div className="assignment-page-actions">{pageState === "error" ? <p role="alert">Klio could not load more lessons. Your loaded lessons are still here.</p> : <p role="status" aria-live="polite">{pageState === "loading" ? "Loading more lessons…" : `${displayedAssignments.length} of ${selectedUnit.assignmentCount} lessons loaded`}</p>}<button type="button" onClick={() => void loadMore()} disabled={pageState === "loading"}>{pageState === "loading" ? <><LoaderCircle size={14} className="spin" />Loading…</> : pageState === "error" ? "Try loading again" : "Load more lessons"}</button></div> : null}</main>
-    <AnimatePresence>{props.showCurriculum ? <motion.form key={draftUnit?.id ?? "new"} className="curriculum-drawer" onSubmit={addCurriculum} initial={{ opacity: 0, x: 24 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 24 }}><header><div><span>{draftUnit ? "Curriculum ready" : "New curriculum"}</span><h2>{draftUnit ? "Schedule the next lessons" : "Add the sequence once"}</h2><p>{draftUnit ? "This course was added during learner setup. Choose when its lessons begin." : "Klio will create the next assignments on your learning days."}</p></div><button type="button" onClick={closeCurriculum} aria-label="Close"><X size={17} /></button></header><div className="curriculum-fields"><label><span>Curriculum or course</span><input name="title" required placeholder="Algebra I" defaultValue={draftUnit?.title ?? ""} /></label><label><span>Subject</span><input name="subject" required placeholder="Math" defaultValue={draftUnit?.subject ?? ""} /></label><label><span>Numbering</span><select name="sequenceLabel" defaultValue={draftUnit?.sequenceLabel ?? "Lesson"}><option>Lesson</option><option>Unit</option><option>Chapter</option><option>Module</option></select></label><div className="field-pair"><label><span>Start at</span><input name="startSequence" type="number" min="1" defaultValue={draftUnit?.nextSequenceNumber ?? 1} required /></label><label><span>How many</span><input name="count" type="number" min="1" max="40" defaultValue="10" required /></label></div><label><span>First date</span><input name="startDate" type="date" defaultValue={today()} required /></label><fieldset><legend>Learning days</legend>{[[1,"Mon"],[2,"Tue"],[3,"Wed"],[4,"Thu"],[5,"Fri"],[6,"Sat"],[0,"Sun"]].map(([value,label]) => <label key={value}><input type="checkbox" name="weekdays" value={value} defaultChecked={props.enabledWeekdays.includes(Number(value))} disabled={!props.enabledWeekdays.includes(Number(value))} /><span>{label}</span></label>)}</fieldset><small>Enable additional learning days in the learner’s settings first.</small><label><span>Times per week</span><select name="weeklyFrequency" defaultValue={Math.min(draftUnit?.weeklyFrequency ?? 5, props.enabledWeekdays.length)}>{Array.from({ length: props.enabledWeekdays.length }, (_, index) => index + 1).map((frequency) => <option value={frequency} key={frequency}>{frequency}× per week</option>)}</select></label><div className="field-pair"><label><span>Preferred minutes</span><input name="estimatedMinutes" type="number" min="5" defaultValue={draftUnit?.defaultMinutes ?? 40} required /></label><label><span>Time</span><input name="scheduledTime" type="time" /></label></div><label><span>Reference link (Klio won’t open it)</span><input name="curriculumUrl" type="url" placeholder="Optional HTTP(S) reference" defaultValue={draftUnit?.curriculumUrl ?? ""} /></label></div><footer><button type="button" onClick={closeCurriculum}>Cancel</button><button type="submit" disabled={props.busy === "curriculum"}>{props.busy === "curriculum" ? "Adding…" : "Create assignments"}</button></footer></motion.form> : null}</AnimatePresence>
+    <main className="assignment-library">
+      <header><div><span>{selectedUnit ? `${isFamilyView ? `${props.students.find((student) => student.id === selectedUnit.studentId)?.displayName ?? "Learner"} · ` : ""}${selectedUnit.subject}` : "Other work"}</span><strong>{selectedUnit?.title ?? "Choose a curriculum"}</strong>{selectedUnit ? <small>{selectedUnit.assignmentCount} lessons · {selectedUnit.completedCount} completed · {selectedUnit.activeCount} active</small> : null}</div>{!isFamilyView ? <button type="button" onClick={() => openCurriculum(null)}><Plus size={16} />Add curriculum</button> : null}</header>
+      {selectedUnit ? <CourseScopePanel familyId={props.familyId} unit={selectedUnit} onAddIdentity={() => openCurriculum(selectedUnit)} setNotice={props.setNotice} onChanged={() => router.refresh()} /> : null}
+      <section className="lesson-dashboard" aria-label="Course lessons">
+        <header><div><span>Lesson plan</span><strong>{selectedUnit ? `${lessonStart + (lessonsForPage.length ? 1 : 0)}–${lessonStart + lessonsForPage.length} of ${selectedUnit.assignmentCount}` : `${displayedAssignments.length} lessons`}</strong></div><nav aria-label="Lesson pages"><button type="button" onClick={() => setLessonPage((current) => Math.max(0, current - 1))} disabled={lessonPage === 0 || pageState === "loading"} aria-label="Previous lessons"><ArrowLeft size={16} /></button><span>Page {lessonPage + 1}</span><button type="button" onClick={() => void showNextLessonPage()} disabled={!hasNextLessonPage || pageState === "loading"} aria-label="Next lessons">{pageState === "loading" ? <LoaderCircle size={16} className="spin" /> : <ArrowRight size={16} />}</button></nav></header>
+        {pageState === "error" ? <div className="lesson-dashboard-error" role="alert"><span>Klio could not load the next lessons. Everything already loaded is still here.</span><button type="button" onClick={() => void showNextLessonPage()}>Try again</button></div> : null}
+        <div className="lesson-dashboard-list">{lessonsForPage.map((item) => <CurriculumAssignmentRow familyId={props.familyId} item={item} busy={props.busy === item.id} onUpdate={(assignment, status) => void updateCourseAssignment(assignment, status)} onSubmit={props.onSubmit} onApplied={(changes) => setVisibleAssignments((current) => current.map((assignment) => assignment.id === item.id ? { ...assignment, ...changes } : assignment))} key={item.id} />)}</div>
+      </section>
+    </main>
+    <AnimatePresence>{props.showCurriculum ? <motion.form key={draftUnit?.id ?? "new"} className="curriculum-drawer" onSubmit={addCurriculum} initial={{ opacity: 0, x: 24 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 24 }}>
+      <header><div><span>{draftUnit ? "Course details" : "Smart curriculum setup"}</span><h2>{draftUnit ? "Update the annual scope" : "Let Klio read the course first"}</h2><p>{draftUnit ? "Change the stable annual scope without disturbing completed work." : "Add whatever you have. Klio researches the structure before creating assignments."}</p></div><button type="button" onClick={closeCurriculum} aria-label="Close"><X size={17} /></button></header>
+      <div className="curriculum-fields">
+        <label><span>Curriculum or course</span><input name="title" required placeholder="Algebra I" defaultValue={draftUnit?.title ?? ""} /></label>
+        <label><span>Subject</span><input name="subject" required placeholder="Math" defaultValue={draftUnit?.subject ?? ""} /></label>
+        <details className="curriculum-identity-fields" open={!draftUnit}><summary>Book, publisher, or edition details</summary><div className="field-pair"><label><span>Publisher</span><input name="publisher" maxLength={120} defaultValue={draftUnit?.publisher ?? ""} /></label><label><span>Product</span><input name="productName" maxLength={200} defaultValue={draftUnit?.productName ?? ""} /></label><label><span>Grade / level</span><input name="gradeLabel" maxLength={80} defaultValue={draftUnit?.gradeLabel ?? ""} /></label><label><span>Edition or year</span><input name="editionLabel" maxLength={120} defaultValue={draftUnit?.editionLabel ?? ""} /></label><label><span>ISBN</span><input name="isbn" maxLength={32} defaultValue={draftUnit?.isbn ?? ""} /></label><label><span>Reference link</span><input name="curriculumUrl" type="url" placeholder="Publisher or product page" defaultValue={draftUnit?.curriculumUrl ?? ""} /></label></div></details>
+        {!draftUnit ? <section className="curriculum-research-step" aria-labelledby="curriculum-research-title">
+          <header><div><span>Before assignments are created</span><strong id="curriculum-research-title">Research the curriculum</strong><small>Name, ISBN, link, or a source file is enough to start.</small></div><Sparkles size={17} /></header>
+          <label className="curriculum-source-drop"><FileUp size={18} /><span><strong>Add a cover or table of contents</strong><small>Optional JPG, PNG, WebP, or PDF · 20 MB maximum</small></span><input name="file" type="file" accept="image/jpeg,image/png,image/webp,application/pdf" /></label>
+          <button type="button" className="curriculum-research-button" onClick={(event) => { const form = event.currentTarget.form; if (form) void researchCurriculum(form); }} disabled={researchState === "loading"}>{researchState === "loading" ? <><LoaderCircle size={15} className="spin" />Klio is reading and searching…</> : curriculumResearch ? "Research again" : "Research before creating"}</button>
+          {researchState === "loading" ? <div className="curriculum-research-loading" aria-hidden="true"><i /><i /><i /></div> : null}
+          {researchMessage ? <p className={`curriculum-research-message ${researchState}`} role={researchState === "error" ? "alert" : "status"}>{researchMessage}</p> : null}
+          {curriculumResearch ? <motion.div className="curriculum-research-result" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+            <header><div><span>Klio found</span><strong>{curriculumResearch.structure.detectedItemCount ? curriculumResearch.structure.expandedFromContainers ? `${curriculumResearch.structure.detectedItemCount} daily sessions` : `${curriculumResearch.structure.detectedItemCount} ${curriculumResearch.structure.sequenceLabel.toLowerCase()}${curriculumResearch.structure.detectedItemCount === 1 ? "" : "s"}` : "Course identity only"}</strong></div><small>{Math.round(curriculumResearch.proposal.confidence * 100)}% source confidence</small></header>
+            {curriculumResearch.structure.expandedFromContainers ? <p><strong>{curriculumResearch.structure.containerCount} {curriculumResearch.structure.containerLabel?.toLowerCase()}s</strong> organize the course · {curriculumResearch.pacing.recommendedWeekCount} weeks · {curriculumResearch.pacing.recommendedWeeklyFrequency}× per week{curriculumResearch.pacing.minutesPerSession ? ` · ${curriculumResearch.pacing.minutesPerSession} minutes` : ""}</p> : null}
+            {curriculumResearch.proposal.assumptions.length ? <p>{curriculumResearch.proposal.assumptions.slice(0, 2).join(" ")}</p> : null}
+            {safeScopeSources(curriculumResearch.sources).length ? <div className="curriculum-research-sources">{safeScopeSources(curriculumResearch.sources).map((source) => <a href={source.url} target="_blank" rel="noreferrer" key={source.url}>{source.label}</a>)}</div> : null}
+            <fieldset><legend>How should Klio build this course?</legend>
+              {curriculumResearch.structure.detectedItemCount ? <label className={researchMode === "detected" ? "selected" : ""}><input type="radio" name="researchMode" value="detected" checked={researchMode === "detected"} onChange={() => chooseResearchMode("detected")} /><span><strong>{curriculumResearch.structure.expandedFromContainers ? `Use ${curriculumResearch.structure.detectedItemCount} daily sessions` : `Use ${curriculumResearch.structure.detectedItemCount} ${curriculumResearch.structure.sequenceLabel.toLowerCase()}s`}</strong><small>{curriculumResearch.structure.expandedFromContainers ? `Keep the ${curriculumResearch.structure.containerCount} ${curriculumResearch.structure.containerLabel?.toLowerCase()}s as hierarchy and schedule the publisher-supported pace.` : "Create the source-supported outline with its actual titles."}</small></span><Check size={15} /></label> : null}
+              <label className={researchMode === "generic" ? "selected" : ""}><input type="radio" name="researchMode" value="generic" checked={researchMode === "generic"} onChange={() => chooseResearchMode("generic")} /><span><strong>Start with 100 generic lessons</strong><small>Use this when the source shows broad units but not daily work.</small></span><Check size={15} /></label>
+            </fieldset>
+          </motion.div> : null}
+        </section> : null}
+        <section className="curriculum-plan-fields"><header><span>{draftUnit ? "Annual scope" : "Confirmed plan"}</span><small>{curriculumResearch ? "Based on your choice above; you can still edit it." : "No research required—100 lessons remains the safe starting point."}</small></header>
+          <div className="field-pair"><label><span>Numbering</span><select name="sequenceLabel" value={scopeDraft.sequenceLabel} onChange={(event) => setScopeDraft((current) => ({ ...current, sequenceLabel: event.target.value }))}><option>Lesson</option><option>Unit</option><option>Chapter</option><option>Module</option><option>Week</option></select></label><label><span>Items this school year</span><input name="targetLessonCount" type="number" min="1" max="500" value={scopeDraft.targetLessonCount} onChange={(event) => setScopeDraft((current) => ({ ...current, targetLessonCount: Number(event.target.value) }))} required /></label></div>
+        </section>
+        <div className="field-pair"><label><span>Times per week</span><select name="weeklyFrequency" value={rhythmDraft.weeklyFrequency} onChange={(event) => setRhythmDraft((current) => ({ ...current, weeklyFrequency: Number(event.target.value) }))}>{Array.from({ length: Math.max(1, props.enabledWeekdays.length) }, (_, index) => index + 1).map((frequency) => <option value={frequency} key={frequency}>{frequency}× per week</option>)}</select></label><label><span>Typical minutes</span><input name="estimatedMinutes" type="number" min="5" max="480" value={rhythmDraft.estimatedMinutes} onChange={(event) => setRhythmDraft((current) => ({ ...current, estimatedMinutes: Number(event.target.value) }))} required /></label></div>
+        <label><span>Parent support</span><select name="attentionMode" defaultValue={draftUnit?.attentionMode ?? "unspecified"}><option value="unspecified">Not decided</option><option value="parent_led">Needs me</option><option value="independent">Independent</option><option value="flexible">Start together</option></select></label>
+        <label><span>Minutes together (for Start together)</span><input name="parentAttentionMinutes" type="number" min="1" max="480" defaultValue={draftUnit?.parentAttentionMinutes ?? 10} /></label>
+      </div>
+      <footer><button type="button" onClick={closeCurriculum}>Cancel</button><button type="submit" disabled={props.busy === "curriculum" || researchState === "loading"}>{props.busy === "curriculum" ? "Saving…" : draftUnit ? "Save course" : curriculumResearch ? curriculumResearch.structure.expandedFromContainers ? `Create ${scopeDraft.targetLessonCount} daily sessions` : `Create ${scopeDraft.targetLessonCount} ${scopeDraft.sequenceLabel.toLowerCase()}${scopeDraft.targetLessonCount === 1 ? "" : "s"}` : "Create 100-lesson course"}</button></footer>
+    </motion.form> : null}</AnimatePresence>
   </div>;
 }
 
@@ -1057,7 +1363,6 @@ function surfaceLabel(surface: Surface) { return ({ today: "Today", week: "This 
 function surfaceTitle(surface: Surface, learner: string) { return ({ today: `${learner}’s day`, week: `${learner}’s week`, assignments: "Plan the work once", review: "Confirm what the work shows", adjustments: "Keep the week realistic" } as const)[surface]; }
 function surfaceDescription(surface: Surface) { return ({ today: "What is ahead and what needs your attention today.", week: "What is planned, what changed, and what needs your decision.", assignments: "Curriculum becomes ordered work—not a lesson form you repeat every day.", review: "Klio reviews the submitted work; you give the draft a quick check before it becomes part of the record.", adjustments: "Preview coordinated moves before anything changes." } as const)[surface]; }
 function statusLabel(status: string) { return ({ planned: "Planned", doing: "Doing", submitted: "Submitted", needs_review: "Needs review", completed: "Complete", skipped: "Skipped" } as Record<string,string>)[status] ?? status; }
-function today() { return new Date().toISOString().slice(0,10); }
 function initialDate(assignments: AssignmentDTO[], studentId: string, currentDate: string) { const dates = assignments.filter((item) => (studentId === "all" || item.studentId === studentId) && item.scheduledDate).map((item) => item.scheduledDate!).sort(); return dates.find((date) => date >= currentDate) ?? dates.at(-1) ?? currentDate; }
 function formatNames(names: string[]) { return new Intl.ListFormat("en", { style: "long", type: "conjunction" }).format(names); }
 function startAssignmentDrag(event: React.DragEvent, assignment: AssignmentDTO) {
