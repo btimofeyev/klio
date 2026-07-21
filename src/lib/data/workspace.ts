@@ -2,6 +2,7 @@ import "server-only";
 
 import { cache } from "react";
 import { normalizePublicResult, type PublicResult } from "@/lib/agent/workspace/public-result";
+import { selectLatestWorkspaceTurn } from "@/lib/agent/workspace/turn-selection";
 import { createClient } from "@/lib/supabase/server";
 import { requireParent } from "@/lib/auth/require-parent";
 import { agentEventLabel } from "@/lib/agent/workspace/presentation";
@@ -221,9 +222,10 @@ export const getWorkspace = cache(async () => {
     ? await supabase.from("agent_conversation_messages").select("id,role,content,agent_turn_id,created_at").eq("family_id", familyId).eq("conversation_id", latestConversationResult.data.id).order("created_at", { ascending: false }).limit(80)
     : { data: [], error: null };
   if (latestConversationMessagesResult.error) throw latestConversationMessagesResult.error;
-  const latestAgentTurn = latestTurnResult.data && ["queued", "running", "awaiting_parent", "failed"].includes(latestTurnResult.data.status)
-    ? latestTurnResult.data
-    : latestConversationTurnResult.data ?? latestTurnResult.data;
+  // A completed workspace handoff still owns its in-place receipt. Falling
+  // back to the latest conversation turn here made background briefing results
+  // disappear on refresh and left their original call-to-action visible.
+  const latestAgentTurn = selectLatestWorkspaceTurn(latestTurnResult.data, latestConversationTurnResult.data);
   const latestClarification = latestAgentTurn ? clarificationForTurn(questionsResult.data, latestAgentTurn.id) : null;
   const briefingSchedule = weeklyBriefingSchedule(new Date(), familyResult.data.timezone);
   const currentBriefingRow = briefingSchedule && briefingResult.data?.week_start === briefingSchedule.weekStart ? briefingResult.data : null;
