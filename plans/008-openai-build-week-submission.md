@@ -26,12 +26,11 @@ Feature work is frozen. Only submission blockers, verification fixes, deployment
   - [x] Exercised the parent handoff, Codex follow-through, parent review approval, generated practice player, and scheduling/undo. Follow-up turn `64115be3-4d97-44eb-883c-f9967f0b5a41` created and scheduled a second grounded six-item practice; proposal `d0fc4c4b-0306-4304-b5bd-5cf6d7256289` was then undone successfully.
   - [x] Stored the judge password outside the repository in the desktop Secret Service keyring under app `klio`, account `test@klio.com`.
   - [x] Saved live browser evidence outside the repository as `klio-gpt56-judge-smoke.mp4` and `klio-parent-review-undo.mp4`.
-- [ ] 5. Commit the current curriculum work and database migrations.
-  - Review the complete diff and migration order.
-  - Commit only after item 2 is green.
-- [ ] 6. Create and push the repository; choose one access model.
-  - Public: add an appropriate license before pushing.
-  - Private: share with `testing@devpost.com` and `build-week-event@openai.com`.
+- [x] 5. Commit the current curriculum work and database migrations.
+  - Reviewed the complete diff and verified all 38 local migrations match hosted Supabase.
+  - Committed the verified submission scope as `2ab46a1` after item 2 was green.
+- [x] 6. Create and push the repository; choose one access model.
+  - Published [btimofeyev/klio](https://github.com/btimofeyev/klio) on `main` as a public repository under the MIT License.
 - [x] 7. Rewrite the README for submission.
   - Add the product story, judge path, setup, sample-data instructions, deployment topology, and verification commands.
   - Explain Codex collaboration, GPT-5.6 usage, key human decisions, and the bounded safety architecture.
