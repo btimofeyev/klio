@@ -252,7 +252,7 @@ export async function moveUnfinishedWork(input: { familyId: string; studentId: s
   const [family, student, sources, policyRow] = await Promise.all([
     admin.from("families").select("agent_context_version,available_days,timezone").eq("id", input.familyId).single(),
     admin.from("students").select("id,daily_capacity_minutes,schedule_preferences").eq("id", input.studentId).eq("family_id", input.familyId).single(),
-    admin.from("assignments").select("id,scheduled_date,title,subject").in("id", uniqueIds).eq("family_id", input.familyId).eq("student_id", input.studentId),
+    admin.from("assignments").select("id,scheduled_date,title,subject,curriculum_unit_id").in("id", uniqueIds).eq("family_id", input.familyId).eq("student_id", input.studentId),
     admin.from("family_autonomy_policies").select("preset,policies").eq("family_id", input.familyId).maybeSingle(),
   ]);
   const error = family.error ?? student.error ?? sources.error ?? policyRow.error;
@@ -262,7 +262,26 @@ export async function moveUnfinishedWork(input: { familyId: string; studentId: s
   const sourceDate = sources.data.map((item) => item.scheduled_date!).sort()[0];
   const currentDate = dateInTimezone(new Date(), family.data.timezone);
   const anchor = sourceDate > currentDate ? sourceDate : currentDate;
-  const days = scheduleDates(anchor, learnerWeekdays(student.data.schedule_preferences, family.data.available_days), 15);
+  const weekdays = learnerWeekdays(student.data.schedule_preferences, family.data.available_days);
+  const curriculumUnitIds = [...new Set(sources.data.flatMap((item) => item.curriculum_unit_id ? [item.curriculum_unit_id] : []))];
+  const latestCourseWork = curriculumUnitIds.length
+    ? await admin.from("assignments").select("scheduled_date")
+      .eq("family_id", input.familyId).eq("student_id", input.studentId)
+      .in("curriculum_unit_id", curriculumUnitIds).not("scheduled_date", "is", null)
+      .not("status", "in", "(completed,skipped)")
+      .order("scheduled_date", { ascending: false }).limit(1).maybeSingle()
+    : { data: null, error: null };
+  if (latestCourseWork.error) throw latestCourseWork.error;
+  // A fixed window fails whenever a preloaded course reaches its boundary: the
+  // last lesson has nowhere to shift. Cover the affected course's existing tail
+  // plus 15 additional learning days so the whole sequence can move atomically.
+  const candidateDays = scheduleDates(anchor, weekdays, 260);
+  const latestCourseDate = latestCourseWork.data?.scheduled_date ?? anchor;
+  const courseEndIndex = candidateDays.findIndex((date) => date >= latestCourseDate);
+  const horizonEndIndex = courseEndIndex === -1
+    ? candidateDays.length - 1
+    : Math.min(candidateDays.length - 1, Math.max(14, courseEndIndex + 15));
+  const days = candidateDays.slice(0, horizonEndIndex + 1);
   const range = await admin.from("assignments").select("id,title,subject,scheduled_date,estimated_minutes,status,curriculum_unit_id,sequence_number")
     .eq("family_id", input.familyId).eq("student_id", input.studentId).gte("scheduled_date", sourceDate).lte("scheduled_date", days.at(-1)!);
   if (range.error) throw range.error;

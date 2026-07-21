@@ -83,6 +83,72 @@ describe("unfinished curriculum operations", () => {
     expect((await admin.from("assignments").select("scheduled_date").eq("id", missed.id).single()).data?.scheduled_date).toBe(movedDates[0]);
   });
 
+  it("flips a missed lesson into today and carries a fully preloaded course forward", async () => {
+    const today = dateInTimezone(new Date(), "America/New_York");
+    const missedDate = shiftDate(today, -1);
+    const courseDates = scheduleDates(today, [1, 2, 3, 4, 5], 16);
+    const student = await admin.from("students").insert({
+      family_id: familyId,
+      display_name: "Sequence flip learner",
+      daily_capacity_minutes: 30,
+      schedule_preferences: { learningDays: ["Mon", "Tue", "Wed", "Thu", "Fri"] },
+    }).select("id").single();
+    if (student.error) throw student.error;
+    const unit = await admin.from("curriculum_units").insert({
+      family_id: familyId,
+      student_id: student.data.id,
+      created_by: userId,
+      subject: "History",
+      title: "Communities & Early America",
+    }).select("id").single();
+    if (unit.error) throw unit.error;
+    const inserted = await admin.from("assignments").insert([
+      {
+        family_id: familyId,
+        student_id: student.data.id,
+        curriculum_unit_id: unit.data.id,
+        created_by: userId,
+        title: "Communities & Early America · Lesson 9",
+        subject: "History",
+        sequence_number: 9,
+        scheduled_date: missedDate,
+        estimated_minutes: 30,
+      },
+      ...courseDates.slice(0, 15).map((scheduledDate, index) => ({
+        family_id: familyId,
+        student_id: student.data.id,
+        curriculum_unit_id: unit.data.id,
+        created_by: userId,
+        title: `Communities & Early America · Lesson ${index + 10}`,
+        subject: "History",
+        sequence_number: index + 10,
+        scheduled_date: scheduledDate,
+        estimated_minutes: 30,
+      })),
+    ]).select("id,sequence_number");
+    if (inserted.error) throw inserted.error;
+    const missed = inserted.data.find((item) => item.sequence_number === 9)!;
+
+    const moved = await moveUnfinishedWork({
+      familyId,
+      studentId: student.data.id,
+      assignmentIds: [missed.id],
+      actorId: userId,
+      idempotencyKey: `sequence-flip:${crypto.randomUUID()}`,
+    });
+
+    expect(moved.applied).toBe(true);
+    expect(moved.proposal).toMatchObject({ status: "applied", undo_status: "available" });
+    const shifted = await admin.from("assignments").select("sequence_number,scheduled_date")
+      .eq("curriculum_unit_id", unit.data.id).order("sequence_number");
+    if (shifted.error) throw shifted.error;
+    expect(shifted.data.map((item) => item.scheduled_date)).toEqual(courseDates);
+
+    const undone = await admin.rpc("undo_klio_adjustment", { p_proposal_id: moved.proposal.id, p_actor_id: userId });
+    expect(undone.data).toMatchObject({ status: "undone" });
+    expect((await admin.from("assignments").select("scheduled_date").eq("id", missed.id).single()).data?.scheduled_date).toBe(missedDate);
+  });
+
   it("turns overlapping work into one learner-scoped timed sequence and restores it with undo", async () => {
     const today = dateInTimezone(new Date(), "America/New_York");
     const date = scheduleDates(today, [1, 2, 3, 4, 5], 1)[0];
