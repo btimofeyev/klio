@@ -51,6 +51,7 @@ type Workspace = {
   practiceSessions: PracticeSessionDTO[];
   weeklyBriefing: WeeklyBriefingDTO | null;
   weeklyBriefingState: WeeklyBriefingState;
+  weeklyBriefingTurn: AgentTurnDTO | null;
   calendarConflicts: CalendarConflictDTO[];
   selectedDate: string;
   selectedStudentId: string | null;
@@ -141,7 +142,7 @@ export function OperationsWorkspace({ surface, workspace, initialSelectedDate, i
   const captureWorkspace = <InboxWorkspace key={`capture-${studentId}`} familyId={workspace.family.id} students={workspace.students} categories={workspace.categories} initialEvidence={workspace.evidence} initialReminders={workspace.reminders} initialArtifacts={workspace.artifacts} pendingApprovals={workspace.pendingApprovals} initialAgentTurn={deskTurn} initialAgentConversation={workspace.latestAgentConversation} initialStudentId={selectedLearner?.id ?? ""} workspaceDate={selectedDate} assignmentContext={captureAssignment ? { id: captureAssignment.id, studentId: captureAssignment.studentId, title: captureAssignment.title, subject: captureAssignment.subject } : null} onAssignmentDrop={(assignmentId) => setCaptureAssignment(workspace.assignments.find((item) => item.id === assignmentId) ?? null)} onAssignmentContextClear={() => setCaptureAssignment(null)} onPracticeOpen={(artifactId) => void openPractice({ artifactId })} onAgentTurnChange={setLiveAgentTurn} assistantPrefill={assistantPrefill} compact dashboard />;
   const briefingIsVisible = weeklyBriefingShouldRender(workspace.weeklyBriefing, workspace.weeklyBriefingState)
     && workspace.weeklyBriefing?.id !== locallyDismissedBriefingId;
-  const briefingSurface = briefingIsVisible ? <WeeklyFamilyBriefing briefing={workspace.weeklyBriefing} state={workspace.weeklyBriefingState} familyId={workspace.family.id} students={workspace.students} selectedStudentId={studentId} familyTimezone={workspace.family.timezone} planningProposals={visiblePlanningProposals} adjustments={proposals} activeAgentTurn={isBriefingTurn(liveAgentTurn) ? liveAgentTurn : null} onDismissed={() => setLocallyDismissedBriefingId(workspace.weeklyBriefing?.id ?? null)} /> : null;
+  const briefingSurface = briefingIsVisible ? <WeeklyFamilyBriefing briefing={workspace.weeklyBriefing} state={workspace.weeklyBriefingState} familyId={workspace.family.id} students={workspace.students} selectedStudentId={studentId} familyTimezone={workspace.family.timezone} planningProposals={visiblePlanningProposals} adjustments={proposals} activeAgentTurn={isBriefingTurn(liveAgentTurn) ? liveAgentTurn : workspace.weeklyBriefingTurn} onDismissed={() => setLocallyDismissedBriefingId(workspace.weeklyBriefing?.id ?? null)} /> : null;
 
   function savedConflict(conflict: CalendarConflictDTO, work: ConflictAffectedWork, mode: "created" | "updated") {
     setConflictOverrides((current) => [conflict, ...current.filter((item) => item.id !== conflict.id)]);

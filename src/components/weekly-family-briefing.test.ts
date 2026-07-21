@@ -128,7 +128,7 @@ describe("weekly family briefing", () => {
     expect(document.querySelectorAll('[data-briefing-side]')).toHaveLength(1);
   });
 
-  it("restores a completed background receipt after a full page refresh", async () => {
+  it("uses the server-restored receipt on the first render without flashing a stale action", () => {
     const restoredTurn: NonNullable<React.ComponentProps<typeof WeeklyFamilyBriefing>["activeAgentTurn"]> = {
       id: "turn-restored-no-op",
       status: "completed",
@@ -152,12 +152,12 @@ describe("weekly family briefing", () => {
       interactionMode: "act",
       streamedMessage: "The current plan is already simplified.",
     };
-    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => String(input).startsWith("/api/agent/turns?")
-      ? { ok: true, json: async () => ({ turns: [restoredTurn] }) }
-      : { ok: true, json: async () => ({}) }));
-    renderBriefing();
-    await waitFor(() => expect(screen.queryByRole("button", { name: /Ask Klio to handle/ })).not.toBeInTheDocument());
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
+    vi.stubGlobal("fetch", fetchMock);
+    renderBriefing({ activeAgentTurn: restoredTurn });
     expect(screen.getByText("Klio handled the briefing. Nothing else needs your decision.")).toBeInTheDocument();
+    expect(screen.queryByText("Submitted work is ready for you")).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([input]) => String(input).startsWith("/api/agent/turns?"))).toBe(false);
     expect(document.querySelectorAll('[data-briefing-side]')).toHaveLength(1);
   });
 

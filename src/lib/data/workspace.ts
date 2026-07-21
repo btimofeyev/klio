@@ -175,7 +175,7 @@ export const getWorkspace = cache(async () => {
   if (!membership) return null;
 
   const familyId = membership.family_id;
-  const [familyResult, studentsResult, subjectsResult, evidenceResult, artifactsResult, approvalsResult, categoriesResult, jobsResult, remindersResult, scheduleResult, latestTurnResult, insightsResult, autonomyResult, layoutsResult, questionsResult, latestConversationResult, briefingResult, weeklyEvaluationResult] = await Promise.all([
+  const [familyResult, studentsResult, subjectsResult, evidenceResult, artifactsResult, approvalsResult, categoriesResult, jobsResult, remindersResult, scheduleResult, latestTurnResult, latestBriefingTurnResult, insightsResult, autonomyResult, layoutsResult, questionsResult, latestConversationResult, briefingResult, weeklyEvaluationResult] = await Promise.all([
     supabase.from("families").select("id, name, timezone, available_days").eq("id", familyId).single(),
     supabase.from("students").select("id, display_name, grade_band, learning_preferences, daily_capacity_minutes, schedule_preferences").eq("family_id", familyId).eq("active", true).order("created_at"),
     supabase.from("student_subjects").select("student_id,name,course_name,weekly_frequency,position").eq("family_id", familyId).eq("status", "active").order("position"),
@@ -187,6 +187,7 @@ export const getWorkspace = cache(async () => {
     supabase.from("reminders").select("id, title, notes, due_at, status, student_id, source_evidence_id, created_at").eq("family_id", familyId).in("status", ["pending", "completed"]).order("due_at", { ascending: true, nullsFirst: false }).limit(30),
     supabase.from("weekly_plan_items").select("id, artifact_id, assignment_id, student_id, scheduled_date, scheduled_time, title, description, estimated_minutes, subject, curriculum_url, source_kind, rescheduled_count, completed_at, position, artifacts(type, status)").eq("family_id", familyId).order("scheduled_date", { ascending: true, nullsFirst: false }).order("scheduled_time", { ascending: true, nullsFirst: false }).order("position").limit(120),
     supabase.from("agent_turns").select("id,status,goal,student_id,task_name,subject,source_count,normalized_step,expected_output,created_at,started_at,last_heartbeat_at,last_progress_at,snapshot_summary,public_result,conversation_id,interaction_mode,streamed_message,agent_events(sequence,kind,payload),agent_tool_calls(result_summary)").eq("family_id", familyId).is("dismissed_at", null).in("status", ["queued", "running", "awaiting_parent", "failed", "completed"]).order("created_at", { ascending: false }).limit(1).maybeSingle(),
+    supabase.from("agent_turns").select("id,status,goal,student_id,task_name,subject,source_count,normalized_step,expected_output,created_at,started_at,last_heartbeat_at,last_progress_at,snapshot_summary,public_result,conversation_id,interaction_mode,streamed_message,agent_events(sequence,kind,payload),agent_tool_calls(result_summary)").eq("family_id", familyId).eq("task_name", "Handling weekly briefing").is("conversation_id", null).is("dismissed_at", null).in("status", ["queued", "running", "awaiting_parent", "failed", "completed"]).order("created_at", { ascending: false }).limit(1).maybeSingle(),
     supabase.from("klio_insights").select("id,student_id,kind,title,summary,reason,priority,evidence_refs,action_ref,created_at").eq("family_id", familyId).eq("status", "active").order("priority", { ascending: false }).order("created_at", { ascending: false }).limit(3),
     supabase.from("family_autonomy_policies").select("preset,policies").eq("family_id", familyId).maybeSingle(),
     supabase.from("family_workspace_layouts").select("surface,scope_key,layout_version,positions").eq("family_id", familyId),
@@ -207,6 +208,7 @@ export const getWorkspace = cache(async () => {
   if (remindersResult.error) throw remindersResult.error;
   if (scheduleResult.error) throw scheduleResult.error;
   if (latestTurnResult.error) throw latestTurnResult.error;
+  if (latestBriefingTurnResult.error) throw latestBriefingTurnResult.error;
   if (insightsResult.error) throw insightsResult.error;
   if (autonomyResult.error) throw autonomyResult.error;
   if (layoutsResult.error) throw layoutsResult.error;
@@ -242,6 +244,10 @@ export const getWorkspace = cache(async () => {
         : currentEvaluation?.status === "failed"
           ? "failed"
           : "pending";
+  const weeklyBriefingTurn = weeklyBriefing && latestBriefingTurnResult.data && Date.parse(latestBriefingTurnResult.data.created_at) >= Date.parse(weeklyBriefing.generatedAt)
+    ? latestBriefingTurnResult.data
+    : null;
+  const weeklyBriefingClarification = weeklyBriefingTurn ? clarificationForTurn(questionsResult.data, weeklyBriefingTurn.id) : null;
 
   return {
     parent,
@@ -351,6 +357,29 @@ export const getWorkspace = cache(async () => {
     })),
     weeklyBriefing,
     weeklyBriefingState,
+    weeklyBriefingTurn: weeklyBriefingTurn ? ({
+      id: weeklyBriefingTurn.id,
+      status: parentFacingTurnStatus(weeklyBriefingTurn.status, Boolean(weeklyBriefingClarification)),
+      goal: weeklyBriefingTurn.goal,
+      request: ((weeklyBriefingTurn.snapshot_summary as { request?: string | null } | null)?.request ?? `Complete a ${weeklyBriefingTurn.goal.replaceAll("_", " ")} job.`),
+      result: weeklyBriefingTurn.public_result ? normalizePublicResult(weeklyBriefingTurn.public_result) : null,
+      clarification: weeklyBriefingClarification,
+      events: [...weeklyBriefingTurn.agent_events].sort((a, b) => a.sequence - b.sequence).map((event) => ({ sequence: event.sequence, kind: event.kind, label: agentEventLabel(event.kind, event.payload) })),
+      tools: weeklyBriefingTurn.agent_tool_calls.map((tool) => ({ result: tool.result_summary })),
+      taskName: weeklyBriefingTurn.task_name ?? "Handling weekly briefing",
+      studentId: weeklyBriefingTurn.student_id,
+      subject: weeklyBriefingTurn.subject,
+      sourceCount: weeklyBriefingTurn.source_count,
+      normalizedStep: weeklyBriefingTurn.normalized_step,
+      expectedOutput: weeklyBriefingTurn.expected_output,
+      createdAt: weeklyBriefingTurn.created_at,
+      startedAt: weeklyBriefingTurn.started_at,
+      lastHeartbeatAt: weeklyBriefingTurn.last_heartbeat_at,
+      lastProgressAt: weeklyBriefingTurn.last_progress_at,
+      conversationId: weeklyBriefingTurn.conversation_id,
+      interactionMode: weeklyBriefingTurn.interaction_mode as "answer" | "act",
+      streamedMessage: weeklyBriefingTurn.streamed_message,
+    } satisfies AgentTurnDTO) : null,
     latestAgentConversation: latestConversationResult.data ? ({
       id: latestConversationResult.data.id,
       title: latestConversationResult.data.title,
