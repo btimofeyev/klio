@@ -11,6 +11,7 @@ import type { Json } from "@/lib/supabase/database.types";
 
 export type WorkspaceGoal = "capture" | "dashboard" | "lesson" | "practice" | "weekly_plan" | "portfolio" | "records" | "general";
 export type InteractionMode = "answer" | "act";
+export type WorkspaceAuthorization = "schedule_moves";
 
 export async function enqueueWorkspaceTurn(input: {
   familyId: string; requestedBy: string; evidenceIds?: string[]; studentId?: string | null;
@@ -18,6 +19,7 @@ export async function enqueueWorkspaceTurn(input: {
   goal: WorkspaceGoal; idempotencyKey: string; request?: string | null; contextDate?: string | null;
   taskName?: string | null; subject?: string | null; expectedOutput?: string | null;
   conversationId?: string | null; interactionMode?: InteractionMode;
+  authorizations?: WorkspaceAuthorization[];
 }) {
   const admin = createAdminClient();
   const [snapshotIdentity, thread] = await Promise.all([
@@ -35,7 +37,7 @@ export async function enqueueWorkspaceTurn(input: {
     normalized_step: "waiting", expected_output: input.expectedOutput?.trim().slice(0, 300) || expectedOutputForGoal(input.goal),
     last_progress_at: new Date().toISOString(),
     conversation_id: input.conversationId ?? null, interaction_mode: input.interactionMode ?? "act",
-    snapshot_summary: { evidence_ids: evidenceIds, student_id: input.studentId ?? null, request: input.request?.trim().slice(0, 4000) || null, context_date: input.contextDate ?? null },
+    snapshot_summary: { evidence_ids: evidenceIds, student_id: input.studentId ?? null, request: input.request?.trim().slice(0, 4000) || null, context_date: input.contextDate ?? null, authorizations: [...new Set(input.authorizations ?? [])] },
   }).select("id, thread_id, family_id, status, initial_snapshot_version, snapshot_hash").single();
   if (createdTurn.error) {
     if (createdTurn.error.code === "23505") {
@@ -183,10 +185,26 @@ export function isDayOrganizationRequest(request: string) {
   return /\b(?:organiz\w*|fix\s+(?:the\s+)?overlap\w*|remove\s+(?:the\s+)?overlap\w*|non[- ]overlapping\s+schedule|timed\s+(?:plan|schedule))\b/i.test(request);
 }
 
+export function isWeeklyBriefingHandoffRequest(request: string) {
+  return /\bremaining items? in .{0,80}weekly briefing\b/i.test(request) && /\bwork in the background\b/i.test(request);
+}
+
+export function authorizationsForWorkspaceRequest(request: string, interactionMode: InteractionMode): WorkspaceAuthorization[] {
+  if (interactionMode !== "act") return [];
+  if (/^\s*(?:why|when)\b/i.test(request)) return [];
+  const explicitScheduleAction = isDayOrganizationRequest(request)
+    || /\b(?:move|reschedul\w*|shift|rebalance|lighten|reorganiz\w*)\b.{0,100}\b(?:assignment|lesson|work|schedule|day|week)\b/i.test(request)
+    || /\b(?:assignment|lesson|work|schedule|day|week)\b.{0,100}\b(?:move|reschedul\w*|shift|rebalanc\w*|lighten|reorganiz\w*)\b/i.test(request);
+  return explicitScheduleAction || isActionConfirmationRequest(request) ? ["schedule_moves"] : [];
+}
+
 export function toolsForWorkspaceRequest(goal: WorkspaceGoal, request: string, interactionMode: InteractionMode = "act"): WorkspaceToolName[] {
   if (interactionMode === "answer") return readOnlyTools;
   if (goal === "weekly_plan" && isDayOrganizationRequest(request)) {
     return ["organize_day_schedule", "read_family_context", "present_action_card", "ask_parent"];
+  }
+  if (goal === "weekly_plan" && isWeeklyBriefingHandoffRequest(request)) {
+    return ["move_unfinished_work", "organize_day_schedule", "prepare_planning_changes", ...alwaysRead];
   }
   if (goal !== "general") return toolsForWorkspaceGoal(goal);
   // General conversation is adaptive. Klio decides whether the message needs

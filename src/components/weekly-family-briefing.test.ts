@@ -38,9 +38,9 @@ const briefing: WeeklyBriefingDTO = {
 const students = [{ id: "maya", displayName: "Maya", gradeBand: "6-8", learningPreferences: null }];
 const familyId = "00000000-0000-4000-8000-000000000001";
 
-function renderBriefing(input: { onDismissed?: () => void; selectedStudentId?: string; planningProposals?: React.ComponentProps<typeof WeeklyFamilyBriefing>["planningProposals"] } = {}) {
+function renderBriefing(input: { onDismissed?: () => void; selectedStudentId?: string; planningProposals?: React.ComponentProps<typeof WeeklyFamilyBriefing>["planningProposals"]; adjustments?: React.ComponentProps<typeof WeeklyFamilyBriefing>["adjustments"] } = {}) {
   return render(React.createElement(WeeklyFamilyBriefing, {
-    briefing, state: "available", familyId, students, selectedStudentId: input.selectedStudentId ?? "all", familyTimezone: "America/New_York", planningProposals: input.planningProposals, onDismissed: input.onDismissed,
+    briefing, state: "available", familyId, students, selectedStudentId: input.selectedStudentId ?? "all", familyTimezone: "America/New_York", planningProposals: input.planningProposals, adjustments: input.adjustments, onDismissed: input.onDismissed,
   }));
 }
 
@@ -91,6 +91,8 @@ describe("weekly family briefing", () => {
     expect(handleCall?.[0]).toBe("/api/weekly-briefings/briefing-1");
     expect(JSON.parse(String(handleCall?.[1]?.body))).toMatchObject({ action: "handle", studentId: "maya" });
     expect(JSON.parse(String(handleCall?.[1]?.body)).request).toContain("Work in the background");
+    expect(JSON.parse(String(handleCall?.[1]?.body)).request).toContain("explicitly authorizes ordinary safe, reversible assignment moves");
+    expect(JSON.parse(String(handleCall?.[1]?.body)).request).toContain("Do not use draft_weekly_plan");
     expect(screen.getByRole("progressbar", { name: "Klio briefing progress" })).toHaveAttribute("aria-valuenow", "10");
     expect(screen.queryByText(/Take care of the remaining items/)).not.toBeInTheDocument();
   });
@@ -210,6 +212,25 @@ describe("weekly family briefing", () => {
     expect(screen.queryByText("Only parent-approved changes were applied.")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Ask Klio/ })).not.toBeInTheDocument();
     expect(document.querySelector('[data-briefing-side="right"]')).not.toBeInTheDocument();
+  });
+
+  it("removes an item after Klio applies an undoable schedule adjustment", async () => {
+    const proposalBriefing = briefingWithActions([
+      { kind: "decide_unfinished", label: "Unfinished", explanation: "One remains.", priority: 90, target: { href: "/app/week", assignmentIds: ["assignment-old"] }, evidenceRefs: [{ type: "assignment", id: "assignment-old" }] },
+    ]);
+    render(React.createElement(WeeklyFamilyBriefing, {
+      briefing: proposalBriefing,
+      state: "available",
+      familyId,
+      students,
+      selectedStudentId: "all",
+      familyTimezone: "America/New_York",
+      adjustments: [{ id: "adjustment-1", status: "applied", summary: "Moved the unfinished lesson.", createdAt: "2026-07-13T10:00:00.000Z", actions: [{ assignmentId: "assignment-old" }] }],
+    }));
+
+    expect(screen.getAllByText("Klio handled the briefing. Nothing else needs your decision.")).toHaveLength(1);
+    expect(screen.queryByText("One lesson is still open")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Ask Klio/ })).not.toBeInTheDocument();
   });
 
   it("resolves a broad schedule-work alert after its bounded placement is applied", async () => {

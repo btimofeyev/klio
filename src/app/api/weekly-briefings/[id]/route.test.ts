@@ -47,6 +47,7 @@ describe("PATCH /api/weekly-briefings/[id]", () => {
       interactionMode: "act",
       taskName: "Handling weekly briefing",
       contextDate: "2026-07-20",
+      authorizations: ["schedule_moves"],
     }));
     expect(mocks.enqueueTurn.mock.calls[0][0]).not.toHaveProperty("conversationId");
     expect(mocks.processTurn).not.toHaveBeenCalled();

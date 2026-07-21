@@ -241,7 +241,7 @@ export async function organizeDaySchedule(input: {
   };
 }
 
-export async function moveUnfinishedWork(input: { familyId: string; studentId: string; assignmentIds: string[]; actorId: string; idempotencyKey: string; evaluationId?: string | null }) {
+export async function moveUnfinishedWork(input: { familyId: string; studentId: string; assignmentIds: string[]; actorId: string; idempotencyKey: string; evaluationId?: string | null; explicitParentAuthorization?: boolean }) {
   const admin = createAdminClient();
   const uniqueIds = [...new Set(input.assignmentIds)].slice(0, 20);
   if (!uniqueIds.length) throw new Error("UNFINISHED_ASSIGNMENT_REQUIRED");
@@ -301,7 +301,10 @@ export async function moveUnfinishedWork(input: { familyId: string; studentId: s
     ? laterCount ? `Moved ${first.title} and shifted ${laterCount} later ${first.subject} lesson${laterCount === 1 ? "" : "s"} to preserve order.` : `Moved ${first.title} to the next day with enough room.`
     : `Moved ${uniqueIds.length} unfinished lessons and kept each course in order.`;
   const preset = (policyRow.data?.preset ?? "proactive") as AutonomyPreset;
-  const decision = policyDecision(policyForPreset(preset, sanitizePolicy(policyRow.data?.policies)), "move_unfinished_work");
+  const configuredDecision = policyDecision(policyForPreset(preset, sanitizePolicy(policyRow.data?.policies)), "move_unfinished_work");
+  const decision = input.explicitParentAuthorization && !configuredDecision.denied
+    ? { ...configuredDecision, level: "automatic_with_undo" as const, appliesAutomatically: true, undoRequired: true, parentConfirmationRequired: false, interaction: "none" as const, authorizedBy: "explicit_parent_request" }
+    : configuredDecision;
   const proposal = await admin.from("adjustment_proposals").insert({
     family_id: input.familyId, student_id: input.studentId, week_start: days[0], reason, summary,
     snapshot_version: family.data.agent_context_version, idempotency_key: input.idempotencyKey,

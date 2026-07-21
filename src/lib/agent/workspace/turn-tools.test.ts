@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
-import { interactionModeForRequest, isActionConfirmationRequest, toolsForWorkspaceGoal, toolsForWorkspaceRequest } from "./turns";
+import { authorizationsForWorkspaceRequest, interactionModeForRequest, isActionConfirmationRequest, toolsForWorkspaceGoal, toolsForWorkspaceRequest } from "./turns";
 import { parentFacingTurnStatus, waitsForParent } from "./turn-status";
 import { workspaceToolSchemas } from "./contracts";
 
@@ -25,6 +25,15 @@ describe("workspace turn tool scoping", () => {
   it("narrows get-organized requests to the deterministic day operation", () => {
     const tools = toolsForWorkspaceRequest("weekly_plan", "Get organized and fix the overlapping times.");
     expect(tools).toContain("organize_day_schedule");
+    expect(tools).not.toContain("draft_weekly_plan");
+    expect(tools).not.toContain("move_schedule_work");
+  });
+
+  it("keeps weekly briefing handoffs on bounded schedule tools instead of review-only drafts", () => {
+    const tools = toolsForWorkspaceRequest("weekly_plan", "Take care of the remaining items in the family’s weekly briefing. Work in the background using current family records.");
+    expect(tools).toContain("move_unfinished_work");
+    expect(tools).toContain("organize_day_schedule");
+    expect(tools).toContain("prepare_planning_changes");
     expect(tools).not.toContain("draft_weekly_plan");
     expect(tools).not.toContain("move_schedule_work");
   });
@@ -70,6 +79,13 @@ describe("workspace turn tool scoping", () => {
   it.each(["get it done", "Do it", "Yes, go ahead", "apply those changes"])("recognizes contextual action confirmation: %s", (request) => {
     expect(isActionConfirmationRequest(request)).toBe(true);
     expect(toolsForWorkspaceRequest("general", request, "act")).toContain("move_schedule_work");
+    expect(authorizationsForWorkspaceRequest(request, "act")).toContain("schedule_moves");
+  });
+
+  it("treats a direct assignment move as authorization without granting it to questions", () => {
+    expect(authorizationsForWorkspaceRequest("Move Noah's unfinished lesson to Friday", "act")).toEqual(["schedule_moves"]);
+    expect(authorizationsForWorkspaceRequest("Why did Noah's lesson move?", "act")).toEqual([]);
+    expect(authorizationsForWorkspaceRequest("Move Noah's unfinished lesson to Friday", "answer")).toEqual([]);
   });
 
   it("lets Klio decide how to handle assignment teaching guidance", () => {

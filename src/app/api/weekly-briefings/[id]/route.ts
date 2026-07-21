@@ -44,12 +44,13 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         studentId: parsed.data.studentId,
         trigger: "parent_message",
         goal: "weekly_plan",
-        idempotencyKey: `weekly-briefing-handoff:${existing.data.id}:${parsed.data.studentId ?? "family"}`,
+        idempotencyKey: `weekly-briefing-handoff:v2:${existing.data.id}:${parsed.data.studentId ?? "family"}`,
         request: parsed.data.request,
         contextDate: existing.data.week_start,
         taskName: "Handling weekly briefing",
         expectedOutput: "A completed safe change, a durable reviewable proposal, or one precise question",
         interactionMode: "act",
+        authorizations: ["schedule_moves"],
       });
       if (serverEnv.klioAgentInline && !queued.duplicate) after(() => processWorkspaceTurn(queued.turn.id));
       return NextResponse.json({ turn: queued.turn, duplicate: queued.duplicate }, { status: queued.duplicate ? 200 : 202 });

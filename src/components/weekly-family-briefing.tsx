@@ -7,7 +7,7 @@ import { AlertCircle, ArrowRight, CheckCircle2, Clock3, LoaderCircle, X } from "
 import type { AgentTurnDTO, StudentDTO, WeeklyBriefingDTO, WeeklyBriefingState } from "@/lib/data/workspace";
 import styles from "./weekly-family-briefing.module.css";
 
-export function WeeklyFamilyBriefing({ briefing, state, familyId, students, selectedStudentId, familyTimezone, planningProposals = [], activeAgentTurn = null, onDismissed }: {
+export function WeeklyFamilyBriefing({ briefing, state, familyId, students, selectedStudentId, familyTimezone, planningProposals = [], adjustments = [], activeAgentTurn = null, onDismissed }: {
   briefing: WeeklyBriefingDTO | null;
   state: WeeklyBriefingState;
   familyId: string;
@@ -15,6 +15,7 @@ export function WeeklyFamilyBriefing({ briefing, state, familyId, students, sele
   selectedStudentId: string;
   familyTimezone: string;
   planningProposals?: BriefingPlanningProposal[];
+  adjustments?: BriefingAdjustment[];
   activeAgentTurn?: AgentTurnDTO | null;
   onDismissed?: () => void;
 }) {
@@ -84,7 +85,7 @@ export function WeeklyFamilyBriefing({ briefing, state, familyId, students, sele
   const visiblePreviousWeek = learner
     ? snapshot.previousWeek.byLearner?.find((item) => item.studentId === learner.id)
     : snapshot.previousWeek;
-  const presentation = briefingPresentation(visibleActions, visiblePacing, visiblePreviousWeek, planningProposals, briefing.generatedAt);
+  const presentation = briefingPresentation(visibleActions, visiblePacing, visiblePreviousWeek, planningProposals, adjustments, briefing.generatedAt);
   const highlights = presentation.highlights;
   const openHighlights = highlights.filter((item) => item.state === "open");
   const preparedHighlights = highlights.filter((item) => item.state === "prepared");
@@ -113,7 +114,7 @@ export function WeeklyFamilyBriefing({ briefing, state, familyId, students, sele
   async function handleBriefing() {
     if (!openHighlights.length || busy || ["queued", "running"].includes(briefingTurn?.status ?? "")) return;
     const scope = learner ? `${learner.displayName}’s` : "the family’s";
-    const request = `Take care of the remaining items in ${scope} weekly briefing for ${dateRange(snapshot.weekStart, snapshot.weekEnd)}: ${openHighlights.map((item) => item.title.toLocaleLowerCase("en-US")).join("; ")}. Work in the background using current family records and available tools. Make ordinary safe, reversible schedule fixes when policy permits. For anything requiring review, create one durable proposal linked to the exact affected records. Do not return a review-only narrative without creating the corresponding proposal. If no change is needed, finish with no action. Ask one precise question only when a required fact cannot be inferred.`;
+    const request = `Take care of the remaining items in ${scope} weekly briefing for ${dateRange(snapshot.weekStart, snapshot.weekEnd)}: ${openHighlights.map((item) => item.title.toLocaleLowerCase("en-US")).join("; ")}. Work in the background using current family records and available tools. The parent explicitly authorizes ordinary safe, reversible assignment moves in this handoff. Use move_unfinished_work for open past work and organize_day_schedule for an overloaded day; those changes should apply now with Undo. Do not use draft_weekly_plan and do not return a review-only narrative. Use prepare_planning_changes only when the requested outcome is genuinely larger than those bounded tools. If no change is needed, finish with no action. Ask one precise question only when a required fact cannot be inferred.`;
     const startedAt = new Date().toISOString();
     setBusy(true); setError(null); setAnswer("");
     setBriefingTurn(optimisticBriefingTurn({ briefingId, request, studentId: learner?.id ?? null, createdAt: startedAt }));
@@ -284,10 +285,11 @@ type BriefingAction = WeeklyBriefingDTO["snapshot"]["actions"][number];
 type BriefingPacing = WeeklyBriefingDTO["snapshot"]["pacing"];
 type PreviousWeek = WeeklyBriefingDTO["snapshot"]["previousWeek"] | NonNullable<WeeklyBriefingDTO["snapshot"]["previousWeek"]["byLearner"]>[number] | undefined;
 type BriefingPlanningProposal = { id: string; status: string; proposalKind: string; actionName: string; summary: string; changes: unknown; targetAssignmentId: string | null; targetGoalId: string | null; targetCurriculumUnitId: string | null; createdAt: string };
+type BriefingAdjustment = { id: string; status: string; summary: string; createdAt: string; actions: Array<{ assignmentId: string | null }> };
 type BriefingHighlight = { theme: string; state: "open" | "prepared"; context: string; title: string; explanation: string; href?: string; linkLabel: string };
 type BriefingPresentation = { highlights: BriefingHighlight[]; resolvedThemes: number; latestChangeAt: string | null };
 
-function briefingPresentation(actions: BriefingAction[], pacing: BriefingPacing, previousWeek: PreviousWeek, proposals: BriefingPlanningProposal[], generatedAt: string): BriefingPresentation {
+function briefingPresentation(actions: BriefingAction[], pacing: BriefingPacing, previousWeek: PreviousWeek, proposals: BriefingPlanningProposal[], adjustments: BriefingAdjustment[], generatedAt: string): BriefingPresentation {
   const seen = new Set<string>();
   const highlights: BriefingHighlight[] = [];
   let resolvedThemes = 0;
@@ -297,8 +299,9 @@ function briefingPresentation(actions: BriefingAction[], pacing: BriefingPacing,
     if (seen.has(theme)) continue;
     seen.add(theme);
     const themeActions = actions.filter((candidate) => actionTheme(candidate.kind) === theme);
-    const proposalState = proposalStateForTheme(theme, themeActions, pacing, proposals, generatedAt);
-    if (proposalState.state !== "open" && (!latestChangeAt || proposalState.proposal.createdAt > latestChangeAt)) latestChangeAt = proposalState.proposal.createdAt;
+    const proposalState = proposalStateForTheme(theme, themeActions, pacing, proposals, adjustments, generatedAt);
+    const changedAt = proposalState.state === "prepared" ? proposalState.proposal.createdAt : proposalState.state === "resolved" ? proposalState.changedAt : null;
+    if (changedAt && (!latestChangeAt || changedAt > latestChangeAt)) latestChangeAt = changedAt;
     if (proposalState.state === "resolved") {
       resolvedThemes += 1;
       continue;
@@ -324,7 +327,7 @@ function toHighlight(action: BriefingAction, theme: string, pacing: BriefingPaci
     return { theme, state: "open", context: "Review", title: "Submitted work is ready for you", explanation: count ? `${count} ${count === 1 ? "item is" : "items are"} waiting. Klio has kept them out of learning claims until you approve them.` : "Klio has kept this work out of learning claims until you approve it.", href, linkLabel: "Review" };
   }
   if (theme === "schedule") {
-    return { theme, state: "open", context: "This week", title: "One part of the schedule needs a lighter plan", explanation: "Klio can rebalance it around current limits and prepare the change for your approval.", href, linkLabel: "Open week" };
+    return { theme, state: "open", context: "This week", title: "One part of the schedule needs a lighter plan", explanation: "Klio can rebalance ordinary schedule work now and keep the change undoable.", href, linkLabel: "Open week" };
   }
   if (theme === "decide_unfinished") {
     const count = previousWeek?.unfinishedCount ?? 0;
@@ -332,7 +335,7 @@ function toHighlight(action: BriefingAction, theme: string, pacing: BriefingPaci
   }
   if (theme === "pacing") {
     const concernCount = pacing.filter((item) => item.kind !== "approved_evidence_trend").length;
-    return { theme, state: "open", context: "Pacing", title: concernCount === 1 ? "One course needs a pacing adjustment" : "The pace could use a simpler plan", explanation: "Klio can balance the affected courses and prepare one proposal for your review.", href, linkLabel: "View plan" };
+    return { theme, state: "open", context: "Pacing", title: concernCount === 1 ? "One course needs a pacing adjustment" : "The pace could use a simpler plan", explanation: "Klio can make bounded schedule moves now with Undo; larger academic changes still wait for you.", href, linkLabel: "View plan" };
   }
   return { theme, state: "open", context: "This week", title: "Some work still needs a place", explanation: "Klio can fit it into the week and prepare the schedule for your review.", href, linkLabel: "Open week" };
 }
@@ -348,9 +351,17 @@ function preparedHighlight(theme: string, proposal: BriefingPlanningProposal): B
   return { theme, state: "prepared", context: "Ready for review", title, explanation: conciseProposalSummary(proposal.summary), href: `/app/adjustments?proposal=${encodeURIComponent(proposal.id)}`, linkLabel: "Review" };
 }
 
-function proposalStateForTheme(theme: string, actions: BriefingAction[], pacing: BriefingPacing, proposals: BriefingPlanningProposal[], generatedAt: string): { state: "open" } | { state: "prepared" | "resolved"; proposal: BriefingPlanningProposal } {
+function proposalStateForTheme(theme: string, actions: BriefingAction[], pacing: BriefingPacing, proposals: BriefingPlanningProposal[], adjustments: BriefingAdjustment[], generatedAt: string): { state: "open" } | { state: "prepared"; proposal: BriefingPlanningProposal } | { state: "resolved"; changedAt: string } {
   const targetIds = targetIdsForTheme(theme, actions, pacing);
   if (!targetIds.size) return { state: "open" };
+  const appliedAdjustments = adjustments
+    .filter((adjustment) => adjustment.status === "applied" && Date.parse(adjustment.createdAt) >= Date.parse(generatedAt))
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const adjustedIds = new Set(appliedAdjustments.flatMap((adjustment) => adjustment.actions.flatMap((action) => action.assignmentId ? [action.assignmentId] : [])));
+  const adjustmentResolved = theme === "schedule_work"
+    ? [...targetIds].some((id) => adjustedIds.has(id))
+    : [...targetIds].every((id) => adjustedIds.has(id));
+  if (adjustmentResolved) return { state: "resolved", changedAt: appliedAdjustments[0].createdAt };
   const eligible = proposals
     .filter((proposal) => ["proposed", "applied"].includes(proposal.status) && Date.parse(proposal.createdAt) >= Date.parse(generatedAt))
     .map((proposal) => ({ proposal, ids: proposalReferenceIds(proposal) }))
@@ -362,9 +373,9 @@ function proposalStateForTheme(theme: string, actions: BriefingAction[], pacing:
   // A schedule-work briefing intentionally asks for the smallest useful next
   // placement. Once that bounded placement is approved, resolve the stored
   // alert instead of inviting a second proposal for the same backlog.
-  if (theme === "schedule_work" && applied.length) return { state: "resolved", proposal: applied[0].proposal };
+  if (theme === "schedule_work" && applied.length) return { state: "resolved", changedAt: applied[0].proposal.createdAt };
   const appliedIds = new Set(applied.flatMap(({ ids }) => [...ids]));
-  return [...targetIds].every((id) => appliedIds.has(id)) ? { state: "resolved", proposal: applied[0].proposal } : { state: "open" };
+  return [...targetIds].every((id) => appliedIds.has(id)) ? { state: "resolved", changedAt: applied[0].proposal.createdAt } : { state: "open" };
 }
 
 function targetIdsForTheme(theme: string, actions: BriefingAction[], pacing: BriefingPacing) {
@@ -415,7 +426,7 @@ function briefingTrust(presentation: BriefingPresentation) {
   const prepared = presentation.highlights.some((item) => item.state === "prepared");
   if (presentation.resolvedThemes && (open || prepared)) return "Handled changes were parent-approved. Anything new still waits for you.";
   if (presentation.resolvedThemes) return "Only parent-approved changes were applied.";
-  return "Nothing changes until you approve it.";
+  return "Safe schedule moves apply now with Undo. Grades and major changes still wait for you.";
 }
 
 function actionAppliesToLearner(action: BriefingAction, learnerId: string) {

@@ -83,6 +83,30 @@ describe("unfinished curriculum operations", () => {
     expect((await admin.from("assignments").select("scheduled_date").eq("id", missed.id).single()).data?.scheduled_date).toBe(movedDates[0]);
   });
 
+  it("treats an explicit parent handoff as confirmation for an undoable move", async () => {
+    await admin.from("family_autonomy_policies").update({ preset: "helpful", policies: {} }).eq("family_id", familyId);
+    try {
+      const today = dateInTimezone(new Date(), "America/New_York");
+      const missedDate = shiftDate(today, -1);
+      const student = await admin.from("students").insert({ family_id: familyId, display_name: "Explicit authorization learner", daily_capacity_minutes: 60 }).select("id").single();
+      if (student.error) throw student.error;
+      const assignment = await admin.from("assignments").insert({ family_id: familyId, student_id: student.data.id, created_by: userId, title: "Open history lesson", subject: "History", scheduled_date: missedDate, estimated_minutes: 30 }).select("id").single();
+      if (assignment.error) throw assignment.error;
+
+      const unconfirmed = await moveUnfinishedWork({ familyId, studentId: student.data.id, assignmentIds: [assignment.data.id], actorId: userId, idempotencyKey: `helpful-preview:${assignment.data.id}` });
+      expect(unconfirmed.applied).toBe(false);
+      expect(unconfirmed.proposal.status).toBe("proposed");
+
+      const authorized = await moveUnfinishedWork({ familyId, studentId: student.data.id, assignmentIds: [assignment.data.id], actorId: userId, idempotencyKey: `helpful-authorized:${assignment.data.id}`, explicitParentAuthorization: true });
+      expect(authorized.applied).toBe(true);
+      expect(authorized.proposal).toMatchObject({ status: "applied", undo_status: "available" });
+      const policy = await admin.from("adjustment_proposals").select("policy_decision").eq("id", authorized.proposal.id).single();
+      expect(policy.data?.policy_decision).toMatchObject({ authorizedBy: "explicit_parent_request", appliesAutomatically: true, undoRequired: true });
+    } finally {
+      await admin.from("family_autonomy_policies").update({ preset: "proactive", policies: {} }).eq("family_id", familyId);
+    }
+  });
+
   it("flips a missed lesson into today and carries a fully preloaded course forward", async () => {
     const today = dateInTimezone(new Date(), "America/New_York");
     const missedDate = shiftDate(today, -1);

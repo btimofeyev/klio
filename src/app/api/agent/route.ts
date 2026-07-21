@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { checkRateLimit } from "@/lib/security/rate-limit";
 import { enqueueAgentJob, safelyProcessAgentJob } from "@/lib/agent/jobs";
 import type { AgentIntent } from "@/lib/agent/run-agent";
-import { completeInstantWorkspaceTurn, enqueueWorkspaceTurn, interactionModeForRequest, type WorkspaceGoal } from "@/lib/agent/workspace/turns";
+import { authorizationsForWorkspaceRequest, completeInstantWorkspaceTurn, enqueueWorkspaceTurn, interactionModeForRequest, type WorkspaceGoal } from "@/lib/agent/workspace/turns";
 import { processWorkspaceTurn } from "@/lib/agent/workspace/runtime";
 import { serverEnv } from "@/lib/env";
 import { postgresUuidSchema } from "@/lib/validation/postgres-uuid";
@@ -70,7 +70,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ turn: workspace.turn, conversationId, interactionMode: "answer", instantReply, publicResult: workspace.publicResult }, { status: 200 });
       }
       const presentation = requestPresentation(parsed.data.intent, contextualRequest, assignment.data, interactionMode);
-      const workspace = await enqueueWorkspaceTurn({ familyId: parsed.data.familyId, requestedBy: parent.id, evidenceIds: parsed.data.evidenceIds, studentId: effectiveStudentId, trigger: "parent_message", goal, idempotencyKey, request: contextualRequest, contextDate: parsed.data.contextDate, conversationId, interactionMode, ...presentation });
+      const workspace = await enqueueWorkspaceTurn({ familyId: parsed.data.familyId, requestedBy: parent.id, evidenceIds: parsed.data.evidenceIds, studentId: effectiveStudentId, trigger: "parent_message", goal, idempotencyKey, request: contextualRequest, contextDate: parsed.data.contextDate, conversationId, interactionMode, authorizations: authorizationsForWorkspaceRequest(parsed.data.request, interactionMode), ...presentation });
       await appendAgentConversationMessage({ conversationId, familyId: parsed.data.familyId, role: "user", content: parsed.data.request, agentTurnId: workspace.turn.id, idempotencyKey: `turn:${parsed.data.requestId}:user` });
       if (serverEnv.klioAgentInline && !workspace.duplicate) after(() => processWorkspaceTurn(workspace.turn.id));
       return NextResponse.json({ turn: workspace.turn, conversationId, interactionMode }, { status: 202 });

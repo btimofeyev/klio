@@ -22,7 +22,7 @@ export async function callWorkspaceTool<K extends WorkspaceToolName>(input: { au
   if (!claims.allowedTools.includes(input.name)) throw new Error("TOOL_NOT_ALLOWED");
   const args = workspaceToolSchemas[input.name].parse(input.arguments) as WorkspaceToolArguments[K];
   const admin = createAdminClient();
-  const { data: turn, error: turnError } = await admin.from("agent_turns").select("id, family_id, requested_by, initial_snapshot_version, current_snapshot_version, status").eq("id", claims.klioTurnId).eq("family_id", claims.familyId).single();
+  const { data: turn, error: turnError } = await admin.from("agent_turns").select("id, family_id, requested_by, initial_snapshot_version, current_snapshot_version, snapshot_summary, status").eq("id", claims.klioTurnId).eq("family_id", claims.familyId).single();
   if (turnError || !turn) throw new Error("AGENT_TURN_NOT_FOUND");
   if (turn.requested_by !== claims.requestedBy || turn.initial_snapshot_version !== claims.snapshotVersion) throw new Error("CAPABILITY_SCOPE_MISMATCH");
   if (turn.status !== "running") throw new Error("AGENT_TURN_NOT_ACTIVE");
@@ -97,7 +97,7 @@ export async function callWorkspaceTool<K extends WorkspaceToolName>(input: { au
         if (assignments.error || assignments.data.length !== new Set(move.assignmentIds).size) throw assignments.error ?? new Error("ASSIGNMENT_NOT_FOUND");
         const studentIds = [...new Set(assignments.data.map((item) => item.student_id))];
         if (studentIds.length !== 1) throw new Error("ONE_LEARNER_PER_SCHEDULE_ADJUSTMENT");
-        result = await moveUnfinishedWork({ familyId: claims.familyId, studentId: studentIds[0], assignmentIds: move.assignmentIds, actorId: claims.requestedBy, idempotencyKey });
+        result = await moveUnfinishedWork({ familyId: claims.familyId, studentId: studentIds[0], assignmentIds: move.assignmentIds, actorId: claims.requestedBy, idempotencyKey, explicitParentAuthorization: hasWorkspaceAuthorization(turn.snapshot_summary, "schedule_moves") });
       } else if (input.name === "organize_day_schedule") {
         const organize = args as WorkspaceToolArguments["organize_day_schedule"];
         result = await organizeDaySchedule({
@@ -114,6 +114,7 @@ export async function callWorkspaceTool<K extends WorkspaceToolName>(input: { au
         result = await executeBoundedDomainTool({
           name: input.name, args, familyId: claims.familyId, actorId: claims.requestedBy,
           turnId: claims.klioTurnId, snapshotVersion: turn.current_snapshot_version, idempotencyKey,
+          explicitScheduleAuthorization: hasWorkspaceAuthorization(turn.snapshot_summary, "schedule_moves"),
         });
       }
       const fresh = await admin.from("families").select("agent_context_version").eq("id", claims.familyId).single();
@@ -153,6 +154,12 @@ export async function callWorkspaceTool<K extends WorkspaceToolName>(input: { au
 }
 
 function toJson(value: unknown) { return JSON.parse(JSON.stringify(value)) as Json; }
+
+function hasWorkspaceAuthorization(value: Json, authorization: string) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const authorizations = (value as Record<string, Json | undefined>).authorizations;
+  return Array.isArray(authorizations) && authorizations.includes(authorization);
+}
 
 function redactArguments(name: WorkspaceToolName, args: unknown) {
   const value = structuredClone(args) as Record<string, unknown>;
@@ -229,6 +236,7 @@ async function executeBoundedDomainTool(input: {
   turnId: string;
   snapshotVersion: number;
   idempotencyKey: string;
+  explicitScheduleAuthorization: boolean;
 }) {
   const admin = createAdminClient();
   if (input.name === "draft_assignment_review") {
@@ -362,7 +370,7 @@ async function recordExplicitParentScore(input: {
 
 async function proposeScheduleChange(input: {
   name: WorkspaceToolName; args: WorkspaceToolArguments[WorkspaceToolName]; familyId: string; actorId: string;
-  turnId: string; snapshotVersion: number; idempotencyKey: string;
+  turnId: string; snapshotVersion: number; idempotencyKey: string; explicitScheduleAuthorization: boolean;
 }) {
   const admin = createAdminClient();
   if (input.name === "move_schedule_work") {
@@ -373,6 +381,19 @@ async function proposeScheduleChange(input: {
     const studentIds = [...new Set(assignments.data.map((item) => item.student_id))];
     if (studentIds.length !== 1) throw new Error("ONE_LEARNER_PER_SCHEDULE_ADJUSTMENT");
     await assertScheduleChangesFit({ supabase: admin, familyId: input.familyId, studentId: studentIds[0], changes: assignments.data.map((assignment) => ({ assignmentId: assignment.id, scheduledDate: args.targetDate, estimatedMinutes: assignment.estimated_minutes ?? 30, scheduledTime: assignment.scheduled_time })) });
+    if (input.explicitScheduleAuthorization) {
+      return applyAuthorizedScheduleMove({
+        familyId: input.familyId,
+        actorId: input.actorId,
+        turnId: input.turnId,
+        snapshotVersion: input.snapshotVersion,
+        idempotencyKey: input.idempotencyKey,
+        studentId: studentIds[0],
+        targetDate: args.targetDate,
+        reason: args.reason,
+        assignments: assignments.data,
+      });
+    }
     return createPlanningProposal({ familyId: input.familyId, actorId: input.actorId, turnId: input.turnId, snapshotVersion: input.snapshotVersion, idempotencyKey: input.idempotencyKey, studentId: studentIds[0], kind: "weekly_plan", actionName: "prepare_week", risk: "moderate", title: "Move scheduled work", summary: `Move ${assignments.data.length} assignment${assignments.data.length === 1 ? "" : "s"} to ${args.targetDate}.`, reason: args.reason, changes: { assignmentIds: assignments.data.map((item) => item.id), changes: assignments.data.map((item) => ({ assignmentId: item.id, scheduledDate: args.targetDate, previousScheduledDate: item.scheduled_date, previousVersion: item.version })) } });
   }
   if (input.name === "resize_schedule_work") {
@@ -438,6 +459,93 @@ async function proposeScheduleChange(input: {
     }
   }
   return createPlanningProposal({ familyId: input.familyId, actorId: input.actorId, turnId: input.turnId, snapshotVersion: input.snapshotVersion, idempotencyKey: input.idempotencyKey, studentId: args.studentId, kind: args.scope === "week" ? "weekly_plan" : "term_plan", actionName: args.scope === "week" ? "prepare_week" : "prepare_term", risk: args.scope === "week" ? "moderate" : "high", title: args.title, summary: args.summary, reason: args.reason, changes: { assignmentIds: args.assignmentIds, changes } });
+}
+
+async function applyAuthorizedScheduleMove(input: {
+  familyId: string;
+  actorId: string;
+  turnId: string;
+  snapshotVersion: number;
+  idempotencyKey: string;
+  studentId: string;
+  targetDate: string;
+  reason: string;
+  assignments: Array<{
+    id: string;
+    title: string;
+    scheduled_date: string | null;
+    scheduled_time: string | null;
+    estimated_minutes: number | null;
+  }>;
+}) {
+  const admin = createAdminClient();
+  const existing = await admin.from("adjustment_proposals").select("id,status,undo_status").eq("family_id", input.familyId).eq("idempotency_key", input.idempotencyKey).maybeSingle();
+  if (existing.error) throw existing.error;
+  if (existing.data) {
+    return {
+      outcome: existing.data.status === "applied" ? "automatic_action" : "review_required",
+      proposalId: existing.data.id,
+      status: existing.data.status,
+      undoAvailable: existing.data.undo_status === "available",
+      duplicate: true,
+    };
+  }
+  const summary = `Moved ${input.assignments.length} assignment${input.assignments.length === 1 ? "" : "s"} to ${input.targetDate}.`;
+  const proposal = await admin.from("adjustment_proposals").insert({
+    family_id: input.familyId,
+    student_id: input.studentId,
+    agent_turn_id: input.turnId,
+    week_start: input.targetDate,
+    reason: input.reason,
+    summary,
+    snapshot_version: input.snapshotVersion,
+    idempotency_key: input.idempotencyKey,
+    trigger_event: { eventKind: "explicit_parent_schedule_move", assignmentIds: input.assignments.map((assignment) => assignment.id) },
+    policy_decision: {
+      action: "move_unfinished_work",
+      level: "automatic_with_undo",
+      appliesAutomatically: true,
+      undoRequired: true,
+      parentConfirmationRequired: false,
+      interaction: "none",
+      denied: false,
+      authorizedBy: "explicit_parent_request",
+    },
+  }).select("id").single();
+  if (proposal.error) throw proposal.error;
+  const actions = await admin.from("adjustment_actions").insert(input.assignments.map((assignment, position) => ({
+    family_id: input.familyId,
+    proposal_id: proposal.data.id,
+    assignment_id: assignment.id,
+    action_type: "move",
+    before_state: {
+      scheduledDate: assignment.scheduled_date,
+      scheduledTime: assignment.scheduled_time,
+      estimatedMinutes: assignment.estimated_minutes,
+    },
+    after_state: {
+      scheduledDate: input.targetDate,
+      scheduledTime: assignment.scheduled_time,
+      estimatedMinutes: assignment.estimated_minutes,
+    },
+    position,
+  })));
+  if (actions.error) throw actions.error;
+  const applied = await admin.rpc("apply_klio_adjustment", { p_proposal_id: proposal.data.id, p_actor_id: input.actorId });
+  if (applied.error) throw applied.error;
+  const application = applied.data && typeof applied.data === "object" && !Array.isArray(applied.data)
+    ? applied.data as Record<string, unknown>
+    : {};
+  if (application.status !== "applied") throw new Error(typeof application.error === "string" ? application.error : "SCHEDULE_MOVE_NOT_APPLIED");
+  return {
+    outcome: "automatic_action",
+    proposalId: proposal.data.id,
+    status: "applied",
+    summary,
+    changedCount: input.assignments.length,
+    undoAvailable: true,
+    authorizedBy: "explicit_parent_request",
+  };
 }
 
 async function createPracticeRemovalAdjustment(input: {

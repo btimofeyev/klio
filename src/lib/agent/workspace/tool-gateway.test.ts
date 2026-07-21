@@ -10,7 +10,7 @@ const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const secretKey = process.env.SUPABASE_SECRET_KEY!;
 const capabilitySecret = "workspace-integration-test-secret";
 const admin = createClient<Database>(url, secretKey, { auth: { persistSession: false } });
-let userId = ""; let familyId = ""; let studentId = ""; let evidenceId = ""; let turnId = ""; let snapshotVersion = 0; let termId = ""; let otherFamilyId = ""; let otherStudentId = "";
+let userId = ""; let familyId = ""; let studentId = ""; let evidenceId = ""; let turnId = ""; let threadId = ""; let snapshotVersion = 0; let termId = ""; let otherFamilyId = ""; let otherStudentId = "";
 
 beforeAll(async () => {
   process.env.KLIO_AGENT_CAPABILITY_SECRET = capabilitySecret;
@@ -32,6 +32,7 @@ beforeAll(async () => {
   if (evidence.error) throw evidence.error; evidenceId = evidence.data.id;
   const thread = await admin.from("agent_threads").insert({ family_id: familyId, provider: "codex_app_server" }).select("id").single();
   if (thread.error) throw thread.error;
+  threadId = thread.data.id;
   const version = await admin.from("families").select("agent_context_version").eq("id", familyId).single();
   if (version.error) throw version.error; snapshotVersion = version.data.agent_context_version;
   const turn = await admin.from("agent_turns").insert({ thread_id: thread.data.id, family_id: familyId, requested_by: userId, source_evidence_id: evidenceId, trigger: "capture", goal: "capture", status: "running", idempotency_key: `test:${crypto.randomUUID()}`, initial_snapshot_version: snapshotVersion, current_snapshot_version: snapshotVersion, snapshot_hash: "a".repeat(64) }).select("id").single();
@@ -154,6 +155,85 @@ describe("workspace tool gateway", () => {
     expect((await admin.from("assignments").select("status,scheduled_date").eq("id", practice.data.id).single()).data).toMatchObject({ status: "planned", scheduled_date: "2026-07-22" });
     const fresh = await admin.from("families").select("agent_context_version").eq("id", familyId).single();
     await admin.from("agent_turns").update({ current_snapshot_version: fresh.data!.agent_context_version }).eq("id", turnId);
+  });
+
+  it("applies an explicitly requested assignment move immediately with undo", async () => {
+    const assignment = await admin.from("assignments").insert({
+      family_id: familyId,
+      student_id: studentId,
+      created_by: userId,
+      created_by_type: "parent",
+      title: "Move this lesson",
+      subject: "History",
+      source_kind: "parent",
+      status: "planned",
+      scheduled_date: "2027-03-03",
+      scheduled_time: "09:30:00",
+      estimated_minutes: 25,
+    }).select("id").single();
+    if (assignment.error) throw assignment.error;
+    const item = await admin.from("weekly_plan_items").insert({
+      family_id: familyId,
+      student_id: studentId,
+      assignment_id: assignment.data.id,
+      artifact_id: null,
+      title: "Move this lesson",
+      subject: "History",
+      source_kind: "parent",
+      scheduled_date: "2027-03-03",
+      scheduled_time: "09:30:00",
+      estimated_minutes: 25,
+    });
+    if (item.error) throw item.error;
+    const current = await admin.from("families").select("agent_context_version").eq("id", familyId).single();
+    if (current.error) throw current.error;
+    await admin.from("agent_turns").update({ status: "completed" }).eq("id", turnId);
+    const moveTurn = await admin.from("agent_turns").insert({
+      thread_id: threadId,
+      family_id: familyId,
+      requested_by: userId,
+      trigger: "parent_message",
+      goal: "weekly_plan",
+      status: "running",
+      idempotency_key: `move:${crypto.randomUUID()}`,
+      initial_snapshot_version: current.data.agent_context_version,
+      current_snapshot_version: current.data.agent_context_version,
+      snapshot_hash: "b".repeat(64),
+      snapshot_summary: { authorizations: ["schedule_moves"] },
+    }).select("id").single();
+    if (moveTurn.error) throw moveTurn.error;
+    const now = Date.now();
+    const moveAuthorization = `Bearer ${issueWorkspaceCapability({
+      familyId,
+      requestedBy: userId,
+      klioTurnId: moveTurn.data.id,
+      snapshotVersion: current.data.agent_context_version,
+      allowedTools: ["move_schedule_work"],
+      issuedAt: new Date(now - 1000).toISOString(),
+      expiresAt: new Date(now + 60_000).toISOString(),
+      nonce: crypto.randomUUID().replaceAll("-", ""),
+    }, capabilitySecret)}`;
+    const result = await callWorkspaceTool({
+      authorization: moveAuthorization,
+      name: "move_schedule_work",
+      arguments: {
+        assignmentIds: [assignment.data.id],
+        targetDate: "2027-03-04",
+        reason: "The parent explicitly asked Klio to move this assignment.",
+        idempotencyKey: "move:explicit-parent:test",
+      },
+    });
+    expect(result).toMatchObject({ outcome: "automatic_action", status: "applied", changedCount: 1, undoAvailable: true, authorizedBy: "explicit_parent_request" });
+    expect((await admin.from("assignments").select("scheduled_date,scheduled_time").eq("id", assignment.data.id).single()).data).toMatchObject({ scheduled_date: "2027-03-04", scheduled_time: "09:30:00" });
+    expect((await admin.from("planning_proposals").select("id", { count: "exact", head: true }).eq("family_id", familyId).eq("idempotency_key", "move:explicit-parent:test")).count).toBe(0);
+    const adjustment = await admin.from("adjustment_proposals").select("id,status,undo_status,policy_decision").eq("family_id", familyId).eq("idempotency_key", "move:explicit-parent:test").single();
+    expect(adjustment.data).toMatchObject({ status: "applied", undo_status: "available", policy_decision: expect.objectContaining({ authorizedBy: "explicit_parent_request" }) });
+    const undone = await admin.rpc("undo_klio_adjustment", { p_proposal_id: adjustment.data!.id, p_actor_id: userId });
+    expect(undone.data).toMatchObject({ status: "undone" });
+    expect((await admin.from("assignments").select("scheduled_date,scheduled_time").eq("id", assignment.data.id).single()).data).toMatchObject({ scheduled_date: "2027-03-03", scheduled_time: "09:30:00" });
+    const fresh = await admin.from("families").select("agent_context_version").eq("id", familyId).single();
+    await admin.from("agent_turns").update({ status: "completed" }).eq("id", moveTurn.data.id);
+    await admin.from("agent_turns").update({ status: "running", current_snapshot_version: fresh.data!.agent_context_version }).eq("id", turnId);
   });
 
   it("rejects malformed and cross-family assignment writes", async () => {
