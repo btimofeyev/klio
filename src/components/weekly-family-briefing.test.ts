@@ -38,9 +38,9 @@ const briefing: WeeklyBriefingDTO = {
 const students = [{ id: "maya", displayName: "Maya", gradeBand: "6-8", learningPreferences: null }];
 const familyId = "00000000-0000-4000-8000-000000000001";
 
-function renderBriefing(input: { onDismissed?: () => void; selectedStudentId?: string; planningProposals?: React.ComponentProps<typeof WeeklyFamilyBriefing>["planningProposals"]; adjustments?: React.ComponentProps<typeof WeeklyFamilyBriefing>["adjustments"] } = {}) {
+function renderBriefing(input: { onDismissed?: () => void; selectedStudentId?: string; planningProposals?: React.ComponentProps<typeof WeeklyFamilyBriefing>["planningProposals"]; adjustments?: React.ComponentProps<typeof WeeklyFamilyBriefing>["adjustments"]; activeAgentTurn?: React.ComponentProps<typeof WeeklyFamilyBriefing>["activeAgentTurn"] } = {}) {
   return render(React.createElement(WeeklyFamilyBriefing, {
-    briefing, state: "available", familyId, students, selectedStudentId: input.selectedStudentId ?? "all", familyTimezone: "America/New_York", planningProposals: input.planningProposals, adjustments: input.adjustments, onDismissed: input.onDismissed,
+    briefing, state: "available", familyId, students, selectedStudentId: input.selectedStudentId ?? "all", familyTimezone: "America/New_York", planningProposals: input.planningProposals, adjustments: input.adjustments, activeAgentTurn: input.activeAgentTurn, onDismissed: input.onDismissed,
   }));
 }
 
@@ -95,6 +95,37 @@ describe("weekly family briefing", () => {
     expect(JSON.parse(String(handleCall?.[1]?.body)).request).toContain("Do not use draft_weekly_plan");
     expect(screen.getByRole("progressbar", { name: "Klio briefing progress" })).toHaveAttribute("aria-valuenow", "10");
     expect(screen.queryByText(/Take care of the remaining items/)).not.toBeInTheDocument();
+  });
+
+  it("clears a briefing item when the background handoff verifies no change is needed", () => {
+    renderBriefing({
+      activeAgentTurn: {
+        id: "turn-no-op",
+        status: "completed",
+        goal: "weekly_plan",
+        request: "Take care of the remaining items in the family’s weekly briefing.",
+        result: { schemaVersion: 1, kind: "no_op", message: "The current plan is already simplified.", understood: [], used: ["Current schedule"], changed: [], remaining: [], actions: [] },
+        clarification: null,
+        events: [],
+        tools: [],
+        taskName: "Handling weekly briefing",
+        studentId: null,
+        subject: null,
+        sourceCount: 0,
+        normalizedStep: "finished",
+        expectedOutput: null,
+        createdAt: "2026-07-13T10:00:00.000Z",
+        startedAt: "2026-07-13T10:00:00.000Z",
+        lastHeartbeatAt: "2026-07-13T10:00:10.000Z",
+        lastProgressAt: "2026-07-13T10:00:10.000Z",
+        conversationId: null,
+        interactionMode: "act",
+        streamedMessage: "The current plan is already simplified.",
+      },
+    });
+    expect(screen.getByText("Klio handled the briefing. Nothing else needs your decision.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Ask Klio to handle/ })).not.toBeInTheDocument();
+    expect(document.querySelectorAll('[data-briefing-side]')).toHaveLength(1);
   });
 
   it("keeps learner-scoped actions learner-specific", async () => {

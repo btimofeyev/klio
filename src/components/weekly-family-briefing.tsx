@@ -85,7 +85,8 @@ export function WeeklyFamilyBriefing({ briefing, state, familyId, students, sele
   const visiblePreviousWeek = learner
     ? snapshot.previousWeek.byLearner?.find((item) => item.studentId === learner.id)
     : snapshot.previousWeek;
-  const presentation = briefingPresentation(visibleActions, visiblePacing, visiblePreviousWeek, planningProposals, adjustments, briefing.generatedAt);
+  const verifiedAt = verifiedNoActionAt(briefingTurn, briefing.generatedAt);
+  const presentation = briefingPresentation(visibleActions, visiblePacing, visiblePreviousWeek, planningProposals, adjustments, briefing.generatedAt, verifiedAt);
   const highlights = presentation.highlights;
   const openHighlights = highlights.filter((item) => item.state === "open");
   const preparedHighlights = highlights.filter((item) => item.state === "prepared");
@@ -289,7 +290,7 @@ type BriefingAdjustment = { id: string; status: string; summary: string; created
 type BriefingHighlight = { theme: string; state: "open" | "prepared"; context: string; title: string; explanation: string; href?: string; linkLabel: string };
 type BriefingPresentation = { highlights: BriefingHighlight[]; resolvedThemes: number; latestChangeAt: string | null };
 
-function briefingPresentation(actions: BriefingAction[], pacing: BriefingPacing, previousWeek: PreviousWeek, proposals: BriefingPlanningProposal[], adjustments: BriefingAdjustment[], generatedAt: string): BriefingPresentation {
+function briefingPresentation(actions: BriefingAction[], pacing: BriefingPacing, previousWeek: PreviousWeek, proposals: BriefingPlanningProposal[], adjustments: BriefingAdjustment[], generatedAt: string, verifiedAt: string | null): BriefingPresentation {
   const seen = new Set<string>();
   const highlights: BriefingHighlight[] = [];
   let resolvedThemes = 0;
@@ -298,6 +299,11 @@ function briefingPresentation(actions: BriefingAction[], pacing: BriefingPacing,
     const theme = actionTheme(action.kind);
     if (seen.has(theme)) continue;
     seen.add(theme);
+    if (verifiedAt) {
+      resolvedThemes += 1;
+      latestChangeAt = verifiedAt;
+      continue;
+    }
     const themeActions = actions.filter((candidate) => actionTheme(candidate.kind) === theme);
     const proposalState = proposalStateForTheme(theme, themeActions, pacing, proposals, adjustments, generatedAt);
     const changedAt = proposalState.state === "prepared" ? proposalState.proposal.createdAt : proposalState.state === "resolved" ? proposalState.changedAt : null;
@@ -312,6 +318,12 @@ function briefingPresentation(actions: BriefingAction[], pacing: BriefingPacing,
     if (highlights.length === 2) break;
   }
   return { highlights, resolvedThemes, latestChangeAt };
+}
+
+function verifiedNoActionAt(turn: AgentTurnDTO | null, generatedAt: string) {
+  if (!turn || !isBriefingTurn(turn) || turn.status !== "completed" || turn.result?.kind !== "no_op") return null;
+  if (turn.result.actions.length || turn.result.changed.length || turn.result.remaining.length) return null;
+  return Date.parse(turn.createdAt) >= Date.parse(generatedAt) ? turn.createdAt : null;
 }
 
 function actionTheme(kind: BriefingAction["kind"]) {
