@@ -4,7 +4,7 @@ import React from "react";
 import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { InsightNote } from "./operations-workspace";
+import { InsightNote, isPracticeReadyInsightRepresented } from "./operations-workspace";
 import type { AdjustmentDTO, AssignmentDTO, PlanningProposalDTO } from "@/lib/data/operations";
 import type { AgentTurnDTO, KlioInsightDTO, StudentDTO } from "@/lib/data/workspace";
 
@@ -116,5 +116,23 @@ describe("schedule decision insight", () => {
     expect(screen.getByRole("link", { name: "Review or edit" })).toHaveAttribute("href", "/app/adjustments?proposal=proposal-1");
     expect(screen.queryByRole("button", { name: "Ask Klio to make room" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Dismiss" })).not.toBeInTheDocument();
+  });
+});
+
+describe("practice-ready insight presentation", () => {
+  const practiceInsight = {
+    ...insight,
+    kind: "practice_ready",
+    title: "Comprehensive historical thinking review",
+    actionRef: { type: "practice", artifactId: "practice-1", practiceSessionId: "session-1" },
+  } satisfies KlioInsightDTO;
+
+  it("does not repeat a practice-ready insight when its practice card is visible", () => {
+    expect(isPracticeReadyInsightRepresented(practiceInsight, [{ id: "practice-1" }])).toBe(true);
+  });
+
+  it("keeps the insight as a fallback when its practice card is unavailable", () => {
+    expect(isPracticeReadyInsightRepresented(practiceInsight, [{ id: "practice-2" }])).toBe(false);
+    expect(isPracticeReadyInsightRepresented({ ...practiceInsight, actionRef: {} }, [{ id: "practice-1" }])).toBe(false);
   });
 });

@@ -554,6 +554,7 @@ function DaySurface(props: {
   const visibleInsights = rankWorkspaceInsights(props.insights)
     .filter((item) => item.kind !== "on_track" && isParentFacingWorkspaceInsight(item) && !isResolvedAdjustmentInsight(item, props.proposals))
     .filter((item) => !isResolvedPlanningInsight(item, props.assignments, props.students, props.planningProposals))
+    .filter((item) => !isPracticeReadyInsightRepresented(item, practices))
     .slice(0, 2);
   const visibleProposal = props.proposals.find((proposal) => proposal.status === "proposed" && !visibleInsights.some((insight) => insight.actionRef.proposalId === proposal.id));
   const recentApplied = props.proposals.find((proposal) => proposal.status === "applied" && proposal.undoStatus === "available" && !proposal.acknowledgedAt && !props.acknowledgedProposalIds.includes(proposal.id) && !visibleInsights.some((insight) => insight.actionRef.proposalId === proposal.id));
@@ -719,6 +720,12 @@ function insightGroupKey(insight: Pick<KlioInsightDTO, "kind" | "title">) {
   return `${insight.kind}:${insight.title.trim().toLocaleLowerCase("en-US")}`;
 }
 
+export function isPracticeReadyInsightRepresented(insight: KlioInsightDTO, practices: Array<Pick<ArtifactDTO, "id">>) {
+  return insight.kind === "practice_ready"
+    && typeof insight.actionRef.artifactId === "string"
+    && practices.some((practice) => practice.id === insight.actionRef.artifactId);
+}
+
 export function isParentFacingWorkspaceInsight(insight: KlioInsightDTO) {
   return !["Today’s plan needs a quick look", "A few items need evening follow-through"].includes(insight.title);
 }
@@ -856,6 +863,7 @@ function WeekSurface(props: {
   const visibleInsights = rankWorkspaceInsights(props.insights)
     .filter((item) => item.kind !== "on_track" && isParentFacingWorkspaceInsight(item) && !isResolvedAdjustmentInsight(item, props.proposals))
     .filter((item) => !isResolvedPlanningInsight(item, props.assignments, props.students, props.planningProposals))
+    .filter((item) => !isPracticeReadyInsightRepresented(item, practices))
     .slice(0, 2);
   const visibleProposal = props.proposals.find((proposal) => proposal.status === "proposed" && !visibleInsights.some((insight) => insight.actionRef.proposalId === proposal.id));
   const recentApplied = props.proposals.find((proposal) => proposal.status === "applied" && proposal.undoStatus === "available" && !proposal.acknowledgedAt && !props.acknowledgedProposalIds.includes(proposal.id) && !visibleInsights.some((insight) => insight.actionRef.proposalId === proposal.id));
