@@ -11,6 +11,7 @@ import {
 
 const firstId = "11111111-1111-4111-8111-111111111111";
 const secondId = "22222222-2222-4222-8222-222222222222";
+const deterministicPostgresId = "2303e90b-e292-4bf0-3529-f0d5c10cc3a7";
 
 describe("operationsDateRange", () => {
   it("uses one exact day for Today", () => {
@@ -48,6 +49,13 @@ describe("assignment cursors", () => {
   it.each([42, null])("round trips a curriculum cursor with sequence %s", (sequence) => {
     const value = { v: 1 as const, sequence, id: secondId };
     expect(decodeCurriculumAssignmentCursor(encodeCurriculumAssignmentCursor(value))).toEqual(value);
+  });
+
+  it("round trips database-owned ids that do not encode RFC version or variant bits", () => {
+    const scheduled = { v: 1 as const, date: "2026-07-18", time: null, id: deterministicPostgresId };
+    const curriculum = { v: 1 as const, sequence: 42, id: deterministicPostgresId };
+    expect(decodeScheduledAssignmentCursor(encodeScheduledAssignmentCursor(scheduled))).toEqual(scheduled);
+    expect(decodeCurriculumAssignmentCursor(encodeCurriculumAssignmentCursor(curriculum))).toEqual(curriculum);
   });
 
   it.each([

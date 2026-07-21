@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { monthGrid } from "@/lib/calendar/month";
+import { postgresUuidSchema } from "@/lib/validation/postgres-uuid";
 
 export const SCHEDULED_ASSIGNMENT_PAGE_SIZE = 100;
 export const CURRICULUM_ASSIGNMENT_PAGE_SIZE = 50;
@@ -37,13 +38,13 @@ const scheduledCursorSchema = z.object({
   v: z.literal(1),
   date: calendarDateSchema,
   time: scheduledTimeSchema.nullable(),
-  id: z.uuid(),
+  id: postgresUuidSchema,
 }).strict();
 
 const curriculumCursorSchema = z.object({
   v: z.literal(1),
   sequence: z.number().int().nullable(),
-  id: z.uuid(),
+  id: postgresUuidSchema,
 }).strict();
 
 export type ScheduledAssignmentCursor = z.infer<typeof scheduledCursorSchema>;
