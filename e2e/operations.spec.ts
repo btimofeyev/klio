@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
+import { dateInTimezone } from "@/lib/schedule/dates";
 
 test("a family plans curriculum, reviews submitted work, and approves a coordinated replan", async ({ page }) => {
   test.setTimeout(180_000);
@@ -28,7 +29,7 @@ test("a family plans curriculum, reviews submitted work, and approves a coordina
     const users = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
     userId = users.data.users.find((user) => user.email === email)?.id ?? null;
     if (!userId) throw new Error("The operations test user was not created.");
-    const family = await admin.from("families").select("id").eq("created_by", userId).single();
+    const family = await admin.from("families").select("id,timezone").eq("created_by", userId).single();
     if (family.error) throw family.error;
     familyId = family.data.id;
     const student = await admin.from("students").select("id").eq("family_id", familyId).eq("display_name", "Rowan").single();
@@ -41,6 +42,7 @@ test("a family plans curriculum, reviews submitted work, and approves a coordina
     await page.getByRole("button", { name: "Previous day" }).click();
     await expect(page).toHaveURL(new RegExp(`date=${regression.previousDay}.*student=${studentId}`));
     await expect(page.getByText("Scoped previous day", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Today", exact: true })).toHaveAttribute("aria-pressed", "false");
     await page.getByRole("button", { name: "Next day" }).click();
     await page.getByRole("button", { name: "Next day" }).click();
     await expect(page).toHaveURL(new RegExp(`date=${regression.nextDay}.*student=${studentId}`));
@@ -54,6 +56,12 @@ test("a family plans curriculum, reviews submitted work, and approves a coordina
     await page.getByRole("button", { name: "Previous week" }).click();
     await expect(page).toHaveURL(new RegExp(`date=${regression.weekAnchor}.*student=${studentId}`));
     await expect(page.getByText("Scoped current week", { exact: true })).toBeVisible();
+    const currentDate = dateInTimezone(new Date(), family.data.timezone);
+    const todayLink = page.getByRole("link", { name: "Today", exact: true });
+    await expect(todayLink).toHaveAttribute("href", `/app?date=${currentDate}&student=${studentId}`);
+    await todayLink.click();
+    await expect(page).toHaveURL(`/app?date=${currentDate}&student=${studentId}`);
+    await expect(page.getByRole("button", { name: "Today", exact: true })).toHaveAttribute("aria-pressed", "true");
 
     await page.goto(`/app/week?date=${regression.monthAnchor}&student=${studentId}&view=month`);
     await expect(page.getByRole("region", { name: monthDayLabel(regression.monthLessonDate) })).toContainText("1 lesson");
