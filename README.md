@@ -117,8 +117,6 @@ The July 10–11 baseline contained the initial Next.js/Supabase prototype, priv
 | July 18 | commit `41c3ad7` | Date-scoped workspace flows, pagination, scheduling constraints, and calendar conflicts. |
 | July 19–20 | submission commit | Generic curriculum scope and source-backed ingestion, curriculum material enrichment, improved weekly briefings and parent-attention UI, isolated verification fixes, hosted Supabase deployment, Vercel web-plus-worker topology, synthetic judge data, and live GPT-5.6 smoke testing. |
 
-See [plans/008-openai-build-week-submission.md](./plans/008-openai-build-week-submission.md) for the completion record.
-
 ## Run locally
 
 ### Requirements
