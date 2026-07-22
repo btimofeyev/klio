@@ -3,8 +3,9 @@
 import React from "react";
 import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { InsightNote, isPracticeReadyInsightRepresented } from "./operations-workspace";
+import { DayAssignmentRow, InsightNote, isPracticeReadyInsightRepresented } from "./operations-workspace";
 import type { AdjustmentDTO, AssignmentDTO, PlanningProposalDTO } from "@/lib/data/operations";
 import type { AgentTurnDTO, KlioInsightDTO, StudentDTO } from "@/lib/data/workspace";
 
@@ -134,5 +135,39 @@ describe("practice-ready insight presentation", () => {
   it("keeps the insight as a fallback when its practice card is unavailable", () => {
     expect(isPracticeReadyInsightRepresented(practiceInsight, [{ id: "practice-2" }])).toBe(false);
     expect(isPracticeReadyInsightRepresented({ ...practiceInsight, actionRef: {} }, [{ id: "practice-1" }])).toBe(false);
+  });
+});
+
+describe("completed assignment actions", () => {
+  it("reopens a completed lesson in place instead of trying to reschedule it", async () => {
+    const completed = { ...assignments[0], status: "completed" } as AssignmentDTO;
+    const onUpdate = vi.fn();
+    const onAdjust = vi.fn();
+    render(React.createElement(DayAssignmentRow, {
+      item: completed,
+      selected: false,
+      focused: false,
+      busy: false,
+      evidence: [],
+      index: 0,
+      onSelect: vi.fn(),
+      onToggleDetail: vi.fn(),
+      onCollapse: vi.fn(),
+      onUpdate,
+      onSubmit: vi.fn(),
+      onAdjust,
+      onStartPractice: vi.fn(),
+      onApproveReview: vi.fn(),
+      onAttentionSaved: vi.fn(),
+      onAskKlio: vi.fn(),
+      onReorder: vi.fn(),
+    }));
+
+    const user = userEvent.setup();
+    await user.click(screen.getByLabelText(`Actions for ${completed.title}`));
+    await user.click(screen.getByRole("menuitem", { name: "Not finished" }));
+
+    expect(onUpdate).toHaveBeenCalledWith(completed, "planned");
+    expect(onAdjust).not.toHaveBeenCalled();
   });
 });
